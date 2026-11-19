@@ -4,7 +4,7 @@
 
 This repository clearly separates controls that are **technically enforced by code today** from controls that are **documented policy targets** for future phases:
 
-### Technically Enforced Controls (v0.3.0 Release Candidate)
+### Technically Enforced Controls (v0.3.0)
 - **Bootstrap Path, Traversal & Symlink Defense ([core/path-safety.mjs](./core/path-safety.mjs)):** Rejects relative `..` traversal segments, UNC/network paths, illegal characters, Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`), trailing dots/spaces, filesystem roots, sensitive output filenames (`.env*`, `secrets/`, keys, `credentials.json`), symlink/NTFS junction ancestors (while permitting OS-owned macOS `/tmp`/`/var` root links cleanly during realpath checks), and destinations inside protected harness directories.
 - **Overwrite Refusal & Transactional Writes ([scripts/bootstrap-project.mjs](./scripts/bootstrap-project.mjs), [core/path-safety.mjs](./core/path-safety.mjs)):** Project initialization refuses existing destinations and stages inside a temporary sibling directory before rename; CLI `--out` and handoff generation write exclusively (`wx`) to `.geloforge-tmp-*` files and roll back on failure, with overwrite refusal on handoff creation.
 - **Single-Pass Template Rendering:** Substitutes allowlisted `{{...}}` keys in one pass so user-supplied values containing `{{...}}` cannot trigger secondary placeholder expansion; YAML scalar values are escaped.

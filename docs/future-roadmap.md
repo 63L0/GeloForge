@@ -1,6 +1,6 @@
 # Future Harness Roadmap
 
-> **Status:** Stage 2 (`Context Compiler` + `geloforge` CLI) and Stage 3 (`Selective Codebase Mapping` + `Cross-Agent File Handoffs`) are **IMPLEMENTED in v0.3.0 RC**. Items below remain **NOT IMPLEMENTED**.
+> **Status:** Stage 2 (`Context Compiler` + `geloforge` CLI) and Stage 3 (`Selective Codebase Mapping` + `Cross-Agent File Handoffs`) are **IMPLEMENTED in v0.3.0**. Items below remain **NOT IMPLEMENTED**.
 
 ## Planned Future Phases (Design Only)
 

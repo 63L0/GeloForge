@@ -2,7 +2,7 @@
 
 This document maintains an honest boundary between **technically enforced capabilities**, **documented-only safeguards**, **not-implemented features**, and **untested environments**.
 
-## 1. Technically Enforced & Verified Today (v0.3.0 RC)
+## 1. Technically Enforced & Verified Today (v0.3.0)
 - **Workspace & Repository Separation:** Verified no workspace root `.git`, independent harness Git repo, `.gitattributes` LF normalization, and `.gitignore` exclusions tested via `git check-ignore`.
 - **Bootstrap, Output & Symlink Safety:** [path-safety.mjs](../core/path-safety.mjs) and [bootstrap-project.mjs](../scripts/bootstrap-project.mjs) enforce traversal blocking, symlink/NTFS junction refusal, overwrite refusal, single-pass placeholder rendering, sensitive `--out` path refusal, and atomic temp-file staging rollback.
 - **Second Brain Validation & Handoff Authenticity:** [project-validator.mjs](../core/project-validator.mjs) and [handoff.mjs](../core/handoff.mjs) enforce YAML/frontmatter parsing, 12 strict JSON schemas (`"additionalProperties": false`), version compatibility ([compatibility.mjs](../core/compatibility.mjs)), duplicate-ID rejection, cross-record reference integrity, symlink rejection across Second Brain directories, forged `verified_evidence` detection, and relative Markdown link checks.
@@ -26,4 +26,4 @@ This document maintains an honest boundary between **technically enforced capabi
 ## 4. Technical Scope & Platform Limits
 - **Zero-Dependency Parser Subset:** [yaml-subset.mjs](../core/yaml-subset.mjs) and [json-schema-lite.mjs](../core/json-schema-lite.mjs) intentionally cover the YAML 1.2 and Draft 2020-12 subsets needed by harness contracts (no YAML anchors/aliases `&/*` or JSON Schema `$ref`/`oneOf`/`allOf`).
 - **Heuristic Token Estimation:** `estimateTokens` uses `Math.ceil(utf8_bytes / 4)` (`heuristic:ceil(utf8_bytes/4)`), not vendor-exact LLM tokenizers; `npm run benchmark` measures synthetic structure/size/latency/memory rather than live LLM task accuracy or billing.
-- **Platform Testing Boundary:** All Stage 2, 3, and 4 automated tests and benchmarks executed directly on **Windows 11** (`Node.js >= 20`). Code uses platform-neutral `node:path` APIs and includes [.github/workflows/ci.yml](../.github/workflows/ci.yml) for `ubuntu-latest`, `macos-latest`, and `windows-latest`, **but Linux and macOS runners have NOT been executed locally during this audit**.
+- **Platform Testing Boundary:** Automated tests are verified in GitHub Actions CI ([.github/workflows/ci.yml](../.github/workflows/ci.yml)) across `ubuntu-latest`, `macos-latest`, and `windows-latest` on Node.js 20 and 22. Performance benchmarks (`npm run benchmark`) were executed locally on Windows 11 (`Node.js v24.21.0`) rather than across all CI runners.
