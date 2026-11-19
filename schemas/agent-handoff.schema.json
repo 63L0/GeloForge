@@ -28,7 +28,7 @@
   "properties": {
     "schema_version": { "type": "string", "enum": ["1.0", "1.1"] },
     "id": { "type": "string", "pattern": "^HANDOFF-\\d{4}$" },
-    "task_id": { "type": "string", "pattern": "^TASK-\\d{4}$" },
+    "task_id": { "type": ["string", "null"], "pattern": "^TASK-\\d{4}$" },
     "from_role": {
       "type": "string",
       "enum": ["orchestrator", "researcher", "software-architect", "developer", "qa-security-reviewer"]
@@ -37,6 +37,8 @@
       "type": "string",
       "enum": ["orchestrator", "researcher", "software-architect", "developer", "qa-security-reviewer"]
     },
+    "from_tool": { "type": ["string", "null"] },
+    "to_tool": { "type": ["string", "null"] },
     "status": { "type": "string", "enum": ["draft", "submitted", "acknowledged", "rejected", "superseded"] },
     "memory_layer": { "type": "string", "enum": ["L2_OPERATIONAL"] },
     "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
@@ -77,6 +79,60 @@
     },
     "recommended_next_action": { "type": "string", "minLength": 1 },
     "context_pack_ref": { "type": ["string", "null"], "pattern": "^CPACK-\\d{4}$" },
+    "git_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "branch", "head", "dirty", "changed_files"],
+      "properties": {
+        "available": { "type": "boolean" },
+        "branch": { "type": ["string", "null"] },
+        "head": { "type": ["string", "null"] },
+        "dirty": { "type": "boolean" },
+        "changed_files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "relevant_requirements": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "relevant_decisions": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^ADR-\\d{4}$" }
+    },
+    "verified_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "status", "verified_by", "checks_summary"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^EVID-\\d{4}$" },
+          "path": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["verified"] },
+          "verified_by": { "type": ["string", "null"] },
+          "checks_summary": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "unverified_claims": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "contradiction_warnings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "is_example": { "type": "boolean" },
     "example_notice": { "type": "string" }
   }

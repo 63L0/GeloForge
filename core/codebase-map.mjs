@@ -840,7 +840,8 @@ export function buildCodebaseMap(options = {}) {
       return lines.join("\n");
     };
 
-    let block = renderEntry(symSlice);
+    let usedSymbols = symSlice;
+    let block = renderEntry(usedSymbols);
     let blockTokens = estimateTokens(block) + 2;
 
     // If it's the #1 selected file and slightly over remaining budget, shrink symbol list to fit cleanly.
@@ -849,6 +850,7 @@ export function buildCodebaseMap(options = {}) {
       const tightBlock = renderEntry(tightSlice);
       const tightTokens = estimateTokens(tightBlock) + 2;
       if (currentTokens + tightTokens <= mapBudget) {
+        usedSymbols = tightSlice;
         block = tightBlock;
         blockTokens = tightTokens;
       }
@@ -862,7 +864,7 @@ export function buildCodebaseMap(options = {}) {
         line_count: file.lineCount,
         score: file.score,
         reasons: file.reasons,
-        symbols: symSlice,
+        symbols: usedSymbols,
       });
       renderedEntries.push(block);
       currentTokens += blockTokens;

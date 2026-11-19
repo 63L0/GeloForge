@@ -216,6 +216,7 @@ export function validateProject(rawProjectDir, options = {}) {
     "tasks",
     "evidence",
     "proposals",
+    "handoffs",
   ];
   const canonicalDirs = new Set([
     "brain/decisions",
@@ -224,6 +225,7 @@ export function validateProject(rawProjectDir, options = {}) {
     "brain/incidents",
     "tasks",
     "evidence",
+    "handoffs",
   ]);
   const records = [];
   const seenIds = new Map();
@@ -353,6 +355,7 @@ export function validateProject(rawProjectDir, options = {}) {
       if (data.task_id) ensureIdExists(`${relFile}#task_id`, data.task_id);
       for (const ev of data.evidence_refs || []) ensureIdExists(`${relFile}#evidence_refs`, ev);
       for (const conf of data.conflicts_detected || []) ensureIdExists(`${relFile}#conflicts_detected`, conf);
+      for (const adr of data.relevant_decisions || []) ensureIdExists(`${relFile}#relevant_decisions`, adr);
     } else if (spec.prefix === "EVID") {
       if (data.task_id) ensureIdExists(`${relFile}#task_id`, data.task_id);
     } else if (spec.prefix === "CONF") {

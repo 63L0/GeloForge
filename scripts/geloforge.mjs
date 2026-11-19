@@ -12,6 +12,7 @@ import { bootstrapProject } from "./bootstrap-project.mjs";
 import { validateProject } from "../core/project-validator.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectStatus } from "../core/project-status.mjs";
+import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
 import { atomicWriteFile, validateOutputFilePath } from "../core/path-safety.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +34,7 @@ Commands:
   init       Initialize a new project Second Brain (supports profiles & --dry-run)
   validate   Validate a project's schemas, compatibility, IDs, references, and links
   context    Compile a deterministic, trust-tiered context packet for a task or query
+  handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
   status     Inspect project health, operational task state, and Git status
 
 Global Options:
@@ -95,6 +97,38 @@ Options:
   -p, --project <path>    Target project directory (or pass as positional arg)
   --json                  Emit structured JSON output
   -h, --help              Show help
+`);
+      break;
+    case "handoff":
+      console.log(`Usage: geloforge handoff --project <path> [options]
+
+Create Options:
+  -p, --project <path>         Target project directory (required)
+  -t, --task <id>              Target task ID (defaults to first active task if any)
+  --id <HANDOFF-NNNN>          Explicit handoff ID (auto-assigned if omitted)
+  --from-role <role>           Source agent role (default: developer)
+  --to-role <role>             Receiving agent role (default: qa-security-reviewer)
+  --from-tool <name>           Source AI tool label (e.g. "codex", "antigravity")
+  --to-tool <name>             Target AI tool label (e.g. "gemini-cli", "claude-code")
+  --summary <text>             Concise transfer summary
+  --next-action <text>         Recommended next action
+  --completed <text>           Completed item (repeatable)
+  --open <text>                Remaining open item (repeatable)
+  --claim <text>               Unverified agent claim (repeatable)
+  --blocker <text>             Blocker description (repeatable)
+  --question <text>            Open question (repeatable)
+  --risk <text>                Unresolved risk (repeatable)
+  --evidence <EVID-NNNN>       Evidence ID reference (repeatable)
+  --context-pack-ref <id>      Associated CPACK-NNNN ID
+  --created-at <iso>           ISO-8601 timestamp override
+  --dry-run                    Validate and preview without writing file
+  -o, --out <file>             Custom safe output YAML path (default: handoffs/HANDOFF-NNNN-*.yaml)
+  --format <type>              Stdout format: markdown (default), yaml, or json
+  --json                       Alias for --format json
+
+Inspect Options:
+  --inspect <file>             Validate and render an existing handoff YAML file
+  -h, --help                   Show help
 `);
       break;
   }
@@ -326,6 +360,116 @@ function handleStatus(args) {
   return 0;
 }
 
+function handleHandoff(args) {
+  const parsed = parseArgs({
+    args,
+    options: {
+      project: { type: "string", short: "p" },
+      inspect: { type: "string" },
+      task: { type: "string", short: "t" },
+      id: { type: "string" },
+      "from-role": { type: "string" },
+      "to-role": { type: "string" },
+      "from-tool": { type: "string" },
+      "to-tool": { type: "string" },
+      status: { type: "string" },
+      summary: { type: "string" },
+      "next-action": { type: "string" },
+      completed: { type: "string", multiple: true },
+      open: { type: "string", multiple: true },
+      claim: { type: "string", multiple: true },
+      blocker: { type: "string", multiple: true },
+      question: { type: "string", multiple: true },
+      risk: { type: "string", multiple: true },
+      evidence: { type: "string", multiple: true },
+      "context-pack-ref": { type: "string" },
+      "created-at": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      out: { type: "string", short: "o" },
+      format: { type: "string", default: "markdown" },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+
+  if (parsed.values.help) {
+    printSubHelp("handoff");
+    return 0;
+  }
+
+  const format = parsed.values.json ? "json" : parsed.values.format;
+  if (format !== "markdown" && format !== "yaml" && format !== "json") {
+    throw new Error(`Invalid --format "${format}". Expected "markdown", "yaml", or "json".`);
+  }
+
+  if (parsed.values.inspect) {
+    const res = inspectHandoff({
+      projectDir: parsed.values.project,
+      handoffPath: parsed.values.inspect,
+      harnessDir: HARNESS_DIR,
+    });
+    if (format === "json") {
+      console.log(JSON.stringify(res, null, 2));
+      return res.valid ? 0 : 1;
+    }
+    if (format === "yaml") {
+      console.log(fs.readFileSync(res.filePath, "utf8"));
+      return res.valid ? 0 : 1;
+    }
+    console.log(`Handoff Inspection : ${res.valid ? "PASS" : "FAIL"} (${res.compatibilityStatus})`);
+    console.log(`File / ID / Schema : ${res.relPath} | ${res.id} | ${res.schemaVersion}`);
+    for (const w of res.warnings) console.log(`  - [WARN] ${w}`);
+    for (const e of res.errors) console.error(`  - [ERR] ${e}`);
+    if (res.markdown) {
+      console.log("");
+      process.stdout.write(res.markdown);
+    }
+    return res.valid ? 0 : 1;
+  }
+
+  const res = createHandoff({
+    projectDir: parsed.values.project,
+    taskId: parsed.values.task,
+    id: parsed.values.id,
+    fromRole: parsed.values["from-role"],
+    toRole: parsed.values["to-role"],
+    fromTool: parsed.values["from-tool"],
+    toTool: parsed.values["to-tool"],
+    status: parsed.values.status,
+    summary: parsed.values.summary,
+    nextAction: parsed.values["next-action"],
+    completedItems: parsed.values.completed,
+    openItems: parsed.values.open,
+    unverifiedClaims: parsed.values.claim,
+    blockers: parsed.values.blocker,
+    openQuestions: parsed.values.question,
+    unresolvedRisks: parsed.values.risk,
+    evidenceRefs: parsed.values.evidence,
+    contextPackRef: parsed.values["context-pack-ref"],
+    createdAt: parsed.values["created-at"],
+    dryRun: parsed.values["dry-run"],
+    out: parsed.values.out,
+    harnessDir: HARNESS_DIR,
+    workspaceRoot: WORKSPACE_ROOT,
+  });
+
+  if (format === "json") {
+    console.log(JSON.stringify(res, null, 2));
+    return 0;
+  }
+  if (format === "yaml") {
+    process.stdout.write(res.yaml);
+    return 0;
+  }
+  console.log(res.dryRun ? `DRY RUN — Handoff ${res.id} not written.` : `Handoff created: ${res.filePath}`);
+  for (const w of res.warnings) console.log(`  - [WARN] ${w}`);
+  console.log("");
+  process.stdout.write(res.markdown);
+  return 0;
+}
+
 function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
@@ -349,6 +493,9 @@ function main() {
         break;
       case "context":
         code = handleContext(rest);
+        break;
+      case "handoff":
+        code = handleHandoff(rest);
         break;
       case "status":
         code = handleStatus(rest);

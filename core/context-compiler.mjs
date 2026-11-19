@@ -55,6 +55,7 @@ const CANONICAL_DIRS = new Set([
   "brain/incidents",
   "tasks",
   "evidence",
+  "handoffs",
 ]);
 
 export function estimateTokens(text) {
@@ -435,6 +436,7 @@ export function compileContext(options = {}) {
     "tasks",
     "evidence",
     "proposals",
+    "handoffs",
   ];
   const parsedRecords = [];
   const seenIds = new Map();
