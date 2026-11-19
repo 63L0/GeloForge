@@ -1,7 +1,7 @@
 {
   "name": "geloforge",
   "version": "0.2.0",
-  "description": "A reusable toolkit that helps developers organize projects, manage AI coding agents, and keep project knowledge in one place, so they can build software more efficiently without starting from scratch every time.",
+  "description": "A reusable starter kit for AI-assisted coding projects, with built-in project memory, templates, and validation tools.",
   "license": "MIT",
   "private": true,
   "type": "module",
