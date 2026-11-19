@@ -1,6 +1,6 @@
 {
   "name": "geloforge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A reusable starter kit for AI-assisted coding projects, with built-in project memory, templates, and validation tools.",
   "license": "MIT",
   "private": true,

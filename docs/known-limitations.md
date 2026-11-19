@@ -2,25 +2,28 @@
 
 This document maintains an honest boundary between **technically enforced capabilities**, **documented-only safeguards**, **not-implemented features**, and **untested environments**.
 
-## 1. Technically Enforced & Verified Today
-- **Workspace & Repository Separation:** Verified no root `.git`, independent harness Git repo, `.gitattributes` LF normalization, and `.gitignore` exclusions tested via `git check-ignore`.
-- **Bootstrap Path, Symlink & Transactional Safety:** [path-safety.mjs](../core/path-safety.mjs) and [bootstrap-project.mjs](../scripts/bootstrap-project.mjs) enforce traversal blocking, NTFS junction/symlink ancestor refusal, overwrite refusal, single-pass placeholder rendering, and atomic staging rollback.
-- **Second Brain Structural & Reference Validation:** [project-validator.mjs](../core/project-validator.mjs) enforces YAML/frontmatter parsing, 12 strict JSON schemas (`"additionalProperties": false`), version compatibility ([compatibility.mjs](../core/compatibility.mjs)), duplicate-ID rejection, cross-record link verification, and relative Markdown link checks.
+## 1. Technically Enforced & Verified Today (v0.3.0 RC)
+- **Workspace & Repository Separation:** Verified no workspace root `.git`, independent harness Git repo, `.gitattributes` LF normalization, and `.gitignore` exclusions tested via `git check-ignore`.
+- **Bootstrap, Output & Symlink Safety:** [path-safety.mjs](../core/path-safety.mjs) and [bootstrap-project.mjs](../scripts/bootstrap-project.mjs) enforce traversal blocking, symlink/NTFS junction refusal, overwrite refusal, single-pass placeholder rendering, sensitive `--out` path refusal, and atomic temp-file staging rollback.
+- **Second Brain Validation & Handoff Authenticity:** [project-validator.mjs](../core/project-validator.mjs) and [handoff.mjs](../core/handoff.mjs) enforce YAML/frontmatter parsing, 12 strict JSON schemas (`"additionalProperties": false`), version compatibility ([compatibility.mjs](../core/compatibility.mjs)), duplicate-ID rejection, cross-record reference integrity, symlink rejection across Second Brain directories, forged `verified_evidence` detection, and relative Markdown link checks.
+- **Deterministic Context Compilation & Selective Codebase Mapping:** [context-compiler.mjs](../core/context-compiler.mjs) and [codebase-map.mjs](../core/codebase-map.mjs) enforce mandatory `A0` policy & open `CONF-*` preservation (reporting `quick` minimum floor overruns honestly via `budget_breakdown`), `--exclude-unverified` filtering, `.gitignore`/secret/binary exclusions, bounded 2-tier repo scanning, and escaped document delimiters.
+- **Project-Scoped Git State ([git-utils.mjs](../core/git-utils.mjs)):** Prevents sibling modified files in parent Git repositories from leaking into nested subproject status or handoffs, and supports unborn `HEAD` and non-Git projects cleanly.
 - **Zero-Network / Zero-Dependency Guarantees:** Static and runtime tests verify zero third-party packages and zero network module usage in `core/` and `scripts/`.
 
 ## 2. Documented Only (NOT Technically Enforced)
-- **Write Ownership & Authority Hierarchy (`A0`–`A6`):** [memory-policy.md](../policies/memory-policy.md) defines role write limits, but no OS ACLs, Git pre-commit hooks, or runtime sandboxes restrict who edits project files today.
+- **Write Ownership & Authority Hierarchy (`A0`–`A6`):** [memory-policy.md](../policies/memory-policy.md) defines role write limits, but no OS ACLs, Git pre-commit hooks, or runtime sandboxes block an arbitrary process from editing files directly.
 - **Approval Boundaries & Spend Caps:** [approval-boundaries.md](../policies/approval-boundaries.md) and [token-efficiency.md](../policies/token-efficiency.md) (`max 2 specialists`, `max 2 retries`, `zero automatic spend`) are policy targets only—not enforced by a runtime interceptor.
 - **Provider Adapters & Agent Roles:** [adapters/](../adapters/README.md) and [roles/](../roles/README.md) are documentation-only contracts.
+- **Prompt-Injection Defense:** Document markers (`<<<GELOFORGE_DOC>>>`) escape spoofed delimiters, **not semantic adversarial instructions** inside included text or mapped code comments.
 
 ## 3. Not Implemented
-- Deterministic Context Compiler runtime ([context-compiler-spec.md](../context/context-compiler-spec.md)).
-- Restricted Integration Controller and automated knowledge promotion.
-- Operational Codex CLI, Gemini CLI, or multi-agent subagent execution.
-- Automated `CHKPT-NNNN` checkpoints, worktree orchestration, `skills/`, `evaluations/`, vector databases, RAG services, or paid API integrations.
+- Restricted Integration Controller and automated proposal-to-canonical promotion.
+- On-disk compiled packet caching (`<workspace-root>/local-runtime/context-cache/`).
+- Operational Codex CLI, Gemini CLI, or multi-agent subagent runners.
+- Automated `CHKPT-NNNN` checkpoint recovery, worktree orchestration, `skills/`, `evaluations/`, vector databases, RAG services, or paid API integrations.
 - Automated npm registry publishing (`package.json` sets `"private": true` intentionally; source code is MIT-licensed via [LICENSE](../LICENSE)).
 
 ## 4. Technical Scope & Platform Limits
 - **Zero-Dependency Parser Subset:** [yaml-subset.mjs](../core/yaml-subset.mjs) and [json-schema-lite.mjs](../core/json-schema-lite.mjs) intentionally cover the YAML 1.2 and Draft 2020-12 subsets needed by harness contracts (no YAML anchors/aliases `&/*` or JSON Schema `$ref`/`oneOf`/`allOf`).
-- **Platform Testing Boundary:** All tests were executed directly on **Windows 11** (`Node.js >= 20`). Code uses platform-neutral `node:path` APIs and avoids hardcoded drive letters or usernames, but **Linux and macOS execution have NOT been tested directly**.
-- **Token Savings Claims:** No token reduction percentages are claimed until the future Context Compiler and provider usage logging are implemented and measured.
+- **Heuristic Token Estimation:** `estimateTokens` uses `Math.ceil(utf8_bytes / 4)` (`heuristic:ceil(utf8_bytes/4)`), not vendor-exact LLM tokenizers; `npm run benchmark` measures synthetic structure/size/latency/memory rather than live LLM task accuracy or billing.
+- **Platform Testing Boundary:** All Stage 2, 3, and 4 automated tests and benchmarks executed directly on **Windows 11** (`Node.js >= 20`). Code uses platform-neutral `node:path` APIs and includes [.github/workflows/ci.yml](../.github/workflows/ci.yml) for `ubuntu-latest`, `macos-latest`, and `windows-latest`, **but Linux and macOS runners have NOT been executed locally during this audit**.
