@@ -115,7 +115,10 @@ Options:
   --budget <int>          Override estimated-token budget target (>= 100)
   --map                   Include selective deterministic codebase symbol outline map
   --map-budget <int>      Override codebase map token budget (>= 100)
-  --exclude-unverified    Omit A5-A6, draft, and unverified records completely
+  --skills                Include portable Agent Skills with Tier 0/1/2 progressive disclosure
+  --skill <name>          Explicitly pin a trusted skill into Tier 1 (repeatable; implies --skills)
+  --skills-budget <int>   Override portable skills estimated-token budget (>= 100)
+  --exclude-unverified    Omit A5-A6, draft, and unverified records/skills completely
   --format <type>         Output format: markdown (default) or json
   -o, --out <file>        Write output atomically to a safe file path
   --compiled-at <iso>     ISO-8601 timestamp for deterministic manifest
@@ -393,6 +396,9 @@ function handleContext(args) {
       budget: { type: "string" },
       map: { type: "boolean", default: false },
       "map-budget": { type: "string" },
+      skills: { type: "boolean", default: false },
+      skill: { type: "string", multiple: true },
+      "skills-budget": { type: "string" },
       "exclude-unverified": { type: "boolean", default: false },
       format: { type: "string", default: "markdown" },
       out: { type: "string", short: "o" },
@@ -431,6 +437,19 @@ function handleContext(args) {
     mapBudgetNum = Number.parseInt(parsed.values["map-budget"].trim(), 10);
   }
 
+  const pinnedSkills = parsed.values.skill || [];
+  const includeSkills = parsed.values.skills || pinnedSkills.length > 0;
+  let skillsBudgetNum;
+  if (parsed.values["skills-budget"] !== undefined) {
+    if (!includeSkills) {
+      throw new Error("--skills-budget requires --skills or --skill.");
+    }
+    if (!/^\d+$/.test(parsed.values["skills-budget"].trim())) {
+      throw new Error(`Invalid --skills-budget "${parsed.values["skills-budget"]}". Must be a positive integer.`);
+    }
+    skillsBudgetNum = Number.parseInt(parsed.values["skills-budget"].trim(), 10);
+  }
+
   let resolvedOut = null;
   if (parsed.values.out !== undefined) {
     resolvedOut = validateOutputFilePath(parsed.values.out, {
@@ -448,6 +467,9 @@ function handleContext(args) {
     budget: budgetNum,
     includeMap: parsed.values.map,
     mapBudget: mapBudgetNum,
+    includeSkills,
+    pinnedSkills,
+    skillsBudget: skillsBudgetNum,
     excludeUnverified: parsed.values["exclude-unverified"],
     compiledAt: parsed.values["compiled-at"],
     harnessDir: HARNESS_DIR,
