@@ -429,7 +429,11 @@ function loadProjectSnapshot(projectDir, harnessDir, warnings) {
     try {
       const data = parseYaml(r.text, rel);
       const v = validateAgainstSchema(data, confSchema);
-      if (v.valid) conflicts.push({ rel, data });
+      if (v.valid) {
+        conflicts.push({ rel, data });
+      } else {
+        warnings.push(`Skipped invalid CONF ${rel}: ${v.errors.join("; ")}`);
+      }
     } catch (err) {
       warnings.push(`Skipped malformed CONF ${rel}: ${err.message}`);
     }
@@ -686,7 +690,8 @@ export function createHandoff(options = {}) {
         contradictionWarnings.push(
           `Agent claim asserts verification ("${claim}") with zero verified EVID-* records in evidence/.`
         );
-      } else if (failedEvidenceDetected) {
+      }
+      if (failedEvidenceDetected) {
         contradictionWarnings.push(
           `Contradiction: agent claim asserts verification ("${claim}") while evidence contains failed check(s).`
         );

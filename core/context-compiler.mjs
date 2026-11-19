@@ -867,7 +867,7 @@ export function compileContext(options = {}) {
   const actualMandatoryTokens = estimateTokens(mandatoryOnlyMd);
   const explicitBudgetProvided = options.budget !== undefined && options.budget !== null;
 
-  let remainingBudget = tokenBudgetTarget - actualMandatoryTokens;
+  let remainingBudget = tokenBudgetTarget - actualMandatoryTokens - Math.min(240, optionalCandidates.length * 18);
   const desiredMapBudget = includeMap
     ? explicitMapBudget ??
       Math.min(
@@ -886,16 +886,20 @@ export function compileContext(options = {}) {
   let remainingQuickDirect = Math.max(0, autoEscalateQuickDirectCap);
 
   const selectedOptional = [];
+  let addedUnverifiedBanner = mandatoryDocs.some((d) => d.section === "unverified");
 
   for (const cand of optionalCandidates) {
-    const entryTokens = estimateTokens(renderDocFence(cand)) + 30;
+    const needsUnverifiedBanner = !addedUnverifiedBanner && cand.section === "unverified";
+    const entryTokens = estimateTokens(renderDocFence(cand)) + 42 + (needsUnverifiedBanner ? 65 : 0);
     const effectiveAvailable = cand.isDirectRef ? remainingBudget : remainingBudget - mapReserve;
     if (effectiveAvailable >= entryTokens) {
       selectedOptional.push(cand);
       remainingBudget -= entryTokens;
+      if (needsUnverifiedBanner) addedUnverifiedBanner = true;
     } else if (cand.isDirectRef && remainingQuickDirect >= entryTokens) {
       selectedOptional.push(cand);
       remainingQuickDirect -= entryTokens;
+      if (needsUnverifiedBanner) addedUnverifiedBanner = true;
     } else {
       omittedCandidates.push({
         path: cand.path,

@@ -601,3 +601,59 @@ policies:
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
   }
 });
+
+test("compileContext reports exact budget_breakdown, supports excludeUnverified, and includes threat model notice", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gf-ctx-s3-"));
+  try {
+    const projectDir = path.join(tmp, "proj");
+    createRichFixture(projectDir, { withGit: true });
+
+    // Spoofed/proposed item would normally sit in Non-Authoritative section unless excluded
+    const defaultRes = compileContext({
+      projectDir,
+      taskId: "TASK-0001",
+      profile: "working",
+      referenceDate: "2026-11-19",
+      compiledAt: "2026-11-19T00:00:00.000Z",
+    });
+
+    const b = defaultRes.manifest.budget_breakdown;
+    assert.ok(b && typeof b === "object");
+    assert.equal(b.mandatory_tokens, b.policy_tokens + b.project_mandatory_tokens);
+    assert.equal(
+      b.mandatory_tokens + b.optional_tokens + b.codebase_map_tokens + b.overhead_tokens,
+      defaultRes.manifest.estimated_tokens
+    );
+    assert.ok(defaultRes.markdown.includes("delimiters alone do not prevent untrusted text from influencing an AI model"));
+    assert.equal(
+      defaultRes.manifest.included_documents.some((d) => d.path === "brain/research/RES-0001-jwt-stale.md"),
+      true
+    );
+
+    const strictRes = compileContext({
+      projectDir,
+      taskId: "TASK-0001",
+      profile: "working",
+      excludeUnverified: true,
+      referenceDate: "2026-11-19",
+      compiledAt: "2026-11-19T00:00:00.000Z",
+    });
+
+    assert.equal(
+      strictRes.manifest.included_documents.some((d) => d.path === "brain/research/RES-0001-jwt-stale.md"),
+      false
+    );
+    assert.ok(
+      strictRes.manifest.omitted_candidates.some(
+        (c) => c.path === "brain/research/RES-0001-jwt-stale.md" && /--exclude-unverified/.test(c.reason)
+      )
+    );
+    // Mandatory safety & open conflicts stay present even with excludeUnverified
+    const strictPaths = new Set(strictRes.manifest.included_documents.map((d) => d.path));
+    assert.equal(strictPaths.has("harness/policies/approval-boundaries.md"), true);
+    assert.equal(strictPaths.has("brain/conflicts/CONF-0001-ttl.yaml"), true);
+    assert.notEqual(strictRes.manifest.cache_key, defaultRes.manifest.cache_key);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
