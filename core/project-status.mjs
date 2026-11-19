@@ -61,6 +61,31 @@ export function getProjectStatus(rawProjectDir, options = {}) {
 
   const vcs = inspectGitState(projectDir);
 
+  const nextSteps = [];
+  if (!validation.valid) {
+    nextSteps.push('Run "geloforge validate" and fix Second Brain schema or reference errors.');
+  } else if (state) {
+    if ((state.open_conflicts || []).length > 0) {
+      nextSteps.push(
+        `Resolve ${state.open_conflicts.length} open conflict(s) (${state.open_conflicts.join(", ")}) before approving decisions.`
+      );
+    }
+    if ((state.blocked_tasks || []).length > 0) {
+      nextSteps.push(`Unblock task(s): ${(state.blocked_tasks || []).join(", ")}.`);
+    }
+    if ((state.active_tasks || []).length === 0) {
+      nextSteps.push('Create and activate a task: geloforge task new --title "<goal>" --activate');
+    } else if (!state.last_verified_evidence) {
+      nextSteps.push(
+        `Capture command-backed evidence: geloforge evidence capture --task ${state.active_tasks[0]} -- <test-command>`
+      );
+    } else {
+      nextSteps.push(
+        `Compile task context: geloforge context --task ${state.active_tasks[0]} --map --profile quick`
+      );
+    }
+  }
+
   return {
     projectDir,
     valid: validation.valid,
@@ -90,6 +115,7 @@ export function getProjectStatus(rawProjectDir, options = {}) {
         }
       : null,
     vcs,
+    nextSteps,
     counts: {
       records: validation.recordCount,
       markdownFiles: validation.checkedMarkdownFiles,

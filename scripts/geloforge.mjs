@@ -105,7 +105,7 @@ Options:
   -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   -t, --task <id>         Task contract ID (e.g. TASK-0001)
   -q, --query <text>      Task description or search query
-  --profile <name>        Budget profile: quick (~2000), working (~8000), deep (~16000)
+  --profile <name>        Budget profile: quick (~4000), working (~8000), deep (~16000)
   --budget <int>          Override estimated-token budget target (>= 100)
   --map                   Include selective deterministic codebase symbol outline map
   --map-budget <int>      Override codebase map token budget (>= 100)
@@ -497,6 +497,9 @@ function handleStatus(args) {
     }`
   );
   console.log(`Counts         : records=${status.counts.records} | markdown=${status.counts.markdownFiles} | errors=${status.counts.errors} | warnings=${status.counts.warnings}`);
+  if (Array.isArray(status.nextSteps) && status.nextSteps.length > 0) {
+    console.log(`Next Step      : ${status.nextSteps[0]}`);
+  }
   for (const w of status.warnings) console.log(`  - [WARN] ${w}`);
   for (const e of status.errors) console.error(`  - [ERR] ${e}`);
   return 0;

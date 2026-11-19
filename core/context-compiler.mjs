@@ -22,7 +22,7 @@ const __dirname = path.dirname(__filename);
 const DEFAULT_HARNESS_DIR = path.resolve(__dirname, "..");
 
 export const PROFILE_BUDGETS = {
-  quick: 2000,
+  quick: 4000,
   working: 8000,
   deep: 16000,
 };
@@ -879,10 +879,9 @@ export function compileContext(options = {}) {
     : 0;
   const mapReserve = includeMap && remainingBudget >= desiredMapBudget ? desiredMapBudget : 0;
 
-  // When a quick profile overflows on mandatory records alone (without an explicit --budget override),
-  // reserve a tight escalated allowance strictly for directly task-referenced records (e.g. linked ADRs/EVID).
+  // Reserve a bounded escalated allowance for directly task-referenced records when quick mode is tight.
   const autoEscalateQuickDirectCap =
-    !explicitBudgetProvided && profile === "quick" && remainingBudget < 0
+    !explicitBudgetProvided && profile === "quick"
       ? Math.min(PROFILE_BUDGETS.working - actualMandatoryTokens, 1500)
       : 0;
   let remainingQuickDirect = Math.max(0, autoEscalateQuickDirectCap);
@@ -984,8 +983,9 @@ export function compileContext(options = {}) {
     );
 
     if (nextOverrun && !overrunWarned) {
+      const hint = profile === "quick" ? " Re-run with --profile working (~8,000) for larger tasks." : "";
       warnings.push(
-        `Budget overrun: compiled packet is ~${measured} est. tokens (${TOKEN_ESTIMATE_METHOD}) vs ${profile} target ${tokenBudgetTarget}; mandatory safety/authority policies preserved verbatim (escalated effective_profile: ${nextEffective}).`
+        `Budget overrun: compiled packet is ~${measured} est. tokens (${TOKEN_ESTIMATE_METHOD}) vs ${profile} target ${tokenBudgetTarget}; mandatory safety/authority policies preserved verbatim (escalated effective_profile: ${nextEffective}).${hint}`
       );
       overrunWarned = true;
     }
