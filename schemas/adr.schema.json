@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-workspace.local/schemas/adr.schema.json",
+  "title": "Architecture Decision Record",
+  "description": "YAML frontmatter schema for ADR-NNNN-*.md records in brain/decisions/.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "status",
+    "memory_layer",
+    "authority_level",
+    "owner",
+    "proposed_by",
+    "approved_by",
+    "created_at",
+    "updated_at",
+    "decided_at",
+    "review_by",
+    "supersedes",
+    "superseded_by",
+    "related_requirements",
+    "related_research",
+    "approval_ref",
+    "tags"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "id": { "type": "string", "pattern": "^ADR-\\d{4}$" },
+    "title": { "type": "string", "minLength": 3 },
+    "status": { "type": "string", "enum": ["proposed", "accepted", "deprecated", "superseded", "rejected"] },
+    "memory_layer": { "type": "string", "enum": ["L1_AUTHORITATIVE"] },
+    "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+    "owner": { "type": "string", "minLength": 1 },
+    "proposed_by": { "type": "string", "minLength": 1 },
+    "approved_by": { "type": ["string", "null"] },
+    "created_at": { "type": "string", "minLength": 10 },
+    "updated_at": { "type": "string", "minLength": 10 },
+    "decided_at": { "type": ["string", "null"] },
+    "review_by": { "type": ["string", "null"] },
+    "supersedes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^ADR-\\d{4}$" }
+    },
+    "superseded_by": { "type": ["string", "null"], "pattern": "^ADR-\\d{4}$" },
+    "related_requirements": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "related_research": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^RES-\\d{4}$" }
+    },
+    "approval_ref": { "type": ["string", "null"], "pattern": "^APPR-\\d{4}$" },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "is_example": { "type": "boolean" },
+    "example_notice": { "type": "string" }
+  }
+}

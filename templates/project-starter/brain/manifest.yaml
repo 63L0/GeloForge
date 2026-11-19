@@ -1,0 +1,33 @@
+# Project Manifest
+# Template placeholders are substituted by harness/scripts/bootstrap-project.mjs
+schema_version: "1.0"
+project_id: "{{PROJECT_ID}}"
+slug: "{{PROJECT_SLUG}}"
+name: "{{PROJECT_NAME}}"
+description: "{{PROJECT_DESCRIPTION}}"
+status: "template"
+owner: "{{PROJECT_OWNER}}"
+memory_layer: "L1_AUTHORITATIVE"
+authority_level: "A1"
+harness_version: "{{HARNESS_VERSION}}"
+created_at: "{{CREATED_AT}}"
+updated_at: "{{CREATED_AT}}"
+repository:
+  vcs: "git"
+  initialized: false
+  default_branch: "main"
+paths:
+  brain_index: "brain/INDEX.md"
+  prd: "brain/requirements/prd.md"
+  constraints: "brain/requirements/constraints.md"
+  architecture: "brain/architecture/overview.md"
+  state: "brain/state/current.yaml"
+  decisions_dir: "brain/decisions"
+  research_dir: "brain/research"
+  tasks_dir: "tasks"
+  evidence_dir: "evidence"
+  proposals_dir: "proposals"
+policies:
+  - "harness/policies/approval-boundaries.md"
+  - "harness/policies/memory-policy.md"
+  - "harness/policies/token-efficiency.md"

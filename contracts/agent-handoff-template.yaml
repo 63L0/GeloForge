@@ -1,0 +1,25 @@
+# Agent Handoff Template
+# Compact structured handoff between specialist roles.
+schema_version: "1.0"
+id: "{{HANDOFF_ID}}"
+task_id: "{{TASK_ID}}"
+from_role: "researcher"
+to_role: "orchestrator"
+status: "draft"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+created_at: "{{CREATED_AT}}"
+summary: "{{HANDOFF_SUMMARY}}"
+completed_items:
+  - "{{COMPLETED_ITEM}}"
+open_items:
+  - "{{OPEN_ITEM}}"
+artifacts_produced:
+  - path: "{{ARTIFACT_PATH}}"
+    purpose: "{{ARTIFACT_PURPOSE}}"
+    status: "proposed"
+evidence_refs: []
+unresolved_risks: []
+conflicts_detected: []
+recommended_next_action: "{{RECOMMENDED_NEXT_ACTION}}"
+context_pack_ref: null

@@ -1,0 +1,28 @@
+# EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION
+schema_version: "1.0"
+id: "EVID-0000"
+title: "Example Evidence Manifest Structure"
+task_id: "TASK-0000"
+status: "draft"
+memory_layer: "L3_RESEARCH_EVIDENCE"
+authority_level: "A3"
+produced_by_role: "qa-security-reviewer"
+verified_by: null
+created_at: "2026-01-01T00:10:00Z"
+source_revision: "example-commit-0000000"
+environment:
+  os: "Windows 11 (example placeholder)"
+  runtime: "Node.js (example placeholder)"
+checks:
+  - name: "Example Local Schema Check"
+    command: "node validators/validate-foundation.mjs"
+    result: "not_tested"
+    summary: "Illustrative example entry only — not an actual test execution."
+artifacts:
+  - path: "docs/example-note.md"
+    description: "Illustrative artifact entry"
+    sha256: null
+limitations:
+  - "This file is an example record only and does not represent real verification."
+is_example: true
+example_notice: "EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION"

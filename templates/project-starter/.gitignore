@@ -1,0 +1,25 @@
+# Environment & Secrets (NEVER commit)
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Dependencies & build artifacts
+node_modules/
+dist/
+build/
+coverage/
+
+# Machine-local runtime & temp files
+*.log
+tmp/
+*.tmp
+local-runtime/
+
+# OS & editor local files
+.DS_Store
+Thumbs.db
+.vscode/*.local

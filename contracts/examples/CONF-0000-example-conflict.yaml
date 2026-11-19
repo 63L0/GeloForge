@@ -1,0 +1,27 @@
+# EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION
+schema_version: "1.0"
+id: "CONF-0000"
+title: "Example Contradiction Between ADR and Verification Evidence"
+status: "open"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+severity: "medium"
+detected_at: "2026-01-01T00:20:00Z"
+detected_by: "qa-security-reviewer"
+conflicting_records:
+  - record_id: "ADR-0000"
+    path: "brain/decisions/ADR-0000-example-decision.md"
+    authority_level: "A2"
+    claim: "Assumed legacy runtime flag X is supported."
+  - record_id: "EVID-0000"
+    path: "evidence/EVID-0000-example-evidence.yaml"
+    authority_level: "A3"
+    claim: "Local check showed runtime flag X was removed in target runtime."
+description: "Illustrative conflict demonstrating that higher authority trust class does not override contradicting evidence."
+impact: "Blocks dependent implementation tasks until reviewed."
+resolution_strategy: null
+resolved_by: null
+resolved_at: null
+approval_ref: null
+is_example: true
+example_notice: "EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION"

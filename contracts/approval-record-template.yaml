@@ -1,0 +1,20 @@
+# Approval Record Template
+# Required before owner-gated changes or boundary-crossing actions.
+schema_version: "1.0"
+id: "{{APPROVAL_ID}}"
+title: "{{APPROVAL_TITLE}}"
+status: "pending"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+boundary_category: "architecture_change"
+requested_by: "{{REQUESTED_BY}}"
+requested_at: "{{REQUESTED_AT}}"
+decided_by: null
+decided_at: null
+expires_at: null
+target_records:
+  - "{{TARGET_RECORD_PATH}}"
+rationale: "{{APPROVAL_RATIONALE}}"
+risk_assessment: "{{RISK_ASSESSMENT}}"
+conditions:
+  - "{{CONDITION_1}}"

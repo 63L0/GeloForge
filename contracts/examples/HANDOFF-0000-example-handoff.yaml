@@ -1,0 +1,28 @@
+# EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION
+schema_version: "1.0"
+id: "HANDOFF-0000"
+task_id: "TASK-0000"
+from_role: "developer"
+to_role: "qa-security-reviewer"
+status: "draft"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+created_at: "2026-01-01T00:05:00Z"
+summary: "Example handoff demonstrating compact cross-role state transfer."
+completed_items:
+  - "Drafted example specification document."
+open_items:
+  - "Independent QA review of example checks."
+artifacts_produced:
+  - path: "docs/example-note.md"
+    purpose: "Illustrative artifact reference"
+    status: "draft"
+evidence_refs:
+  - "EVID-0000"
+unresolved_risks:
+  - "Example risk entry for format demonstration only."
+conflicts_detected: []
+recommended_next_action: "Review against acceptance criteria in TASK-0000."
+context_pack_ref: "CPACK-0000"
+is_example: true
+example_notice: "EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION"

@@ -1,0 +1,18 @@
+# Current Operational Project State
+schema_version: "1.0"
+project_id: "{{PROJECT_ID}}"
+state_revision: 0
+status: "initialized"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+updated_at: "{{CREATED_AT}}"
+updated_by: "{{PROJECT_OWNER}}"
+current_phase: "initialization"
+active_tasks: []
+blocked_tasks: []
+pending_approvals: []
+open_conflicts: []
+last_verified_evidence: null
+last_checkpoint: null
+known_dependencies: []
+summary: "Project Second Brain initialized from harness project-starter template; no application tasks executed yet."

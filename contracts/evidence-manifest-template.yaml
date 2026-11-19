@@ -1,0 +1,27 @@
+# Evidence Manifest Template
+# Records concrete verification checks, commands run, and environment metadata.
+schema_version: "1.0"
+id: "{{EVIDENCE_ID}}"
+title: "{{EVIDENCE_TITLE}}"
+task_id: "{{TASK_ID}}"
+status: "draft"
+memory_layer: "L3_RESEARCH_EVIDENCE"
+authority_level: "A3"
+produced_by_role: "qa-security-reviewer"
+verified_by: null
+created_at: "{{CREATED_AT}}"
+source_revision: "{{SOURCE_REVISION}}"
+environment:
+  os: "{{OS_VERSION}}"
+  runtime: "{{RUNTIME_VERSION}}"
+checks:
+  - name: "{{CHECK_NAME}}"
+    command: "{{CHECK_COMMAND}}"
+    result: "not_tested"
+    summary: "{{CHECK_SUMMARY}}"
+artifacts:
+  - path: "{{ARTIFACT_PATH}}"
+    description: "{{ARTIFACT_DESCRIPTION}}"
+    sha256: null
+limitations:
+  - "{{LIMITATION_1}}"

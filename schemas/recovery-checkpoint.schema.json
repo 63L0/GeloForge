@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-workspace.local/schemas/recovery-checkpoint.schema.json",
+  "title": "Recovery Checkpoint",
+  "description": "Metadata manifest describing a future resumable operational checkpoint.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "project_id",
+    "status",
+    "memory_layer",
+    "authority_level",
+    "created_at",
+    "created_by",
+    "git_branch",
+    "git_commit",
+    "working_tree_clean",
+    "active_tasks",
+    "state_file_path",
+    "state_revision",
+    "resume_instructions",
+    "verification_evidence_ref"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "id": { "type": "string", "pattern": "^CHKPT-\\d{4}$" },
+    "project_id": { "type": "string", "pattern": "^proj-[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$" },
+    "status": { "type": "string", "enum": ["created", "verified", "restored", "expired", "invalidated"] },
+    "memory_layer": { "type": "string", "enum": ["L2_OPERATIONAL"] },
+    "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+    "created_at": { "type": "string", "minLength": 10 },
+    "created_by": { "type": "string", "minLength": 1 },
+    "git_branch": { "type": "string", "minLength": 1 },
+    "git_commit": { "type": "string", "minLength": 1 },
+    "working_tree_clean": { "type": "boolean" },
+    "active_tasks": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^TASK-\\d{4}$" }
+    },
+    "state_file_path": { "type": "string", "minLength": 1 },
+    "state_revision": { "type": "integer", "minimum": 0 },
+    "resume_instructions": { "type": "string", "minLength": 1 },
+    "verification_evidence_ref": { "type": ["string", "null"], "pattern": "^EVID-\\d{4}$" },
+    "is_example": { "type": "boolean" },
+    "example_notice": { "type": "string" }
+  }
+}

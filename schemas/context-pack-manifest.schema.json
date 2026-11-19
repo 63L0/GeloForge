@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-workspace.local/schemas/context-pack-manifest.schema.json",
+  "title": "Context Pack Manifest",
+  "description": "Manifest produced by the future deterministic Context Compiler for Layer 4 packets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "task_id",
+    "project_id",
+    "status",
+    "memory_layer",
+    "authority_level",
+    "profile",
+    "token_budget_target",
+    "estimated_tokens",
+    "compiled_at",
+    "expires_at",
+    "compiler_version",
+    "included_documents",
+    "omitted_candidates",
+    "freshness_warnings",
+    "unresolved_conflicts",
+    "cache_key",
+    "invalidation_triggers"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "id": { "type": "string", "pattern": "^CPACK-\\d{4}$" },
+    "task_id": { "type": "string", "pattern": "^TASK-\\d{4}$" },
+    "project_id": { "type": "string", "pattern": "^proj-[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$" },
+    "status": { "type": "string", "enum": ["compiled", "cached", "stale", "invalidated"] },
+    "memory_layer": { "type": "string", "enum": ["L4_TEMPORARY_CONTEXT"] },
+    "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+    "profile": { "type": "string", "enum": ["quick", "working", "deep"] },
+    "token_budget_target": { "type": "integer", "minimum": 1 },
+    "estimated_tokens": { "type": "integer", "minimum": 0 },
+    "compiled_at": { "type": "string", "minLength": 10 },
+    "expires_at": { "type": ["string", "null"] },
+    "compiler_version": { "type": "string", "minLength": 1 },
+    "included_documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "memory_layer", "authority_level", "revision", "reason", "mandatory"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "memory_layer": {
+            "type": "string",
+            "enum": ["L1_AUTHORITATIVE", "L2_OPERATIONAL", "L3_RESEARCH_EVIDENCE", "L4_TEMPORARY_CONTEXT"]
+          },
+          "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+          "revision": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 },
+          "mandatory": { "type": "boolean" }
+        }
+      }
+    },
+    "omitted_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "reason"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "freshness_warnings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "unresolved_conflicts": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^CONF-\\d{4}$" }
+    },
+    "cache_key": { "type": "string", "minLength": 1 },
+    "invalidation_triggers": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "is_example": { "type": "boolean" },
+    "example_notice": { "type": "string" }
+  }
+}

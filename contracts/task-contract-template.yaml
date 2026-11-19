@@ -1,0 +1,32 @@
+# Task Contract Template
+# Copy to project tasks/<queue>/TASK-NNNN-<slug>.yaml and replace placeholders.
+schema_version: "1.0"
+id: "{{TASK_ID}}"
+title: "{{TASK_TITLE}}"
+project_id: "{{PROJECT_ID}}"
+status: "inbox"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+priority: "medium"
+assigned_role: "developer"
+created_by: "{{CREATED_BY}}"
+created_at: "{{CREATED_AT}}"
+updated_at: "{{UPDATED_AT}}"
+objective: "{{TASK_OBJECTIVE}}"
+scope_in:
+  - "{{IN_SCOPE_ITEM}}"
+scope_out:
+  - "{{OUT_OF_SCOPE_ITEM}}"
+required_inputs:
+  - path: "brain/INDEX.md"
+    revision: "{{REVISION_REF}}"
+expected_outputs:
+  - "{{EXPECTED_OUTPUT_PATH}}"
+acceptance_criteria:
+  - "{{ACCEPTANCE_CRITERION_1}}"
+dependencies: []
+approval_required: false
+approval_ref: null
+context_budget: "working"
+max_retries: 2
+evidence_refs: []

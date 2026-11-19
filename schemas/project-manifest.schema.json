@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-workspace.local/schemas/project-manifest.schema.json",
+  "title": "Project Manifest",
+  "description": "Canonical manifest describing an initialized project Second Brain.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "slug",
+    "name",
+    "description",
+    "status",
+    "owner",
+    "memory_layer",
+    "authority_level",
+    "harness_version",
+    "created_at",
+    "updated_at",
+    "repository",
+    "paths",
+    "policies"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "project_id": { "type": "string", "pattern": "^proj-[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$" },
+    "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$" },
+    "name": { "type": "string", "minLength": 3, "maxLength": 80 },
+    "description": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["template", "initialized", "active", "paused", "archived"] },
+    "owner": { "type": "string", "minLength": 1 },
+    "memory_layer": { "type": "string", "enum": ["L1_AUTHORITATIVE"] },
+    "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+    "harness_version": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 10 },
+    "updated_at": { "type": "string", "minLength": 10 },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vcs", "initialized", "default_branch"],
+      "properties": {
+        "vcs": { "type": "string", "enum": ["git"] },
+        "initialized": { "type": "boolean" },
+        "default_branch": { "type": "string", "minLength": 1 }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "brain_index",
+        "prd",
+        "constraints",
+        "architecture",
+        "state",
+        "decisions_dir",
+        "research_dir",
+        "tasks_dir",
+        "evidence_dir",
+        "proposals_dir"
+      ],
+      "properties": {
+        "brain_index": { "type": "string", "minLength": 1 },
+        "prd": { "type": "string", "minLength": 1 },
+        "constraints": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "decisions_dir": { "type": "string", "minLength": 1 },
+        "research_dir": { "type": "string", "minLength": 1 },
+        "tasks_dir": { "type": "string", "minLength": 1 },
+        "evidence_dir": { "type": "string", "minLength": 1 },
+        "proposals_dir": { "type": "string", "minLength": 1 }
+      }
+    },
+    "policies": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "is_example": { "type": "boolean" },
+    "example_notice": { "type": "string" }
+  }
+}

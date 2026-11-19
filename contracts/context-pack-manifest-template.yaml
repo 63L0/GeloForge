@@ -1,0 +1,29 @@
+# Context Pack Manifest Template
+# Future Layer 4 output of the deterministic Context Compiler (NOT IMPLEMENTED in Phase 1).
+schema_version: "1.0"
+id: "{{CONTEXT_PACK_ID}}"
+task_id: "{{TASK_ID}}"
+project_id: "{{PROJECT_ID}}"
+status: "compiled"
+memory_layer: "L4_TEMPORARY_CONTEXT"
+authority_level: "A4"
+profile: "working"
+token_budget_target: 8000
+estimated_tokens: 0
+compiled_at: "{{COMPILED_AT}}"
+expires_at: null
+compiler_version: "0.0.0-spec-only"
+included_documents:
+  - path: "policies/approval-boundaries.md"
+    memory_layer: "L1_AUTHORITATIVE"
+    authority_level: "A0"
+    revision: "{{POLICY_REVISION}}"
+    reason: "Mandatory global harness safety policy."
+    mandatory: true
+omitted_candidates: []
+freshness_warnings: []
+unresolved_conflicts: []
+cache_key: "{{CACHE_KEY}}"
+invalidation_triggers:
+  - "harness/policies/*"
+  - "brain/state/current.yaml"

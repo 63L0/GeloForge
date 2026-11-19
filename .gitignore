@@ -1,0 +1,22 @@
+# Environment & Secrets (NEVER commit)
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Local runtime & temporary files
+local-runtime/
+tmp/
+*.tmp
+*.log
+
+# Node dependencies (none used in Phase 1, reserved safeguard)
+node_modules/
+
+# OS & editor noise
+.DS_Store
+Thumbs.db
+.vscode/*.local

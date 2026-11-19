@@ -1,0 +1,20 @@
+# EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION
+schema_version: "1.0"
+id: "CHKPT-0000"
+project_id: "proj-example-sandbox"
+status: "created"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+created_at: "2026-01-01T00:25:00Z"
+created_by: "orchestrator"
+git_branch: "main"
+git_commit: "0000000000000000000000000000000000000000"
+working_tree_clean: true
+active_tasks:
+  - "TASK-0000"
+state_file_path: "brain/state/current.yaml"
+state_revision: 0
+resume_instructions: "Example resume note: inspect TASK-0000 and open conflicts before proceeding."
+verification_evidence_ref: null
+is_example: true
+example_notice: "EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION"

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-workspace.local/schemas/conflict-record.schema.json",
+  "title": "Conflict Record",
+  "description": "Tracks contradictions between Second Brain records, evidence, or requirements.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "status",
+    "memory_layer",
+    "authority_level",
+    "severity",
+    "detected_at",
+    "detected_by",
+    "conflicting_records",
+    "description",
+    "impact",
+    "resolution_strategy",
+    "resolved_by",
+    "resolved_at",
+    "approval_ref"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "id": { "type": "string", "pattern": "^CONF-\\d{4}$" },
+    "title": { "type": "string", "minLength": 3 },
+    "status": { "type": "string", "enum": ["open", "under_review", "resolved", "deferred"] },
+    "memory_layer": { "type": "string", "enum": ["L2_OPERATIONAL"] },
+    "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+    "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+    "detected_at": { "type": "string", "minLength": 10 },
+    "detected_by": { "type": "string", "minLength": 1 },
+    "conflicting_records": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["record_id", "path", "authority_level", "claim"],
+        "properties": {
+          "record_id": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+          "claim": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "impact": { "type": "string", "minLength": 1 },
+    "resolution_strategy": { "type": ["string", "null"] },
+    "resolved_by": { "type": ["string", "null"] },
+    "resolved_at": { "type": ["string", "null"] },
+    "approval_ref": { "type": ["string", "null"], "pattern": "^APPR-\\d{4}$" },
+    "is_example": { "type": "boolean" },
+    "example_notice": { "type": "string" }
+  }
+}

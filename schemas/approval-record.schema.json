@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-workspace.local/schemas/approval-record.schema.json",
+  "title": "Approval Record",
+  "description": "Explicit owner approval record for boundary-crossing decisions or actions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "status",
+    "memory_layer",
+    "authority_level",
+    "boundary_category",
+    "requested_by",
+    "requested_at",
+    "decided_by",
+    "decided_at",
+    "expires_at",
+    "target_records",
+    "rationale",
+    "risk_assessment",
+    "conditions"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "id": { "type": "string", "pattern": "^APPR-\\d{4}$" },
+    "title": { "type": "string", "minLength": 3 },
+    "status": { "type": "string", "enum": ["pending", "approved", "rejected", "expired", "revoked"] },
+    "memory_layer": { "type": "string", "enum": ["L1_AUTHORITATIVE", "L2_OPERATIONAL"] },
+    "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+    "boundary_category": {
+      "type": "string",
+      "enum": [
+        "requirements_change",
+        "architecture_change",
+        "security_boundary",
+        "spend_or_paid_api",
+        "external_mutation",
+        "destructive_action",
+        "policy_exception"
+      ]
+    },
+    "requested_by": { "type": "string", "minLength": 1 },
+    "requested_at": { "type": "string", "minLength": 10 },
+    "decided_by": { "type": ["string", "null"] },
+    "decided_at": { "type": ["string", "null"] },
+    "expires_at": { "type": ["string", "null"] },
+    "target_records": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "rationale": { "type": "string", "minLength": 1 },
+    "risk_assessment": { "type": "string", "minLength": 1 },
+    "conditions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "is_example": { "type": "boolean" },
+    "example_notice": { "type": "string" }
+  }
+}

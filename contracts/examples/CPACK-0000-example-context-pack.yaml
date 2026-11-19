@@ -1,0 +1,40 @@
+# EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION
+schema_version: "1.0"
+id: "CPACK-0000"
+task_id: "TASK-0000"
+project_id: "proj-example-sandbox"
+status: "compiled"
+memory_layer: "L4_TEMPORARY_CONTEXT"
+authority_level: "A4"
+profile: "quick"
+token_budget_target: 2000
+estimated_tokens: 950
+compiled_at: "2026-01-01T00:30:00Z"
+expires_at: "2026-01-02T00:30:00Z"
+compiler_version: "0.0.0-spec-only"
+included_documents:
+  - path: "policies/approval-boundaries.md"
+    memory_layer: "L1_AUTHORITATIVE"
+    authority_level: "A0"
+    revision: "example-rev-0"
+    reason: "Mandatory global security policy."
+    mandatory: true
+  - path: "brain/requirements/constraints.md"
+    memory_layer: "L1_AUTHORITATIVE"
+    authority_level: "A1"
+    revision: "example-rev-0"
+    reason: "Mandatory project constraints."
+    mandatory: true
+omitted_candidates:
+  - path: "brain/research/RES-0000-example-research.md"
+    reason: "Excluded from quick profile; not directly referenced by TASK-0000."
+freshness_warnings:
+  - "Example warning: verify valid_until on RES-0000 before deep compilation."
+unresolved_conflicts:
+  - "CONF-0000"
+cache_key: "example-cpack-0000-quick"
+invalidation_triggers:
+  - "harness/policies/*"
+  - "brain/state/current.yaml"
+is_example: true
+example_notice: "EXAMPLE ONLY — NOT REAL EVIDENCE OR AN APPROVED DECISION"

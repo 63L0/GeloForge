@@ -1,0 +1,11 @@
+{
+  "name": "ai-dev-harness-foundation",
+  "version": "0.1.0",
+  "description": "Phase 1 foundational workspace, Second Brain templates, schemas, and zero-dependency project bootstrapper.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "node validators/validate-foundation.mjs",
+    "bootstrap": "node scripts/bootstrap-project.mjs"
+  }
+}

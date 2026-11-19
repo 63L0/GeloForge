@@ -1,0 +1,26 @@
+# Conflict Record Template
+# Logged whenever evidence, research, requirements, or ADRs contradict one another.
+schema_version: "1.0"
+id: "{{CONFLICT_ID}}"
+title: "{{CONFLICT_TITLE}}"
+status: "open"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+severity: "medium"
+detected_at: "{{DETECTED_AT}}"
+detected_by: "{{DETECTED_BY}}"
+conflicting_records:
+  - record_id: "{{RECORD_A_ID}}"
+    path: "{{RECORD_A_PATH}}"
+    authority_level: "A2"
+    claim: "{{RECORD_A_CLAIM}}"
+  - record_id: "{{RECORD_B_ID}}"
+    path: "{{RECORD_B_PATH}}"
+    authority_level: "A3"
+    claim: "{{RECORD_B_CLAIM}}"
+description: "{{CONFLICT_DESCRIPTION}}"
+impact: "{{CONFLICT_IMPACT}}"
+resolution_strategy: null
+resolved_by: null
+resolved_at: null
+approval_ref: null

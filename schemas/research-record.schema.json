@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-workspace.local/schemas/research-record.schema.json",
+  "title": "Research Record",
+  "description": "YAML frontmatter schema for RES-NNNN-*.md records in brain/research/ or proposals/.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "status",
+    "memory_layer",
+    "authority_level",
+    "author_role",
+    "created_at",
+    "updated_at",
+    "valid_until",
+    "question",
+    "confidence",
+    "sources",
+    "related_tasks",
+    "related_adrs",
+    "contradicts",
+    "tags"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "id": { "type": "string", "pattern": "^RES-\\d{4}$" },
+    "title": { "type": "string", "minLength": 3 },
+    "status": { "type": "string", "enum": ["draft", "proposed", "verified", "stale", "superseded", "rejected"] },
+    "memory_layer": { "type": "string", "enum": ["L3_RESEARCH_EVIDENCE"] },
+    "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+    "author_role": {
+      "type": "string",
+      "enum": ["orchestrator", "researcher", "software-architect", "developer", "qa-security-reviewer"]
+    },
+    "created_at": { "type": "string", "minLength": 10 },
+    "updated_at": { "type": "string", "minLength": 10 },
+    "valid_until": { "type": ["string", "null"] },
+    "question": { "type": "string", "minLength": 1 },
+    "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "reference", "type", "accessed_at"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "reference": { "type": "string", "minLength": 1 },
+          "type": { "type": "string", "enum": ["official_docs", "repo_file", "benchmark", "standard", "issue_or_pr", "other"] },
+          "accessed_at": { "type": "string", "minLength": 10 }
+        }
+      }
+    },
+    "related_tasks": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^TASK-\\d{4}$" }
+    },
+    "related_adrs": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^ADR-\\d{4}$" }
+    },
+    "contradicts": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "is_example": { "type": "boolean" },
+    "example_notice": { "type": "string" }
+  }
+}

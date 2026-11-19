@@ -1,0 +1,18 @@
+# Recovery Checkpoint Template
+# Future runtime checkpoint metadata (automated checkpointing is NOT IMPLEMENTED in Phase 1).
+schema_version: "1.0"
+id: "{{CHECKPOINT_ID}}"
+project_id: "{{PROJECT_ID}}"
+status: "created"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+created_at: "{{CREATED_AT}}"
+created_by: "{{CREATED_BY}}"
+git_branch: "{{GIT_BRANCH}}"
+git_commit: "{{GIT_COMMIT}}"
+working_tree_clean: false
+active_tasks: []
+state_file_path: "brain/state/current.yaml"
+state_revision: 0
+resume_instructions: "{{RESUME_INSTRUCTIONS}}"
+verification_evidence_ref: null
