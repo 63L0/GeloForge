@@ -32,7 +32,7 @@ Create these folders only when needed to avoid empty-directory clutter:
 
 ## Layer 4 — Temporary Context (`L4_TEMPORARY_CONTEXT`)
 
-- Ephemeral compiled context packs are designed to live outside Git under `<workspace-root>/local-runtime/context-cache/` (Context Compiler **NOT IMPLEMENTED** in Phase 1).
+- Compile deterministic, trust-tiered context packs on demand with `geloforge context --task TASK-0001 --map` (supports `quick`, `working`, and `deep` profiles).
 
 ## Code Directories
 
