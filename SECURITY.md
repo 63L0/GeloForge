@@ -17,4 +17,4 @@ This repository clearly separates controls that are **technically enforced by co
 
 ## Reporting Security Issues
 
-Before publishing to a public GitHub repository, configure private vulnerability reporting / contact channels in GitHub repository settings and select a `LICENSE`. Never commit `.env` files, API tokens, or private keys in issues, pull requests, or commits.
+This repository is released under the [MIT License](./LICENSE). Configure private vulnerability reporting in the GitHub repository security settings. Never commit `.env` files, API tokens, or private keys in issues, pull requests, or commits.

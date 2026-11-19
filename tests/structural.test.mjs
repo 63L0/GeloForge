@@ -44,19 +44,25 @@ function stripFencedAndInlineCode(markdown) {
 }
 
 test("workspace and harness structural boundaries are clean", () => {
-  for (const rel of [
-    "harness",
-    "projects",
-    "worktrees",
-    "local-runtime",
-    "local-runtime/logs",
-    "local-runtime/context-cache",
-    "local-runtime/checkpoints",
-    "local-runtime/task-state",
-  ]) {
-    assert.equal(fs.existsSync(path.join(WORKSPACE_ROOT, rel)), true, `Missing workspace dir: ${rel}`);
+  const isWorkspaceLayout =
+    path.basename(HARNESS_DIR).toLowerCase() === "harness" &&
+    fs.existsSync(path.join(WORKSPACE_ROOT, "local-runtime"));
+
+  if (isWorkspaceLayout) {
+    for (const rel of [
+      "harness",
+      "projects",
+      "worktrees",
+      "local-runtime",
+      "local-runtime/logs",
+      "local-runtime/context-cache",
+      "local-runtime/checkpoints",
+      "local-runtime/task-state",
+    ]) {
+      assert.equal(fs.existsSync(path.join(WORKSPACE_ROOT, rel)), true, `Missing workspace dir: ${rel}`);
+    }
+    assert.equal(fs.existsSync(path.join(WORKSPACE_ROOT, ".git")), false, "Workspace root must not contain .git");
   }
-  assert.equal(fs.existsSync(path.join(WORKSPACE_ROOT, ".git")), false, "Workspace root must not contain .git");
   assert.equal(fs.existsSync(path.join(HARNESS_DIR, ".git")), true, "harness/.git must exist");
 
   for (const obsolete of ["skills", "evaluations", "validators"]) {
@@ -65,6 +71,7 @@ test("workspace and harness structural boundaries are clean", () => {
 
   for (const rel of [
     "README.md",
+    "LICENSE",
     "VERSION",
     ".gitignore",
     ".gitattributes",

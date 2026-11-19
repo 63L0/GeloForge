@@ -1,9 +1,26 @@
 {
-  "name": "ai-dev-harness-foundation",
+  "name": "geloforge",
   "version": "0.2.0",
-  "description": "Provider-neutral foundational workspace, Second Brain schemas/templates, compatibility checks, and transactional project bootstrapper.",
+  "description": "A reusable toolkit that helps developers organize projects, manage AI coding agents, and keep project knowledge in one place, so they can build software more efficiently without starting from scratch every time.",
+  "license": "MIT",
   "private": true,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/63L0/GeloForge.git"
+  },
+  "homepage": "https://github.com/63L0/GeloForge#readme",
+  "bugs": {
+    "url": "https://github.com/63L0/GeloForge/issues"
+  },
+  "keywords": [
+    "ai-harness",
+    "second-brain",
+    "project-templates",
+    "adr",
+    "developer-tools",
+    "json-schema"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },

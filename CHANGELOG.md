@@ -11,7 +11,8 @@ All notable changes to the AI Development Harness foundation are recorded in thi
 - Optional incident record contract: [incident-record.schema.json](./schemas/incident-record.schema.json), [incident-record-template.yaml](./contracts/incident-record-template.yaml), and marked example.
 - Standalone project validator CLI ([scripts/validate-project.mjs](./scripts/validate-project.mjs)) checking schemas, compatibility, duplicate IDs, cross-record references, markdown links, and portability.
 - Modular zero-dependency `node:test` suite under `tests/` covering structural, bootstrap, Second Brain, compatibility, security, portability, and reuse tests.
-- GitHub readiness and governance files: `.gitattributes`, [SECURITY.md](./SECURITY.md), [CONTRIBUTING.md](./CONTRIBUTING.md), [CHANGELOG.md](./CHANGELOG.md), and [docs/versioning-and-upgrades.md](./docs/versioning-and-upgrades.md).
+- GitHub readiness and governance files: [LICENSE](./LICENSE) (MIT), `.gitattributes`, [SECURITY.md](./SECURITY.md), [CONTRIBUTING.md](./CONTRIBUTING.md), [CHANGELOG.md](./CHANGELOG.md), and [docs/versioning-and-upgrades.md](./docs/versioning-and-upgrades.md).
+- Standalone public-clone test compatibility and GeloForge `package.json` / `README.md` release metadata.
 
 ### Changed
 - Upgraded project manifest/state default `schema_version` to `"1.1"` while preserving `"1.0"` compatibility.

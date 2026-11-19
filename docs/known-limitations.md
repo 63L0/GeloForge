@@ -18,7 +18,7 @@ This document maintains an honest boundary between **technically enforced capabi
 - Restricted Integration Controller and automated knowledge promotion.
 - Operational Codex CLI, Gemini CLI, or multi-agent subagent execution.
 - Automated `CHKPT-NNNN` checkpoints, worktree orchestration, `skills/`, `evaluations/`, vector databases, RAG services, or paid API integrations.
-- Public open-source `LICENSE` file (`package.json` remains `"private": true`; the repository owner must select and commit a `LICENSE` before making any GitHub repository public).
+- Automated npm registry publishing (`package.json` sets `"private": true` intentionally; source code is MIT-licensed via [LICENSE](../LICENSE)).
 
 ## 4. Technical Scope & Platform Limits
 - **Zero-Dependency Parser Subset:** [yaml-subset.mjs](../core/yaml-subset.mjs) and [json-schema-lite.mjs](../core/json-schema-lite.mjs) intentionally cover the YAML 1.2 and Draft 2020-12 subsets needed by harness contracts (no YAML anchors/aliases `&/*` or JSON Schema `$ref`/`oneOf`/`allOf`).
