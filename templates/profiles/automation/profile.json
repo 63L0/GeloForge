@@ -1,0 +1,6 @@
+{
+  "name": "automation",
+  "version": "1.0.0",
+  "description": "Automation profile (CLIs, scheduled pipelines, and deterministic scripts).",
+  "compatible_template_major": 1
+}

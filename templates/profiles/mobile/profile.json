@@ -1,0 +1,6 @@
+{
+  "name": "mobile",
+  "version": "1.0.0",
+  "description": "Mobile application profile (Android, iOS, or cross-platform mobile clients).",
+  "compatible_template_major": 1
+}

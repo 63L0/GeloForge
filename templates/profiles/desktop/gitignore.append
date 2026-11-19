@@ -1,0 +1,7 @@
+release/
+dist-electron/
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.pdb

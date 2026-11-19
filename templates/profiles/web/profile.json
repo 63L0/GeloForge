@@ -1,0 +1,6 @@
+{
+  "name": "web",
+  "version": "1.0.0",
+  "description": "Web application profile (frontend, full-stack, or API-backed browser apps).",
+  "compatible_template_major": 1
+}

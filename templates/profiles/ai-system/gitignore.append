@@ -1,0 +1,5 @@
+eval-outputs/
+model-cache/
+*.jsonl.tmp
+prompts.local/
+traces/

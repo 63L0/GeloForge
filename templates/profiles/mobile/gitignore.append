@@ -1,0 +1,8 @@
+*.jks
+*.keystore
+*.mobileprovision
+*.ipa
+*.apk
+*.aab
+.expo/
+Pods/

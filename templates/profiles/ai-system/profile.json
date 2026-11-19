@@ -1,0 +1,6 @@
+{
+  "name": "ai-system",
+  "version": "1.0.0",
+  "description": "AI system profile (agentic workflows, prompts, model routing, and evaluations).",
+  "compatible_template_major": 1
+}

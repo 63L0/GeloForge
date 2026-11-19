@@ -1,0 +1,6 @@
+{
+  "name": "desktop",
+  "version": "1.0.0",
+  "description": "Desktop application profile (native or cross-platform workstation apps).",
+  "compatible_template_major": 1
+}

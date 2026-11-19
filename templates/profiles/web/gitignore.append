@@ -1,0 +1,6 @@
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+playwright-report/
+test-results/
