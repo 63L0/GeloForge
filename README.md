@@ -12,10 +12,11 @@ It stores persistent project memory in plain Markdown and YAML inside your proje
 
 ## 1. What GeloForge Does Today
 
-- **Unified CLI ([scripts/geloforge.mjs](./scripts/geloforge.mjs)):** Non-interactive `geloforge` commands (`init`, `adopt`, `task`, `evidence`, `validate`, `context`, `handoff`, `status`) with CWD project auto-discovery, `--json` output, and atomic `--out` writes.
+- **Unified CLI ([scripts/geloforge.mjs](./scripts/geloforge.mjs)):** Non-interactive `geloforge` commands (`init`, `adopt`, `task`, `evidence`, `validate`, `context`, `skills`, `handoff`, `status`) with CWD project auto-discovery, `--json` output, and atomic `--out` writes.
 - **Brownfield Adoption & Greenfield Scaffolding (`adopt`, `init`):** Safely onboard existing repos with `geloforge adopt` without altering existing source files ([adopt-project.mjs](./core/adopt-project.mjs)), or initialize new Second Brain repos ([templates/project-starter/](./templates/project-starter/README.md)) with domain overlays (`web`, `desktop`, `mobile`, `automation`, `ai-system`).
 - **Task Contracts & Command-Backed Evidence (`task`, `evidence`):** Manage schema-strict `TASK-NNNN` contracts ([task-manager.mjs](./core/task-manager.mjs)) and capture real `EVID-NNNN` records via `geloforge evidence capture -- <cmd>` with `shell: false`, secret redaction, and explicit pass/fail/timeout accuracy ([evidence-capture.mjs](./core/evidence-capture.mjs)).
-- **Deterministic Context Compiler (`context`):** Assembles trust-tiered `L4` Markdown packets + `CPACK-0001` JSON manifests with explicit `budget_breakdown`, `--exclude-unverified`, open-conflict surfacing, and verified `A0` safety preservation ([context-compiler.mjs](./core/context-compiler.mjs)).
+- **Portable Agent Skills (`skills`, `context --skills`):** Discover, validate, and statically security-lint [agentskills.io](https://agentskills.io)-compatible `SKILL.md` packages in `.agents/skills/` and `~/.geloforge/skills/` (`GELOFORGE_SKILLS_DIR`) with progressive disclosure (`Tier 0` index -> `Tier 1` relevant skills -> `Tier 2` support paths), quarantine for `proposals/skills/`, and zero automatic script execution ([skills.mjs](./core/skills.mjs), [skills-lint.mjs](./core/skills-lint.mjs), [Portable Skills Guide](./docs/portable-skills.md), [Example Skill](./examples/skills/evidence-backed-bugfix/SKILL.md)).
+- **Deterministic Context Compiler (`context`):** Assembles trust-tiered `L4` Markdown packets + `CPACK-0001` JSON manifests with explicit `budget_breakdown`, `--exclude-unverified`, open-conflict surfacing, selective `--skills`, and verified `A0` safety preservation ([context-compiler.mjs](./core/context-compiler.mjs)).
 - **Selective Codebase Mapping (`context --map`):** Extracts deterministic multi-language symbol outlines, local import boost, and `L<line>` references within `--map-budget`, respecting `.gitignore` and excluding `.env*`, keys, binaries, and build outputs ([codebase-map.mjs](./core/codebase-map.mjs)).
 - **Cross-Agent File-Based Handoffs (`handoff`):** Generates and cross-validates (`--inspect`) schema-strict `HANDOFF-NNNN` transfers that separate audited `verified_evidence` (`EVID-*`) from `unverified_claims`, surface `contradiction_warnings`, and capture project-scoped Git state/drift ([handoff.mjs](./core/handoff.mjs)).
 - **Strict Validation & Health Checks (`validate`, `status`):** Checks 12 JSON Schemas ([schemas/](./schemas/README.md)), `1.0`/`1.1` compatibility ([compatibility.mjs](./core/compatibility.mjs)), duplicate IDs, cross-record references, symlink safety, forged evidence entries, relative Markdown links, and actionable `nextSteps` ([project-validator.mjs](./core/project-validator.mjs)).
@@ -70,8 +71,15 @@ Compile a deterministic, trust-tiered context packet for a task (`TASK-NNNN`) or
 # Task-targeted packet with default working (~8,000 est. tokens) budget
 node scripts/geloforge.mjs context --project ../projects/my-web-app --task TASK-0001
 
-# Strict trust mode: omit A5-A6 external research & unverified drafts completely
+# Strict trust mode: omit A5-A6 external research, unverified skills & drafts completely
 node scripts/geloforge.mjs context --project ../projects/my-web-app --task TASK-0001 --exclude-unverified
+
+# Include portable skills with progressive disclosure (Tier 0/1/2)
+node scripts/geloforge.mjs context --project ../projects/my-web-app --task TASK-0001 --skills --skills-budget 1200
+
+# Inspect and lint project or global skills (.agents/skills & ~/.geloforge/skills)
+node scripts/geloforge.mjs skills list --project ../projects/my-web-app
+node scripts/geloforge.mjs skills lint --project ../projects/my-web-app --strict
 
 # Save Markdown atomically to a file outside protected directories
 node scripts/geloforge.mjs context --project ../projects/my-web-app --query "checkout pricing" --profile deep --out ../packets/task-context.md
@@ -148,7 +156,7 @@ GeloForge works identically whether you use a single coding assistant across ses
 - Invoking your chosen AI coding assistant CLI or IDE with compiled packets or handoffs.
 
 **Not Implemented Yet:**
-- Portable `SKILL.md` discovery/linting and evidence-backed adaptive skill promotion (planned for v0.4 PR 2 & PR 3).
+- Evidence-backed adaptive skill promotion, draft-to-canonical approval workflows (`APPR-NNNN`), and skill rollback ledgers (planned for v0.4 PR 3).
 - Live multi-agent orchestrators, autonomous agent runners, or background daemons.
 - Enforceable cryptographic/PR human-approval verification and automated proposal-to-canonical promotion.
 - OS/Git pre-commit write-ownership enforcement or runtime spend interceptors (`policies/` ownership rules remain documented governance only).
@@ -178,5 +186,5 @@ npm run benchmark
 
 - **Recovery:** Project scaffolding (`bootstrap-project.mjs`) stages into `.harness-stage-*` and CLI `--out` / handoff writes use `.geloforge-tmp-*` atomic temp-file renames without overwriting existing targets unless `--out` explicitly targets a safe non-handoff file. Use standard Git recovery (`git status`, `git diff`, `git revert <commit>`) for repository rollbacks.
 - **Security & Limitations:** See [SECURITY.md](./SECURITY.md), [CONTRIBUTING.md](./CONTRIBUTING.md), and [docs/known-limitations.md](./docs/known-limitations.md).
-- **Third-Party Research Attribution:** Architectural patterns in v0.3 were informed by public open-source tools documented in [docs/research/upstream-patterns-v0.3.md](./docs/research/upstream-patterns-v0.3.md) (GitHub Spec Kit `[MIT]`, BMad Method `[MIT]`, OpenHands `[MIT]`, and Aider `[Apache-2.0]` repo-map concepts re-implemented cleanly in original Node.js without copying Apache-2.0 source code and with strict `.env*`/secret blacklists).
+- **Third-Party Research Attribution:** Architectural patterns in v0.3 and v0.4 were informed by public open-source tools documented in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) and [docs/research/upstream-patterns-v0.3.md](./docs/research/upstream-patterns-v0.3.md) (NousResearch Hermes Agent `[MIT]`, `agentskills.io`, GitHub Spec Kit `[MIT]`, BMad Method `[MIT]`, OpenHands `[MIT]`, and Aider `[Apache-2.0]` concepts re-implemented cleanly in original zero-dependency Node.js without copying external source files).
 - **License:** Released under the [MIT License](./LICENSE) (`Copyright (c) 2026 63L0`). Note: `"private": true` in [package.json](./package.json) prevents accidental npm registry publishing while keeping this repository open-source under MIT.

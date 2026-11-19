@@ -71,14 +71,20 @@ geloforge evidence capture --task TASK-0001 --name "Checkout unit tests" -- node
 
 ---
 
-## Step 4: Compile Context + Codebase Map for Your AI Assistant
+## Step 4: Compile Context + Codebase Map (+ Optional Portable Skills)
 
 ```bash
 geloforge context --task TASK-0001 --map --profile quick
+
+# Optional: include validated .agents/skills or global skills cleanly with Tier 0/1/2 disclosure
+geloforge skills list
+geloforge skills lint --strict
+geloforge context --task TASK-0001 --map --skills
 ```
 
-- Copies a trust-tiered prompt packet combining global `A0` safety rules, open conflicts, project state, `TASK-0001`, verified `EVID-0001`, and a `.gitignore`-aware outline of relevant files.
-- Want strict trust isolation (exclude unverified `A5`–`A6` drafts)? Add `--exclude-unverified`.
+- Copies a trust-tiered prompt packet combining global `A0` safety rules, open conflicts, project state, `TASK-0001`, verified `EVID-0001`, a `.gitignore`-aware outline of relevant files, and (when `--skills` is passed) relevant non-authoritative `SKILL.md` workflows.
+- Want strict trust isolation (exclude unverified `A5`–`A6` drafts & unverified skills)? Add `--exclude-unverified`.
+- Learn more in the [Portable Skills Guide](./portable-skills.md).
 
 ---
 
