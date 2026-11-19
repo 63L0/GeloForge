@@ -238,6 +238,10 @@ export function validateProject(rawProjectDir, options = {}) {
       const fileName = path.basename(filePath);
       const spec = matchRecordType(fileName);
       if (!spec) {
+        if (!/^(README|INDEX)\.md$/i.test(fileName)) {
+          const relUnrecognized = path.relative(projectDir, filePath).replace(/\\/g, "/");
+          warnings.push(`Unrecognized file in structured record directory ${relDir}: ${relUnrecognized}`);
+        }
         continue;
       }
       const relFile = path.relative(projectDir, filePath).replace(/\\/g, "/");
@@ -303,6 +307,22 @@ export function validateProject(rawProjectDir, options = {}) {
     for (const id of state.open_conflicts || []) ensureIdExists("brain/state/current.yaml#open_conflicts", id);
     if (state.last_verified_evidence) ensureIdExists("brain/state/current.yaml#last_verified_evidence", state.last_verified_evidence);
     if (state.last_completed_task) ensureIdExists("brain/state/current.yaml#last_completed_task", state.last_completed_task);
+
+    const activeSet = new Set(state.active_tasks || []);
+    const blockedSet = new Set(state.blocked_tasks || []);
+    for (const id of activeSet) {
+      if (blockedSet.has(id)) {
+        errors.push(`brain/state/current.yaml: task "${id}" cannot be in both active_tasks and blocked_tasks`);
+      }
+    }
+    if (state.last_completed_task) {
+      if (activeSet.has(state.last_completed_task)) {
+        errors.push(`brain/state/current.yaml: last_completed_task "${state.last_completed_task}" cannot also be in active_tasks`);
+      }
+      if (blockedSet.has(state.last_completed_task)) {
+        errors.push(`brain/state/current.yaml: last_completed_task "${state.last_completed_task}" cannot also be in blocked_tasks`);
+      }
+    }
   }
 
   for (const { relFile, spec, data } of records) {
