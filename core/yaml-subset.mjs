@@ -478,3 +478,95 @@ export function extractFrontmatter(markdownText, sourceLabel = "<markdown>") {
   const yamlBlock = normalized.slice(4, closeIdx);
   return parseYaml(yamlBlock, `${sourceLabel} (frontmatter)`);
 }
+
+function serializeScalar(val) {
+  if (val === null || val === undefined) {
+    return "null";
+  }
+  if (typeof val === "boolean" || typeof val === "number") {
+    return String(val);
+  }
+  return JSON.stringify(String(val));
+}
+
+function serializeMappingLines(obj, indent) {
+  const pad = " ".repeat(indent);
+  const lines = [];
+  for (const [key, val] of Object.entries(obj)) {
+    if (val === undefined) {
+      continue;
+    }
+    if (Array.isArray(val)) {
+      if (val.length === 0) {
+        lines.push(`${pad}${key}: []`);
+      } else {
+        lines.push(`${pad}${key}:`);
+        for (const item of val) {
+          if (item !== null && typeof item === "object" && !Array.isArray(item)) {
+            const entries = Object.entries(item).filter(([, v]) => v !== undefined);
+            if (entries.length === 0) {
+              lines.push(`${pad}  - {}`);
+              continue;
+            }
+            const [firstKey, firstVal] = entries[0];
+            if (firstVal !== null && typeof firstVal === "object") {
+              if (Array.isArray(firstVal) && firstVal.length === 0) {
+                lines.push(`${pad}  - ${firstKey}: []`);
+              } else if (!Array.isArray(firstVal) && Object.keys(firstVal).length === 0) {
+                lines.push(`${pad}  - ${firstKey}: {}`);
+              } else {
+                lines.push(`${pad}  - ${firstKey}:`);
+                if (Array.isArray(firstVal)) {
+                  for (const sub of firstVal) {
+                    lines.push(`${pad}      - ${serializeScalar(sub)}`);
+                  }
+                } else {
+                  lines.push(...serializeMappingLines(firstVal, indent + 6));
+                }
+              }
+            } else {
+              lines.push(`${pad}  - ${firstKey}: ${serializeScalar(firstVal)}`);
+            }
+            for (const [subKey, subVal] of entries.slice(1)) {
+              lines.push(...serializeMappingLines({ [subKey]: subVal }, indent + 4));
+            }
+          } else if (Array.isArray(item)) {
+            if (item.length === 0) {
+              lines.push(`${pad}  - []`);
+            } else {
+              lines.push(`${pad}  -`);
+              for (const sub of item) {
+                lines.push(`${pad}    - ${serializeScalar(sub)}`);
+              }
+            }
+          } else {
+            lines.push(`${pad}  - ${serializeScalar(item)}`);
+          }
+        }
+      }
+    } else if (val !== null && typeof val === "object") {
+      const childKeys = Object.entries(val).filter(([, v]) => v !== undefined);
+      if (childKeys.length === 0) {
+        lines.push(`${pad}${key}: {}`);
+      } else {
+        lines.push(`${pad}${key}:`);
+        lines.push(...serializeMappingLines(val, indent + 2));
+      }
+    } else {
+      lines.push(`${pad}${key}: ${serializeScalar(val)}`);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Serializes a plain JavaScript object into strict YAML compatible with parseYaml().
+ */
+export function serializeYaml(obj, { headerComment = null } = {}) {
+  const lines = [];
+  if (headerComment) {
+    lines.push(`# ${headerComment}`);
+  }
+  lines.push(...serializeMappingLines(obj, 0));
+  return `${lines.join("\n")}\n`;
+}

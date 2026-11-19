@@ -9,11 +9,15 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { bootstrapProject } from "./bootstrap-project.mjs";
+import { adoptProject } from "../core/adopt-project.mjs";
 import { validateProject } from "../core/project-validator.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectStatus } from "../core/project-status.mjs";
 import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
-import { atomicWriteFile, validateOutputFilePath } from "../core/path-safety.mjs";
+import { createTask, listTasks, getTask } from "../core/task-manager.mjs";
+import { captureEvidence } from "../core/evidence-capture.mjs";
+import { atomicWriteFile, redactSecretContent, validateOutputFilePath } from "../core/path-safety.mjs";
+import { resolveProjectDir } from "../core/project-locator.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,6 +36,9 @@ Usage:
 
 Commands:
   init       Initialize a new project Second Brain (supports profiles & --dry-run)
+  adopt      Add GeloForge Second Brain to an existing project without overwriting files
+  task       Create, list, or inspect scoped task contracts (TASK-NNNN)
+  evidence   Run an explicit command (shell: false) and record EVID-NNNN manifest
   validate   Validate a project's schemas, compatibility, IDs, references, and links
   context    Compile a deterministic, trust-tiered context packet for a task or query
   handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
@@ -62,23 +69,43 @@ Options:
   -h, --help              Show help
 `);
       break;
-    case "validate":
-      console.log(`Usage: geloforge validate --project <path> [--json]
+    case "adopt":
+      console.log(`Usage: geloforge adopt [--dest <path>] [options]
 
 Options:
-  -p, --project <path>    Target project directory (or pass as positional arg)
+  -d, --dest <path>       Existing project directory (default: current working directory)
+  -p, --project <path>    Alias for --dest
+  --name <string>         Display name (default: inferred from manifest or directory name)
+  --slug <string>         Lowercase ASCII slug (optional)
+  --owner <string>        Project owner name (default: "Project Owner")
+  --description <string>  Short project description
+  --profile <name>        Optional overlay: web, desktop, mobile, automation, ai-system
+  --tasks-dir <relpath>   Relative task contracts folder (default: "tasks")
+  --evidence-dir <rel>    Relative evidence manifests folder (default: "evidence")
+  --with-agent-guides     Also create AGENTS.md & GEMINI.md (refuses overwrite if present)
+  --created-at <iso>      ISO-8601 timestamp for deterministic output
+  --dry-run               Preview planned files without modifying disk
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+`);
+      break;
+    case "validate":
+      console.log(`Usage: geloforge validate [--project <path>] [--json]
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   --json                  Emit structured JSON output
   -h, --help              Show help
 `);
       break;
     case "context":
-      console.log(`Usage: geloforge context --project <path> (--task TASK-NNNN | --query <text>) [options]
+      console.log(`Usage: geloforge context [--project <path>] (--task TASK-NNNN | --query <text>) [options]
 
 Options:
-  -p, --project <path>    Target project directory (required)
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   -t, --task <id>         Task contract ID (e.g. TASK-0001)
   -q, --query <text>      Task description or search query
-  --profile <name>        Budget profile: quick (~2000), working (~8000), deep (~16000)
+  --profile <name>        Budget profile: quick (~4000), working (~8000), deep (~16000)
   --budget <int>          Override estimated-token budget target (>= 100)
   --map                   Include selective deterministic codebase symbol outline map
   --map-budget <int>      Override codebase map token budget (>= 100)
@@ -91,19 +118,19 @@ Options:
 `);
       break;
     case "status":
-      console.log(`Usage: geloforge status --project <path> [--json]
+      console.log(`Usage: geloforge status [--project <path>] [--json]
 
 Options:
-  -p, --project <path>    Target project directory (or pass as positional arg)
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   --json                  Emit structured JSON output
   -h, --help              Show help
 `);
       break;
     case "handoff":
-      console.log(`Usage: geloforge handoff --project <path> [options]
+      console.log(`Usage: geloforge handoff [--project <path>] [options]
 
 Create Options:
-  -p, --project <path>         Target project directory (required)
+  -p, --project <path>         Target project directory (auto-detected from CWD if omitted)
   -t, --task <id>              Target task ID (defaults to first active task if any)
   --id <HANDOFF-NNNN>          Explicit handoff ID (auto-assigned if omitted)
   --from-role <role>           Source agent role (default: developer)
@@ -129,6 +156,66 @@ Create Options:
 Inspect Options:
   --inspect <file>             Validate and render an existing handoff YAML file
   -h, --help                   Show help
+`);
+      break;
+    case "task":
+      console.log(`Usage: geloforge task <new|list|show> [options]
+
+Subcommands:
+  new    Create a new schema-valid TASK-NNNN contract
+  list   List tasks under configured tasks_dir
+  show   Show details for a specific TASK-NNNN contract
+
+Common Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+
+'task new' Options:
+  --title <string>        Task title (required, >= 3 chars)
+  --objective <string>    Detailed task objective (defaults to title)
+  --id <TASK-NNNN>        Explicit task ID (auto-assigned if omitted)
+  --priority <level>      low, medium (default), high, or critical
+  --role <role>           orchestrator, researcher, software-architect, developer (default), qa-security-reviewer
+  --budget <profile>      quick, working (default), or deep
+  --status <status>       inbox, ready (default), active (default with --activate), blocked, in_review
+  --activate              Add task to active_tasks in operational state
+  --criteria <text>       Acceptance criterion (repeatable)
+  --scope-in <text>       In-scope item (repeatable)
+  --scope-out <text>      Out-of-scope item (repeatable)
+  --input <relpath>       Required project input file path (repeatable)
+  --dep <TASK-NNNN>       Dependency task ID (repeatable)
+  --created-by <name>     Author label (default: manifest owner)
+  --created-at <iso>      ISO-8601 timestamp override
+  --dry-run               Preview generated task without writing disk
+
+'task list' / 'task show' Options:
+  --status <status>       Filter tasks in 'list'
+  -t, --task <TASK-NNNN>  Target task ID for 'show' (or pass as positional arg)
+`);
+      break;
+    case "evidence":
+      console.log(`Usage: geloforge evidence capture --task TASK-NNNN [options] -- <command> [args...]
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  -t, --task <TASK-NNNN>  Target task contract ID (required)
+  --name <string>         Short check name (defaults to command executable)
+  --title <string>        Manifest title override
+  --id <EVID-NNNN>        Explicit evidence ID (auto-assigned if omitted)
+  --role <role>           Producer role (default: developer)
+  --verified-by <label>   Verifier label used ONLY when exit code === 0
+  --timeout <ms>          Command timeout in ms (50-600000, default: 60000)
+  --no-link               Do not attach EVID-NNNN to TASK-NNNN or project state
+  --created-at <iso>      ISO-8601 timestamp override
+  --dry-run               Preview manifest without executing command or writing files
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+
+Safety & Accuracy Notes:
+  - Executes ONLY the explicit command after "--" with shell: false (no shell interpolation).
+  - Secret tokens/keys are redacted before persisting output or printing diagnostics.
+  - Exits 0 only when command exit code === 0 (writes draft EVID-NNNN and exits 1 on failures/timeouts).
 `);
       break;
   }
@@ -180,6 +267,61 @@ function handleInit(args) {
   return 0;
 }
 
+function handleAdopt(args) {
+  const parsed = parseArgs({
+    args,
+    options: {
+      dest: { type: "string", short: "d" },
+      project: { type: "string", short: "p" },
+      name: { type: "string" },
+      slug: { type: "string" },
+      owner: { type: "string" },
+      description: { type: "string" },
+      profile: { type: "string" },
+      "tasks-dir": { type: "string" },
+      "evidence-dir": { type: "string" },
+      "with-agent-guides": { type: "boolean", default: false },
+      "created-at": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (parsed.values.help) {
+    printSubHelp("adopt");
+    return 0;
+  }
+  const dest = parsed.values.dest || parsed.values.project || process.cwd();
+  const res = adoptProject({
+    dest,
+    name: parsed.values.name,
+    slug: parsed.values.slug,
+    owner: parsed.values.owner,
+    description: parsed.values.description,
+    profile: parsed.values.profile,
+    tasksDir: parsed.values["tasks-dir"],
+    evidenceDir: parsed.values["evidence-dir"],
+    withAgentGuides: parsed.values["with-agent-guides"],
+    createdAt: parsed.values["created-at"],
+    dryRun: parsed.values["dry-run"],
+    harnessDir: HARNESS_DIR,
+    workspaceRoot: WORKSPACE_ROOT,
+  });
+  if (parsed.values.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return 0;
+  }
+  console.log(res.dryRun ? "DRY RUN — No files written." : "Existing project adopted into GeloForge.");
+  console.log(`Project     : ${res.projectName} (${res.projectId})`);
+  console.log(`Directory   : ${res.destDir}`);
+  console.log(`Git Repo    : ${res.gitDetected ? `yes (branch=${res.defaultBranch})` : "no"}`);
+  console.log(`Added Files : ${res.files.length}`);
+  for (const w of res.warnings) console.log(`  - [WARN] ${w}`);
+  return 0;
+}
+
 function handleValidate(args) {
   const parsed = parseArgs({
     args,
@@ -195,11 +337,9 @@ function handleValidate(args) {
     printSubHelp("validate");
     return 0;
   }
-  const target = parsed.values.project || parsed.positionals[0];
-  if (!target) {
-    throw new Error("Missing target project path (--project <path>).");
-  }
-  const result = validateProject(target);
+  const explicitTarget = parsed.values.project || parsed.positionals[0] || null;
+  const { projectDir } = resolveProjectDir({ project: explicitTarget, harnessDir: HARNESS_DIR });
+  const result = validateProject(projectDir);
   if (parsed.values.json) {
     console.log(JSON.stringify(result, null, 2));
     return result.valid ? 0 : 1;
@@ -270,8 +410,9 @@ function handleContext(args) {
     });
   }
 
+  const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
   const result = compileContext({
-    projectDir: parsed.values.project,
+    projectDir,
     taskId: parsed.values.task,
     query: parsed.values.query,
     profile: parsed.values.profile || "working",
@@ -329,11 +470,9 @@ function handleStatus(args) {
     printSubHelp("status");
     return 0;
   }
-  const target = parsed.values.project || parsed.positionals[0];
-  if (!target) {
-    throw new Error("Missing target project path (--project <path>).");
-  }
-  const status = getProjectStatus(target);
+  const explicitTarget = parsed.values.project || parsed.positionals[0] || null;
+  const { projectDir } = resolveProjectDir({ project: explicitTarget, harnessDir: HARNESS_DIR });
+  const status = getProjectStatus(projectDir);
   if (parsed.values.json) {
     console.log(JSON.stringify(status, null, 2));
     return 0;
@@ -358,6 +497,9 @@ function handleStatus(args) {
     }`
   );
   console.log(`Counts         : records=${status.counts.records} | markdown=${status.counts.markdownFiles} | errors=${status.counts.errors} | warnings=${status.counts.warnings}`);
+  if (Array.isArray(status.nextSteps) && status.nextSteps.length > 0) {
+    console.log(`Next Step      : ${status.nextSteps[0]}`);
+  }
   for (const w of status.warnings) console.log(`  - [WARN] ${w}`);
   for (const e of status.errors) console.error(`  - [ERR] ${e}`);
   return 0;
@@ -407,9 +549,11 @@ function handleHandoff(args) {
     throw new Error(`Invalid --format "${format}". Expected "markdown", "yaml", or "json".`);
   }
 
+  const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+
   if (parsed.values.inspect) {
     const res = inspectHandoff({
-      projectDir: parsed.values.project,
+      projectDir,
       handoffPath: parsed.values.inspect,
       harnessDir: HARNESS_DIR,
     });
@@ -433,7 +577,7 @@ function handleHandoff(args) {
   }
 
   const res = createHandoff({
-    projectDir: parsed.values.project,
+    projectDir,
     taskId: parsed.values.task,
     id: parsed.values.id,
     fromRole: parsed.values["from-role"],
@@ -473,6 +617,228 @@ function handleHandoff(args) {
   return 0;
 }
 
+function handleTask(args) {
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+    printSubHelp("task");
+    return 0;
+  }
+  const [subcmd, ...rest] = args;
+  if (subcmd === "new") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        title: { type: "string" },
+        objective: { type: "string" },
+        id: { type: "string" },
+        priority: { type: "string" },
+        role: { type: "string" },
+        budget: { type: "string" },
+        status: { type: "string" },
+        activate: { type: "boolean", default: false },
+        criteria: { type: "string", multiple: true },
+        "scope-in": { type: "string", multiple: true },
+        "scope-out": { type: "string", multiple: true },
+        output: { type: "string", multiple: true },
+        input: { type: "string", multiple: true },
+        dep: { type: "string", multiple: true },
+        "created-by": { type: "string" },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: false,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = createTask({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      title: parsed.values.title,
+      objective: parsed.values.objective,
+      id: parsed.values.id,
+      priority: parsed.values.priority,
+      assignedRole: parsed.values.role,
+      contextBudget: parsed.values.budget,
+      status: parsed.values.status,
+      activate: parsed.values.activate,
+      acceptanceCriteria: parsed.values.criteria,
+      scopeIn: parsed.values["scope-in"],
+      scopeOut: parsed.values["scope-out"],
+      expectedOutputs: parsed.values.output,
+      requiredInputs: parsed.values.input,
+      dependencies: parsed.values.dep,
+      createdBy: parsed.values["created-by"],
+      createdAt: parsed.values["created-at"],
+      dryRun: parsed.values["dry-run"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(res.dryRun ? `DRY RUN — Task ${res.id} not written.` : `Task created: ${res.relPath}`);
+    console.log(`ID / Status : ${res.id} (${res.record.status}) | activated=${res.activated}`);
+    console.log(`Title       : ${res.record.title}`);
+    return 0;
+  }
+
+  if (subcmd === "list") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        status: { type: "string" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: false,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = listTasks({ projectDir, status: parsed.values.status, harnessDir: HARNESS_DIR });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Tasks in ${res.tasksDir}/ (${res.tasks.length}):`);
+    if (res.tasks.length === 0) {
+      console.log("  (none yet — run: geloforge task new --title \"...\")");
+    } else {
+      for (const t of res.tasks) {
+        console.log(
+          `  - ${t.id} [${t.status}${t.activeInState ? ", active-in-state" : ""}] (${t.priority}, evid=${t.evidenceCount}) — ${t.title}`
+        );
+      }
+    }
+    return 0;
+  }
+
+  if (subcmd === "show") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        task: { type: "string", short: "t" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const targetId = parsed.values.task || parsed.positionals[0];
+    if (!targetId) {
+      throw new Error("Missing task ID for 'geloforge task show <TASK-NNNN>'.");
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = getTask({ projectDir, taskId: targetId, harnessDir: HARNESS_DIR });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Task        : ${res.id} (${res.record.status})`);
+    console.log(`File        : ${res.relPath}`);
+    console.log(`Title       : ${res.record.title}`);
+    console.log(`Objective   : ${res.record.objective}`);
+    console.log(`Evidence    : ${(res.record.evidence_refs || []).join(", ") || "(none)"}`);
+    return 0;
+  }
+
+  throw new Error(`Unknown task subcommand "${subcmd}". Expected: new, list, or show.`);
+}
+
+function handleEvidence(args) {
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+    printSubHelp("evidence");
+    return 0;
+  }
+  const [subcmd, ...rest] = args;
+  if (subcmd !== "capture") {
+    throw new Error(`Unknown evidence subcommand "${subcmd}". Expected: capture.`);
+  }
+
+  // Split raw argv at the first "--" so command flags (--test, --json, -v) never collide with CLI flags.
+  const dashIdx = rest.indexOf("--");
+  const gfArgs = dashIdx === -1 ? rest : rest.slice(0, dashIdx);
+  const cmdArgv = dashIdx === -1 ? [] : rest.slice(dashIdx + 1);
+
+  const parsed = parseArgs({
+    args: gfArgs,
+    options: {
+      project: { type: "string", short: "p" },
+      task: { type: "string", short: "t" },
+      name: { type: "string" },
+      title: { type: "string" },
+      id: { type: "string" },
+      role: { type: "string" },
+      "verified-by": { type: "string" },
+      timeout: { type: "string" },
+      "no-link": { type: "boolean", default: false },
+      "created-at": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (parsed.values.help) {
+    printSubHelp("evidence");
+    return 0;
+  }
+
+  let timeoutMs;
+  if (parsed.values.timeout !== undefined) {
+    if (!/^\d+$/.test(parsed.values.timeout.trim())) {
+      throw new Error(`Invalid --timeout "${parsed.values.timeout}". Must be a positive integer.`);
+    }
+    timeoutMs = Number.parseInt(parsed.values.timeout.trim(), 10);
+  }
+
+  const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+  const res = captureEvidence({
+    projectDir,
+    harnessDir: HARNESS_DIR,
+    taskId: parsed.values.task,
+    name: parsed.values.name,
+    title: parsed.values.title,
+    id: parsed.values.id,
+    producedByRole: parsed.values.role,
+    verifiedBy: parsed.values["verified-by"],
+    timeoutMs,
+    linkTask: !parsed.values["no-link"],
+    createdAt: parsed.values["created-at"],
+    dryRun: parsed.values["dry-run"],
+    commandArgv: cmdArgv,
+  });
+
+  if (parsed.values.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return res.dryRun || res.verified ? 0 : 1;
+  }
+
+  console.log(
+    res.dryRun
+      ? `DRY RUN — Evidence ${res.id} not written.`
+      : `Evidence recorded: ${res.relPath} (status=${res.status}, check=${res.checkResult})`
+  );
+  console.log(`Task / Cmd  : ${res.taskId} | ${res.command}`);
+  console.log(`Duration    : ${res.durationMs}ms | exit=${res.exitCode ?? "n/a"} | linked=${res.linkedToTask}`);
+  return res.dryRun || res.verified ? 0 : 1;
+}
+
 function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
@@ -490,6 +856,15 @@ function main() {
     switch (command) {
       case "init":
         code = handleInit(rest);
+        break;
+      case "adopt":
+        code = handleAdopt(rest);
+        break;
+      case "task":
+        code = handleTask(rest);
+        break;
+      case "evidence":
+        code = handleEvidence(rest);
         break;
       case "validate":
         code = handleValidate(rest);
@@ -509,7 +884,7 @@ function main() {
     }
     process.exitCode = code;
   } catch (err) {
-    console.error(`ERROR: ${err.message}`);
+    console.error(`ERROR: ${redactSecretContent(err.message)}`);
     process.exitCode = 1;
   }
 }

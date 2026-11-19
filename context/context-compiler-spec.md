@@ -25,13 +25,13 @@ Targets below are **soft packing goals, not hard truncation cliffs**. Mandatory 
 
 | Profile | Starting Target | Intended Use Case |
 | :--- | :--- | :--- |
-| `quick` | ~2,000 est. tokens | Narrow validation, status updates, or single-file checks |
+| `quick` | ~4,000 est. tokens | Narrow validation, status updates, minimal starters, or single-file checks |
 | `working` | ~8,000 est. tokens | Standard feature tasks, bug fixes, tests, or targeted ADR drafting |
 | `deep` | ~16,000 est. tokens | Complex architecture, multi-module debugging, security reviews, or conflict resolution |
 
 ### Measured `quick` Profile Minimum Context Floor
 
-Even with a verified verbatim `A0` excerpt of `policies/memory-policy.md`, an untouched 1-task starter project compiles to **~2,600+ est. tokens** (`approval-boundaries.md` + `memory-policy.md` excerpt + `brain/manifest.yaml` + `brain/state/current.yaml` + `brain/requirements/constraints.md` + `TASK-0001` + trace/headers), and a realistic fixture with an open conflict plus task-linked ADR/evidence compiles to **~4,300+ est. tokens** under `quick` (`effective_profile: "working"`). In `quick` mode, the compiler compacts long `Omitted Candidates` trace listings in Markdown (full trace remains in `--json`) while preserving every mandatory safety rule and project invariant verbatim.
+With verified verbatim `A0` excerpts of `policies/memory-policy.md` and `policies/approval-boundaries.md`, an untouched starter project compiles under **~4,000 est. tokens** (`budget_overrun: false`, `effective_profile: "quick"`). Larger conflict-heavy fixtures with directly linked ADRs and evidence (`TASK-0002` in `npm run benchmark`) measure **~4,267 est. tokens** (`budget_overrun: true`, `effective_profile: "working"`), while explicit tight overrides such as `--budget 2000` or `--budget 500` always report `budget_overrun: true` honestly without dropping `A0` safety rules or open contradictions. In `quick` mode, the compiler compacts long `Omitted Candidates` trace listings in Markdown (full trace remains in `--json`) while preserving every mandatory safety rule and project invariant verbatim.
 
 ## 4. Prompt-Injection Threat Model & Limitations
 

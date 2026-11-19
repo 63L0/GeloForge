@@ -7,6 +7,7 @@ import path from "node:path";
 import { parseYaml } from "./yaml-subset.mjs";
 import { validateProject } from "./project-validator.mjs";
 import { getGitStatusScoped } from "./git-utils.mjs";
+import { resolveProjectPaths } from "./project-locator.mjs";
 
 function inspectGitState(projectDir) {
   const gs = getGitStatusScoped(projectDir);
@@ -47,17 +48,43 @@ export function getProjectStatus(rawProjectDir, options = {}) {
     }
   }
 
+  const projectPaths = resolveProjectPaths(manifest);
   let state = null;
-  const statePath = path.join(projectDir, "brain", "state", "current.yaml");
+  const statePath = path.join(projectDir, projectPaths.state);
   if (fs.existsSync(statePath)) {
     try {
-      state = parseYaml(fs.readFileSync(statePath, "utf8"), "brain/state/current.yaml");
+      state = parseYaml(fs.readFileSync(statePath, "utf8"), projectPaths.state);
     } catch {
       state = null;
     }
   }
 
   const vcs = inspectGitState(projectDir);
+
+  const nextSteps = [];
+  if (!validation.valid) {
+    nextSteps.push('Run "geloforge validate" and fix Second Brain schema or reference errors.');
+  } else if (state) {
+    if ((state.open_conflicts || []).length > 0) {
+      nextSteps.push(
+        `Resolve ${state.open_conflicts.length} open conflict(s) (${state.open_conflicts.join(", ")}) before approving decisions.`
+      );
+    }
+    if ((state.blocked_tasks || []).length > 0) {
+      nextSteps.push(`Unblock task(s): ${(state.blocked_tasks || []).join(", ")}.`);
+    }
+    if ((state.active_tasks || []).length === 0) {
+      nextSteps.push('Create and activate a task: geloforge task new --title "<goal>" --activate');
+    } else if (!state.last_verified_evidence) {
+      nextSteps.push(
+        `Capture command-backed evidence: geloforge evidence capture --task ${state.active_tasks[0]} -- <test-command>`
+      );
+    } else {
+      nextSteps.push(
+        `Compile task context: geloforge context --task ${state.active_tasks[0]} --map --profile quick`
+      );
+    }
+  }
 
   return {
     projectDir,
@@ -88,6 +115,7 @@ export function getProjectStatus(rawProjectDir, options = {}) {
         }
       : null,
     vcs,
+    nextSteps,
     counts: {
       records: validation.recordCount,
       markdownFiles: validation.checkedMarkdownFiles,

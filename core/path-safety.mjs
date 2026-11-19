@@ -210,6 +210,66 @@ export function validateDestinationPath(rawDest, { harnessDir, workspaceRoot }) 
   return resolved;
 }
 
+/**
+ * Validates an existing non-symlink directory target (e.g. brownfield adoption).
+ */
+export function validateExistingProjectDir(rawDest, { harnessDir, workspaceRoot }) {
+  if (typeof rawDest !== "string" || rawDest.trim().length === 0) {
+    throw new Error("Project path must not be empty.");
+  }
+  if (CONTROL_CHAR_REGEX.test(rawDest)) {
+    throw new Error("Project path contains illegal control characters.");
+  }
+  if (/^(\\\\|\/\/)/.test(rawDest)) {
+    throw new Error(`Refusing UNC or device network path as project directory: "${rawDest}".`);
+  }
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(rawDest)) {
+    throw new Error(`Refusing project path containing traversal segment "..": "${rawDest}".`);
+  }
+
+  const resolved = path.resolve(rawDest);
+  const parsed = path.parse(resolved);
+  if (resolved === parsed.root) {
+    throw new Error(`Refusing to operate directly at filesystem root "${resolved}".`);
+  }
+
+  validateWindowsCompatibleSegments(resolved);
+
+  const protectedDirs = [path.resolve(harnessDir)];
+  if (workspaceRoot && fs.existsSync(path.join(workspaceRoot, "local-runtime"))) {
+    protectedDirs.push(path.resolve(workspaceRoot, "local-runtime"));
+  }
+  if (workspaceRoot && fs.existsSync(path.join(workspaceRoot, "worktrees"))) {
+    protectedDirs.push(path.resolve(workspaceRoot, "worktrees"));
+  }
+  const exactForbidden = workspaceRoot
+    ? [path.resolve(workspaceRoot), path.resolve(workspaceRoot, "projects")]
+    : [];
+
+  for (const dir of protectedDirs) {
+    if (isSameOrInside(resolved, dir)) {
+      throw new Error(`Refusing protected workspace directory as target project: ${dir}`);
+    }
+  }
+  for (const dir of exactForbidden) {
+    if (normalizeForCompare(resolved) === normalizeForCompare(dir)) {
+      throw new Error(`Refusing container directory as target project: ${dir}`);
+    }
+  }
+
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Target project directory does not exist: ${resolved}`);
+  }
+  const stat = fs.lstatSync(resolved);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Target project path must be a real non-symlink directory: ${resolved}`);
+  }
+
+  assertSafeAncestors(resolved, protectedDirs, "project directory");
+
+  return resolved;
+}
+
 export function assertSafeWithinRoot(baseDir, relativeOrTargetPath) {
   if (typeof relativeOrTargetPath !== "string" || relativeOrTargetPath.trim().length === 0) {
     throw new Error("Path must be a non-empty string.");
@@ -292,6 +352,31 @@ export function hasSecretContent(text) {
     return false;
   }
   return SECRET_CONTENT_PATTERNS.some((pat) => pat.test(text));
+}
+
+/**
+ * Redacts common credential/token/private-key patterns from captured logs and diagnostics.
+ */
+export function redactSecretContent(text) {
+  if (typeof text !== "string" || text.length === 0) {
+    return "";
+  }
+  let out = text;
+  out = out.replace(
+    /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----|$)/g,
+    "[REDACTED_SECRET]"
+  );
+  for (const pat of SECRET_CONTENT_PATTERNS) {
+    const flags = pat.flags.includes("g") ? pat.flags : `${pat.flags}g`;
+    out = out.replace(new RegExp(pat.source, flags), "[REDACTED_SECRET]");
+  }
+  out = out.replace(/(Authorization\s*:\s*Bearer\s+)[^\s"']+/gi, "$1[REDACTED_SECRET]");
+  out = out.replace(/\bBearer\s+[A-Za-z0-9._-]{16,}\b/g, "Bearer [REDACTED_SECRET]");
+  out = out.replace(
+    /\b([A-Z0-9_]*(?:(?<!TOKENS?_)TOKEN(?!S\b)|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY)(?:_[A-Z0-9_]+)?)\s*([=:])\s*("[^"]*"|'[^']*'|[^\s"',;]+)/gi,
+    "$1$2[REDACTED_SECRET]"
+  );
+  return out;
 }
 
 export function atomicWriteFile(resolvedOutPath, content, { allowOverwrite = true, onBeforeCommit = null } = {}) {
@@ -391,9 +476,10 @@ export function walkNonSymlinkFiles(rootDir, absDir, predicate = () => true, war
     return [];
   }
   const results = [];
+  const ignoreDirs = options.ignoreDirs instanceof Set ? options.ignoreDirs : new Set([".git", "node_modules"]);
   const entries = fs.readdirSync(absDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
-    if (entry.name === ".git" || entry.name === "node_modules") {
+    if (ignoreDirs.has(entry.name)) {
       continue;
     }
     const full = path.join(absDir, entry.name);

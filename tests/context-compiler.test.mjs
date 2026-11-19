@@ -319,9 +319,21 @@ test("compileContext supports --query, empty starter projects, and tight-budget 
     assert.equal(freshRes.gitRevision, "no-git-repo");
     assert.equal(freshRes.manifest.task_id, null);
     assert.equal(freshRes.manifest.query, "initial architecture setup");
-    // In quick profile, policies alone exceed 2000 est. tokens so budget_overrun MUST be reported honestly without dropping A0 rules.
-    assert.equal(freshRes.budgetOverrun, true);
-    assert.equal(freshRes.manifest.budget_overrun, true);
+    // Under calibrated 4000 quick target, a clean starter fits without budget overrun while preserving all A0 rules.
+    assert.equal(freshRes.manifest.token_budget_target, 4000);
+    assert.equal(freshRes.budgetOverrun, false);
+    assert.equal(freshRes.manifest.budget_overrun, false);
+    assert.equal(freshRes.manifest.effective_profile, "quick");
+
+    // Explicit tight override (--budget 2000) still reports overrun honestly without dropping A0 rules.
+    const forcedTightFresh = compileContext({
+      projectDir: freshDir,
+      query: "initial architecture setup",
+      profile: "quick",
+      budget: 2000,
+    });
+    assert.equal(forcedTightFresh.budgetOverrun, true);
+    assert.equal(forcedTightFresh.manifest.budget_overrun, true);
     // Demonstrate completeness & integrity of quick-mode verified policy digests:
     for (const ruleNum of ["1.", "2.", "3.", "4.", "5.", "6.", "7.", "8."]) {
       assert.equal(freshRes.markdown.includes(`${ruleNum} **`), true, `Missing A0 rule ${ruleNum}`);

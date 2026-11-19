@@ -57,6 +57,8 @@ test("geloforge init, validate, status, and context work end-to-end via CLI", ()
     assert.equal(statusObj1.valid, true);
     assert.equal(statusObj1.vcs.available, false);
     assert.equal(statusObj1.project.profile, "desktop");
+    assert.ok(Array.isArray(statusObj1.nextSteps) && statusObj1.nextSteps.length > 0);
+    assert.match(runCli(["status", "--project", nonGitDest]).stdout, /Next Step\s+:/);
 
     // Git-enabled project lifecycle
     const gitDest = path.join(tmp, "git-app");

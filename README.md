@@ -12,12 +12,13 @@ It stores persistent project memory in plain Markdown and YAML inside your proje
 
 ## 1. What GeloForge Does Today
 
-- **Unified CLI ([scripts/geloforge.mjs](./scripts/geloforge.mjs)):** Non-interactive `geloforge` commands (`init`, `validate`, `context`, `handoff`, `status`) with `--json` output and safe atomic `--out` writes.
-- **Transactional Project Scaffolding (`init`):** Initializes a reusable Second Brain ([templates/project-starter/](./templates/project-starter/README.md)) plus optional domain overlays (`web`, `desktop`, `mobile`, `automation`, `ai-system`).
+- **Unified CLI ([scripts/geloforge.mjs](./scripts/geloforge.mjs)):** Non-interactive `geloforge` commands (`init`, `adopt`, `task`, `evidence`, `validate`, `context`, `handoff`, `status`) with CWD project auto-discovery, `--json` output, and atomic `--out` writes.
+- **Brownfield Adoption & Greenfield Scaffolding (`adopt`, `init`):** Safely onboard existing repos with `geloforge adopt` without altering existing source files ([adopt-project.mjs](./core/adopt-project.mjs)), or initialize new Second Brain repos ([templates/project-starter/](./templates/project-starter/README.md)) with domain overlays (`web`, `desktop`, `mobile`, `automation`, `ai-system`).
+- **Task Contracts & Command-Backed Evidence (`task`, `evidence`):** Manage schema-strict `TASK-NNNN` contracts ([task-manager.mjs](./core/task-manager.mjs)) and capture real `EVID-NNNN` records via `geloforge evidence capture -- <cmd>` with `shell: false`, secret redaction, and explicit pass/fail/timeout accuracy ([evidence-capture.mjs](./core/evidence-capture.mjs)).
 - **Deterministic Context Compiler (`context`):** Assembles trust-tiered `L4` Markdown packets + `CPACK-0001` JSON manifests with explicit `budget_breakdown`, `--exclude-unverified`, open-conflict surfacing, and verified `A0` safety preservation ([context-compiler.mjs](./core/context-compiler.mjs)).
 - **Selective Codebase Mapping (`context --map`):** Extracts deterministic multi-language symbol outlines, local import boost, and `L<line>` references within `--map-budget`, respecting `.gitignore` and excluding `.env*`, keys, binaries, and build outputs ([codebase-map.mjs](./core/codebase-map.mjs)).
 - **Cross-Agent File-Based Handoffs (`handoff`):** Generates and cross-validates (`--inspect`) schema-strict `HANDOFF-NNNN` transfers that separate audited `verified_evidence` (`EVID-*`) from `unverified_claims`, surface `contradiction_warnings`, and capture project-scoped Git state/drift ([handoff.mjs](./core/handoff.mjs)).
-- **Strict Validation & Health Checks (`validate`, `status`):** Checks 12 JSON Schemas ([schemas/](./schemas/README.md)), `1.0`/`1.1` compatibility ([compatibility.mjs](./core/compatibility.mjs)), duplicate IDs, cross-record references, symlink safety, forged evidence entries, and relative Markdown links ([project-validator.mjs](./core/project-validator.mjs)).
+- **Strict Validation & Health Checks (`validate`, `status`):** Checks 12 JSON Schemas ([schemas/](./schemas/README.md)), `1.0`/`1.1` compatibility ([compatibility.mjs](./core/compatibility.mjs)), duplicate IDs, cross-record references, symlink safety, forged evidence entries, relative Markdown links, and actionable `nextSteps` ([project-validator.mjs](./core/project-validator.mjs)).
 
 ---
 
@@ -39,19 +40,22 @@ Run commands directly via `node scripts/geloforge.mjs <command>`, `npm run gelof
 
 ---
 
-## 3. How to Start a Project
+## 3. How to Start a Project (Existing or New)
 
-Preview first with `--dry-run`, or scaffold an isolated project with its own Git repository:
+See the standalone [5-Minute Quickstart](./docs/quickstart-5min.md) for the shortest onboarding flow inside any existing repository:
 
 ```bash
-# Preview files without touching disk
-node scripts/geloforge.mjs init --name "My Web App" --profile web --dest ../projects/my-web-app --git --dry-run
+# Onboard an existing repo non-destructively (run from repo root)
+geloforge adopt --dry-run
+geloforge adopt --profile web
 
-# Create a TypeScript/React/API web project
+# Create an isolated new project with its own Git repo
 node scripts/geloforge.mjs init --name "My Web App" --profile web --dest ../projects/my-web-app --git
 
-# Check operational & Git health
-node scripts/geloforge.mjs status --project ../projects/my-web-app
+# From inside any project directory or nested subdirectory (--project is auto-detected):
+geloforge status
+geloforge task new --title "Verify auth flow" --activate
+geloforge evidence capture --task TASK-0001 --name "Unit tests" -- node --test
 ```
 
 Available overlays under [templates/profiles/](./templates/profiles/README.md): `web`, `desktop`, `mobile`, `automation`, and `ai-system`. See [docs/new-projects.md](./docs/new-projects.md) for all initialization flags (`--slug`, `--owner`, `--description`, `--created-at`).
@@ -73,7 +77,7 @@ node scripts/geloforge.mjs context --project ../projects/my-web-app --task TASK-
 node scripts/geloforge.mjs context --project ../projects/my-web-app --query "checkout pricing" --profile deep --out ../packets/task-context.md
 ```
 
-- **Budget Profiles & Honest Minimum Floor:** `quick` targets `~2,000`, `working` targets `~8,000`, and `deep` targets `~16,000` estimated tokens (`Math.ceil(utf8_bytes / 4)` — heuristic, not vendor tokenizer exact). Mandatory `A0` safety policies, constraints, active task contracts, and open `CONF-NNNN` conflicts are **never silently truncated** to hit `2,000`; an untouched minimal 1-task starter already measures `~2,600+` est. tokens under `quick`, so `budget_overrun: true` and `budget_breakdown` report actual sizes honestly alongside `effective_profile`.
+- **Budget Profiles & Minimum Floors:** `quick` targets `~4,000`, `working` targets `~8,000`, and `deep` targets `~16,000` estimated tokens (`Math.ceil(utf8_bytes / 4)` — heuristic, not vendor tokenizer exact). Untouched starter repos fit inside `quick` (`~4,000`), while mandatory `A0` safety policies, constraints, active task contracts, and open `CONF-NNNN` conflicts are **never silently truncated**; if mandatory or direct-linked content exceeds a target, `budget_overrun: true` and `budget_breakdown` report actual sizes honestly alongside `effective_profile`.
 - **Prompt-Injection Boundary Note:** Packet sections separate authoritative decisions (`A1`–`A2`) from unverified records (`A5`–`A6`, drafts) and escape spoofed document markers (`<<<ESCAPED_END_GELOFORGE_DOC>>>` / `<<<ESCAPED_GELOFORGE_DOC`). However, **document markers alone cannot prevent persuasive text inside untrusted files or source comments from influencing an AI model**. Use `--exclude-unverified` when strict trust isolation is needed. Details: [context-compiler-spec.md](./context/context-compiler-spec.md).
 
 ---
@@ -139,13 +143,14 @@ GeloForge works identically whether you use a single coding assistant across ses
 ## 8. What Requires Manual Work & What Is Not Implemented Yet
 
 **Still Requires Manual Action:**
-- Running your project's own test commands and writing/reviewing `evidence/EVID-NNNN-*.yaml` manifests (GeloForge audits existing `EVID-*` files; it does not run arbitrary project test suites automatically).
+- Running your verification command explicitly (`geloforge evidence capture --task TASK-NNNN -- <cmd>`) or authoring/reviewing `evidence/EVID-NNNN-*.yaml` manifests (exit code `0` confirms command execution succeeded, not full application correctness — review tool output and untested paths carefully).
 - Recording human approval (`approved_by` / `APPR-NNNN`), promoting proposals into canonical `brain/decisions/` or `brain/requirements/`, and resolving `CONF-NNNN` conflicts.
 - Invoking your chosen AI coding assistant CLI or IDE with compiled packets or handoffs.
 
 **Not Implemented Yet:**
+- Portable `SKILL.md` discovery/linting and evidence-backed adaptive skill promotion (planned for v0.4 PR 2 & PR 3).
 - Live multi-agent orchestrators, autonomous agent runners, or background daemons.
-- Restricted Integration Controller for automated proposal-to-canonical promotion.
+- Enforceable cryptographic/PR human-approval verification and automated proposal-to-canonical promotion.
 - OS/Git pre-commit write-ownership enforcement or runtime spend interceptors (`policies/` ownership rules remain documented governance only).
 - On-disk compiled context caching (`<workspace-root>/local-runtime/context-cache/`), automated `CHKPT-NNNN` checkpoint tooling, vector databases, RAG pipelines, or paid API integrations.
 

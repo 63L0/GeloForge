@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { parseYaml, extractFrontmatter } from "./yaml-subset.mjs";
 import { validateAgainstSchema } from "./json-schema-lite.mjs";
 import { assertSafeWithinRoot, isForbiddenSecretPath, walkNonSymlinkFiles } from "./path-safety.mjs";
+import { resolveProjectPaths } from "./project-locator.mjs";
 import {
   loadCompatibilityConfig,
   checkManifestCompatibility,
@@ -58,6 +59,38 @@ function stripFencedAndInlineCode(markdown) {
     }
   }
   return out.join("\n");
+}
+
+const IGNORED_PROJECT_SCAN_DIRS = new Set([
+  ".git",
+  "node_modules",
+  ".venv",
+  "venv",
+  "__pycache__",
+  "dist",
+  "build",
+  "target",
+  ".next",
+  ".nuxt",
+  "vendor",
+  "obj",
+  "coverage",
+  ".cache",
+]);
+
+function isSecondBrainOrGuideRelPath(relPath, projectPaths) {
+  const norm = relPath.replace(/\\/g, "/");
+  if (norm === "AGENTS.md" || norm === "GEMINI.md" || norm === "CLAUDE.md") {
+    return true;
+  }
+  const prefixes = [
+    "brain/",
+    `${projectPaths.tasks_dir}/`,
+    `${projectPaths.evidence_dir}/`,
+    `${projectPaths.proposals_dir}/`,
+    `${projectPaths.handoffs_dir}/`,
+  ];
+  return prefixes.some((p) => norm.startsWith(p) || norm === p.slice(0, -1));
 }
 
 function matchRecordType(fileName) {
@@ -109,15 +142,78 @@ export function validateProject(rawProjectDir, options = {}) {
     };
   }
 
-  // 1. Core required files (also verifying none are symlinks or traversal escapes)
-  const requiredCoreFiles = [
-    "brain/manifest.yaml",
-    "brain/state/current.yaml",
-    "brain/INDEX.md",
-    "brain/requirements/prd.md",
-    "brain/requirements/constraints.md",
-    "brain/architecture/overview.md",
-  ];
+  let manifest = null;
+  let state = null;
+  let compatibilityStatus = "unknown";
+  let projectPaths = resolveProjectPaths(null);
+
+  // 1. Verify and parse brain/manifest.yaml first so custom paths can be resolved cleanly
+  const manifestRel = "brain/manifest.yaml";
+  try {
+    const manifestFull = assertSafeWithinRoot(projectDir, manifestRel);
+    if (!fs.existsSync(manifestFull)) {
+      errors.push(`Missing required project file: ${manifestRel}`);
+    } else if (!fs.lstatSync(manifestFull).isFile()) {
+      errors.push(`Required project path must be a regular file: ${manifestRel}`);
+    } else {
+      try {
+        manifest = parseYaml(fs.readFileSync(manifestFull, "utf8"), manifestRel);
+        const mRes = validateAgainstSchema(manifest, loadSchema("project-manifest.schema.json"));
+        if (!mRes.valid) {
+          errors.push(`brain/manifest.yaml schema error(s): ${mRes.errors.join("; ")}`);
+        }
+        const compat = checkManifestCompatibility(manifest, compatConfig);
+        compatibilityStatus = compat.status;
+        errors.push(...compat.errors);
+        warnings.push(...compat.warnings);
+        projectPaths = resolveProjectPaths(manifest);
+
+        if (manifest && manifest.paths && typeof manifest.paths === "object") {
+          const requiredPathKeys = [
+            "brain_index",
+            "prd",
+            "constraints",
+            "architecture",
+            "state",
+            "decisions_dir",
+            "tasks_dir",
+          ];
+          for (const [key, relVal] of Object.entries(manifest.paths)) {
+            try {
+              const resolved = assertSafeWithinRoot(projectDir, relVal);
+              if (requiredPathKeys.includes(key) && !fs.existsSync(resolved)) {
+                errors.push(`manifest.paths.${key} target does not exist: ${relVal}`);
+              }
+            } catch (err) {
+              errors.push(`manifest.paths.${key} unsafe: ${err.message}`);
+            }
+          }
+        }
+
+        if (manifest && manifest.profile) {
+          const profileGuide = path.join(projectDir, "brain", "profile.md");
+          if (!fs.existsSync(profileGuide)) {
+            errors.push(`Manifest declares profile "${manifest.profile}", but brain/profile.md is missing.`);
+          }
+        }
+      } catch (err) {
+        errors.push(`Failed to parse brain/manifest.yaml: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    errors.push(`Core project file unsafe (${manifestRel}): ${err.message}`);
+  }
+
+  // 2. Verify remaining core required files using resolved paths
+  const requiredCoreFiles = Array.from(
+    new Set([
+      projectPaths.state,
+      projectPaths.brain_index,
+      projectPaths.prd,
+      projectPaths.constraints,
+      projectPaths.architecture,
+    ])
+  );
   for (const rel of requiredCoreFiles) {
     try {
       const full = assertSafeWithinRoot(projectDir, rel);
@@ -131,69 +227,23 @@ export function validateProject(rawProjectDir, options = {}) {
     }
   }
 
-  let manifest = null;
-  let state = null;
-  let compatibilityStatus = "unknown";
-
-  // 2. Parse and validate manifest.yaml
-  const manifestPath = path.join(projectDir, "brain", "manifest.yaml");
-  if (fs.existsSync(manifestPath)) {
-    try {
-      manifest = parseYaml(fs.readFileSync(manifestPath, "utf8"), "brain/manifest.yaml");
-      const mRes = validateAgainstSchema(manifest, loadSchema("project-manifest.schema.json"));
-      if (!mRes.valid) {
-        errors.push(`brain/manifest.yaml schema error(s): ${mRes.errors.join("; ")}`);
-      }
-      const compat = checkManifestCompatibility(manifest, compatConfig);
-      compatibilityStatus = compat.status;
-      errors.push(...compat.errors);
-      warnings.push(...compat.warnings);
-
-      if (manifest && manifest.paths && typeof manifest.paths === "object") {
-        const requiredPathKeys = [
-          "brain_index",
-          "prd",
-          "constraints",
-          "architecture",
-          "state",
-          "decisions_dir",
-          "tasks_dir",
-        ];
-        for (const [key, relVal] of Object.entries(manifest.paths)) {
-          try {
-            const resolved = assertSafeWithinRoot(projectDir, relVal);
-            if (requiredPathKeys.includes(key) && !fs.existsSync(resolved)) {
-              errors.push(`manifest.paths.${key} target does not exist: ${relVal}`);
-            }
-          } catch (err) {
-            errors.push(`manifest.paths.${key} unsafe: ${err.message}`);
-          }
-        }
-      }
-
-      if (manifest && manifest.profile) {
-        const profileGuide = path.join(projectDir, "brain", "profile.md");
-        if (!fs.existsSync(profileGuide)) {
-          errors.push(`Manifest declares profile "${manifest.profile}", but brain/profile.md is missing.`);
-        }
-      }
-    } catch (err) {
-      errors.push(`Failed to parse brain/manifest.yaml: ${err.message}`);
-    }
+  // 3. Parse and validate operational state file
+  let statePath = null;
+  try {
+    statePath = assertSafeWithinRoot(projectDir, projectPaths.state);
+  } catch {
+    statePath = null;
   }
-
-  // 3. Parse and validate state/current.yaml
-  const statePath = path.join(projectDir, "brain", "state", "current.yaml");
-  if (fs.existsSync(statePath)) {
+  if (statePath && fs.existsSync(statePath) && fs.lstatSync(statePath).isFile()) {
     try {
-      state = parseYaml(fs.readFileSync(statePath, "utf8"), "brain/state/current.yaml");
+      state = parseYaml(fs.readFileSync(statePath, "utf8"), projectPaths.state);
       const sVer = checkRecordSchemaVersion(state, compatConfig);
       if (!sVer.compatible) {
-        errors.push(`brain/state/current.yaml: ${sVer.error}`);
+        errors.push(`${projectPaths.state}: ${sVer.error}`);
       }
       const sRes = validateAgainstSchema(state, loadSchema("project-state.schema.json"));
       if (!sRes.valid) {
-        errors.push(`brain/state/current.yaml schema error(s): ${sRes.errors.join("; ")}`);
+        errors.push(`${projectPaths.state} schema error(s): ${sRes.errors.join("; ")}`);
       }
       if (manifest && state && manifest.project_id !== state.project_id) {
         errors.push(
@@ -201,30 +251,24 @@ export function validateProject(rawProjectDir, options = {}) {
         );
       }
     } catch (err) {
-      errors.push(`Failed to parse brain/state/current.yaml: ${err.message}`);
+      errors.push(`Failed to parse ${projectPaths.state}: ${err.message}`);
     }
   }
 
-  // 4. Scan structured records across core & optional record folders
-  const recordDirs = [
-    "brain/decisions",
-    "brain/research",
-    "brain/conflicts",
-    "brain/incidents",
-    "tasks",
-    "evidence",
-    "proposals",
-    "handoffs",
-  ];
-  const canonicalDirs = new Set([
-    "brain/decisions",
-    "brain/research",
-    "brain/conflicts",
-    "brain/incidents",
-    "tasks",
-    "evidence",
-    "handoffs",
-  ]);
+  // 4. Scan structured records across resolved core & optional record folders
+  const recordDirs = Array.from(
+    new Set([
+      projectPaths.decisions_dir,
+      projectPaths.research_dir,
+      projectPaths.conflicts_dir,
+      projectPaths.incidents_dir,
+      projectPaths.tasks_dir,
+      projectPaths.evidence_dir,
+      projectPaths.proposals_dir,
+      projectPaths.handoffs_dir,
+    ])
+  );
+  const canonicalDirs = new Set(recordDirs.filter((d) => d !== projectPaths.proposals_dir));
   const records = [];
   const seenIds = new Map();
 
@@ -418,6 +462,7 @@ export function validateProject(rawProjectDir, options = {}) {
   const harnessTokenRegex =
     /\{\{(PROJECT_NAME|PROJECT_SLUG|PROJECT_ID|PROJECT_DESCRIPTION|PROJECT_OWNER|CREATED_AT|CREATED_DATE|HARNESS_VERSION|TEMPLATE_VERSION|PROFILE_NAME|PROFILE_VERSION)\}\}/;
   const mdFiles = walkNonSymlinkFiles(projectDir, projectDir, (p) => p.endsWith(".md"), null, {
+    ignoreDirs: IGNORED_PROJECT_SCAN_DIRS,
     onSymlink: (_rel, msg) => errors.push(msg),
   });
   const linkRegex = /!?\[[^\]]*\]\(([^)]+)\)/g;
@@ -429,7 +474,7 @@ export function validateProject(rawProjectDir, options = {}) {
     if (harnessTokenRegex.test(raw)) {
       errors.push(`${relMd}: contains unreplaced template placeholder`);
     }
-    if (/(^|[^A-Za-z0-9_])([A-Za-z]:[\\/])/.test(raw)) {
+    if (isSecondBrainOrGuideRelPath(relMd, projectPaths) && /(^|[^A-Za-z0-9_])([A-Za-z]:[\\/])/.test(raw)) {
       errors.push(`${relMd}: contains hardcoded Windows drive path`);
     }
 
@@ -466,6 +511,7 @@ export function validateProject(rawProjectDir, options = {}) {
 
   // Check YAML files for leftover harness placeholders too
   const yamlFiles = walkNonSymlinkFiles(projectDir, projectDir, (p) => /\.ya?ml$/i.test(p), null, {
+    ignoreDirs: IGNORED_PROJECT_SCAN_DIRS,
     onSymlink: (_rel, msg) => errors.push(msg),
   });
   for (const yf of yamlFiles) {
