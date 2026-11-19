@@ -25,7 +25,20 @@ function walkFiles(dir) {
   return results;
 }
 
-test("harness repository contains no hardcoded workspace paths, user home paths, or current OS username", () => {
+export function hasLeakedUsernameInPath(content, username) {
+  if (typeof username !== "string" || username.trim().length < 3) {
+    return false;
+  }
+  const escaped = username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`/(?:home|Users)/${escaped}(?=[/\\\\\\s"'\`]|$)`, "i"),
+    new RegExp(`[A-Za-z]:[\\\\/]Users[\\\\/]${escaped}(?=[/\\\\\\s"'\`]|$)`, "i"),
+    new RegExp(`~${escaped}(?=[/\\\\\\s"'\`]|$)`, "i"),
+  ];
+  return patterns.some((pat) => pat.test(content));
+}
+
+test("harness repository contains no hardcoded workspace paths, user home paths, or current OS username in paths", () => {
   const username = os.userInfo().username;
   const userHome = os.homedir();
   const files = walkFiles(HARNESS_DIR);
@@ -37,14 +50,19 @@ test("harness repository contains no hardcoded workspace paths, user home paths,
     assert.equal(/C:[\\/]AI-Workspace/i.test(content), false, `Hardcoded C:\\AI-Workspace found in ${rel}`);
     assert.equal(/C:[\\/]Users[\\/]/i.test(content), false, `Hardcoded C:\\Users\\ path found in ${rel}`);
     assert.equal(content.includes(userHome), false, `Hardcoded homedir found in ${rel}`);
-    if (username.length >= 3) {
-      assert.equal(
-        new RegExp(`\\b${username.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(content),
-        false,
-        `Current OS username "${username}" leaked into ${rel}`
-      );
-    }
+    assert.equal(
+      hasLeakedUsernameInPath(content, username),
+      false,
+      `Current OS username "${username}" leaked in user path inside ${rel}`
+    );
   }
+});
+
+test("path-contextual username detector ignores plain English words like 'runner' while catching user-path leaks", () => {
+  assert.equal(hasLeakedUsernameInPath("Portable Node test runner discovery works.", "runner"), false);
+  assert.equal(hasLeakedUsernameInPath("Built for /home/runner/work/repo", "runner"), true);
+  assert.equal(hasLeakedUsernameInPath("Saved in C:\\Users\\runner\\repo", "runner"), true);
+  assert.equal(hasLeakedUsernameInPath("macOS path /Users/runner/src/app.mjs", "runner"), true);
 });
 
 test("generated project stays fully valid after moving to a new path with spaces and Unicode", () => {

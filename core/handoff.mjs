@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseYaml, extractFrontmatter } from "./yaml-subset.mjs";
+import { parseYaml, extractFrontmatter, serializeYaml } from "./yaml-subset.mjs";
 import { validateAgainstSchema } from "./json-schema-lite.mjs";
 import {
   assertSafeWithinRoot,
@@ -93,49 +93,8 @@ function collectGitState(projectDir, warnings) {
   };
 }
 
-function yamlScalar(val) {
-  if (val === null || val === undefined) return "null";
-  if (typeof val === "boolean" || typeof val === "number") return String(val);
-  return JSON.stringify(String(val));
-}
-
-function serializeObjectLines(obj, indent) {
-  const pad = " ".repeat(indent);
-  const lines = [];
-  for (const [key, val] of Object.entries(obj)) {
-    if (val === undefined) continue;
-    if (Array.isArray(val)) {
-      if (val.length === 0) {
-        lines.push(`${pad}${key}: []`);
-      } else if (typeof val[0] === "object" && val[0] !== null) {
-        lines.push(`${pad}${key}:`);
-        for (const item of val) {
-          const itemEntries = Object.entries(item).filter(([, v]) => v !== undefined);
-          if (itemEntries.length === 0) continue;
-          const [firstKey, firstVal] = itemEntries[0];
-          lines.push(`${pad}  - ${firstKey}: ${yamlScalar(firstVal)}`);
-          for (const [k, v] of itemEntries.slice(1)) {
-            lines.push(`${pad}    ${k}: ${yamlScalar(v)}`);
-          }
-        }
-      } else {
-        lines.push(`${pad}${key}:`);
-        for (const item of val) {
-          lines.push(`${pad}  - ${yamlScalar(item)}`);
-        }
-      }
-    } else if (typeof val === "object" && val !== null) {
-      lines.push(`${pad}${key}:`);
-      lines.push(...serializeObjectLines(val, indent + 2));
-    } else {
-      lines.push(`${pad}${key}: ${yamlScalar(val)}`);
-    }
-  }
-  return lines;
-}
-
 export function serializeHandoffYaml(record) {
-  return `${serializeObjectLines(record, 0).join("\n")}\n`;
+  return serializeYaml(record);
 }
 
 export function renderHandoffMarkdown(record, inspectMeta = null) {
