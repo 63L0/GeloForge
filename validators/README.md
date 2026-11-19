@@ -5,8 +5,8 @@ This directory contains zero-dependency Node.js validation tools for verifying t
 ## Components
 
 - [validate-foundation.mjs](./validate-foundation.mjs) — Comprehensive Phase 1 foundation test runner.
-- [lib/yaml-subset.mjs](./lib/yaml-subset.mjs) — Strict zero-dependency YAML 1.2 subset parser and Markdown YAML frontmatter extractor.
-- [lib/json-schema-lite.mjs](./lib/json-schema-lite.mjs) — Zero-dependency JSON Schema Draft 2020-12 subset validator.
+- [../core/yaml-subset.mjs](../core/yaml-subset.mjs) — Strict zero-dependency YAML 1.2 subset parser and Markdown YAML frontmatter extractor.
+- [../core/json-schema-lite.mjs](../core/json-schema-lite.mjs) — Zero-dependency JSON Schema Draft 2020-12 subset validator.
 
 ## Run Locally
 

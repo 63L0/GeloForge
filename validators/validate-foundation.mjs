@@ -10,8 +10,8 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { parseYaml, extractFrontmatter } from "./lib/yaml-subset.mjs";
-import { validateAgainstSchema } from "./lib/json-schema-lite.mjs";
+import { parseYaml, extractFrontmatter } from "../core/yaml-subset.mjs";
+import { validateAgainstSchema } from "../core/json-schema-lite.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -165,7 +165,7 @@ function main() {
       "contracts/examples",
       "schemas",
       "context/context-compiler-spec.md",
-      "validators/lib",
+      "core",
       "evaluations/README.md",
       "scripts/bootstrap-project.mjs",
       "templates/project-starter",
