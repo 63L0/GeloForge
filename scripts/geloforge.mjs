@@ -9,6 +9,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { bootstrapProject } from "./bootstrap-project.mjs";
+import { adoptProject } from "../core/adopt-project.mjs";
 import { validateProject } from "../core/project-validator.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectStatus } from "../core/project-status.mjs";
@@ -33,6 +34,7 @@ Usage:
 
 Commands:
   init       Initialize a new project Second Brain (supports profiles & --dry-run)
+  adopt      Add GeloForge Second Brain to an existing project without overwriting files
   validate   Validate a project's schemas, compatibility, IDs, references, and links
   context    Compile a deterministic, trust-tiered context packet for a task or query
   handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
@@ -59,6 +61,26 @@ Options:
   --created-at <iso>      ISO-8601 timestamp for deterministic output
   --git                   Initialize local Git repo (git init -b main)
   --dry-run               Preview planned files without writing
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+`);
+      break;
+    case "adopt":
+      console.log(`Usage: geloforge adopt [--dest <path>] [options]
+
+Options:
+  -d, --dest <path>       Existing project directory (default: current working directory)
+  -p, --project <path>    Alias for --dest
+  --name <string>         Display name (default: inferred from manifest or directory name)
+  --slug <string>         Lowercase ASCII slug (optional)
+  --owner <string>        Project owner name (default: "Project Owner")
+  --description <string>  Short project description
+  --profile <name>        Optional overlay: web, desktop, mobile, automation, ai-system
+  --tasks-dir <relpath>   Relative task contracts folder (default: "tasks")
+  --evidence-dir <rel>    Relative evidence manifests folder (default: "evidence")
+  --with-agent-guides     Also create AGENTS.md & GEMINI.md (refuses overwrite if present)
+  --created-at <iso>      ISO-8601 timestamp for deterministic output
+  --dry-run               Preview planned files without modifying disk
   --json                  Emit structured JSON output
   -h, --help              Show help
 `);
@@ -178,6 +200,61 @@ function handleInit(args) {
   console.log(`Profile     : ${res.profile ? `${res.profile} (${res.profileVersion})` : "none"}`);
   console.log(`Destination : ${res.destDir}`);
   console.log(`Files       : ${res.files.length}`);
+  return 0;
+}
+
+function handleAdopt(args) {
+  const parsed = parseArgs({
+    args,
+    options: {
+      dest: { type: "string", short: "d" },
+      project: { type: "string", short: "p" },
+      name: { type: "string" },
+      slug: { type: "string" },
+      owner: { type: "string" },
+      description: { type: "string" },
+      profile: { type: "string" },
+      "tasks-dir": { type: "string" },
+      "evidence-dir": { type: "string" },
+      "with-agent-guides": { type: "boolean", default: false },
+      "created-at": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (parsed.values.help) {
+    printSubHelp("adopt");
+    return 0;
+  }
+  const dest = parsed.values.dest || parsed.values.project || process.cwd();
+  const res = adoptProject({
+    dest,
+    name: parsed.values.name,
+    slug: parsed.values.slug,
+    owner: parsed.values.owner,
+    description: parsed.values.description,
+    profile: parsed.values.profile,
+    tasksDir: parsed.values["tasks-dir"],
+    evidenceDir: parsed.values["evidence-dir"],
+    withAgentGuides: parsed.values["with-agent-guides"],
+    createdAt: parsed.values["created-at"],
+    dryRun: parsed.values["dry-run"],
+    harnessDir: HARNESS_DIR,
+    workspaceRoot: WORKSPACE_ROOT,
+  });
+  if (parsed.values.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return 0;
+  }
+  console.log(res.dryRun ? "DRY RUN — No files written." : "Existing project adopted into GeloForge.");
+  console.log(`Project     : ${res.projectName} (${res.projectId})`);
+  console.log(`Directory   : ${res.destDir}`);
+  console.log(`Git Repo    : ${res.gitDetected ? `yes (branch=${res.defaultBranch})` : "no"}`);
+  console.log(`Added Files : ${res.files.length}`);
+  for (const w of res.warnings) console.log(`  - [WARN] ${w}`);
   return 0;
 }
 
@@ -490,6 +567,9 @@ function main() {
     switch (command) {
       case "init":
         code = handleInit(rest);
+        break;
+      case "adopt":
+        code = handleAdopt(rest);
         break;
       case "validate":
         code = handleValidate(rest);

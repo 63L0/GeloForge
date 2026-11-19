@@ -20,8 +20,16 @@ import {
   validateDestinationPath,
   assertNoSymlinkInTree,
 } from "../core/path-safety.mjs";
-import { loadCompatibilityConfig, parseSemver } from "../core/compatibility.mjs";
+import { loadCompatibilityConfig } from "../core/compatibility.mjs";
 import { validateProject } from "../core/project-validator.mjs";
+import {
+  escapeYamlScalarText,
+  renderSinglePass,
+  resolveProfile,
+  validateCreatedAt,
+} from "../core/template-utils.mjs";
+
+export { renderSinglePass };
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,8 +38,6 @@ const WORKSPACE_ROOT = path.resolve(HARNESS_DIR, "..");
 const TEMPLATE_DIR = path.join(HARNESS_DIR, "templates", "project-starter");
 const PROFILES_DIR = path.join(HARNESS_DIR, "templates", "profiles");
 const VERSION_FILE = path.join(HARNESS_DIR, "VERSION");
-
-const PROFILE_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
 
 function printHelp() {
   console.log(`AI Harness Project Bootstrapper
@@ -68,20 +74,6 @@ function collectTemplateFiles(rootDir, currentDir = rootDir) {
   return files;
 }
 
-function escapeYamlString(value) {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-export function renderSinglePass(rawContent, tokens, isYaml, sourceLabel) {
-  return rawContent.replace(/\{\{([A-Z0-9_]+)\}\}/g, (_match, key) => {
-    if (!Object.hasOwn(tokens, key)) {
-      throw new Error(`Unsupported template placeholder "{{${key}}}" in ${sourceLabel}`);
-    }
-    const val = tokens[key];
-    return isYaml ? escapeYamlString(val) : val;
-  });
-}
-
 function renderManifest(rawContent, tokens, { gitInit, profileMeta }) {
   let output = renderSinglePass(rawContent, tokens, true, "brain/manifest.yaml");
   output = output.replace(/^status:\s*"template"(?=\r?$)/m, 'status: "initialized"');
@@ -89,63 +81,13 @@ function renderManifest(rawContent, tokens, { gitInit, profileMeta }) {
     output = output.replace(/^(\s*initialized:\s*)false(?=\r?$)/m, "$1true");
   }
   if (profileMeta) {
-    output = output.replace(/^profile:\s*null(?=\r?$)/m, `profile: "${escapeYamlString(profileMeta.name)}"`);
+    output = output.replace(/^profile:\s*null(?=\r?$)/m, `profile: "${escapeYamlScalarText(profileMeta.name)}"`);
     output = output.replace(
       /^profile_version:\s*null(?=\r?$)/m,
-      `profile_version: "${escapeYamlString(profileMeta.version)}"`
+      `profile_version: "${escapeYamlScalarText(profileMeta.version)}"`
     );
   }
   return output;
-}
-
-function resolveProfile(profileName, compatConfig) {
-  if (!profileName) {
-    return null;
-  }
-  const clean = profileName.trim();
-  if (!PROFILE_NAME_REGEX.test(clean)) {
-    throw new Error(`Invalid profile name "${profileName}".`);
-  }
-  if (!Object.hasOwn(compatConfig.profiles, clean)) {
-    const allowed = Object.keys(compatConfig.profiles).join(", ");
-    throw new Error(`Unknown project profile "${clean}". Available profiles: ${allowed}`);
-  }
-  const profileDir = path.join(PROFILES_DIR, clean);
-  if (!fs.existsSync(profileDir) || !fs.statSync(profileDir).isDirectory()) {
-    throw new Error(`Profile directory missing for "${clean}": ${profileDir}`);
-  }
-  assertNoSymlinkInTree(profileDir);
-
-  const metaPath = path.join(profileDir, "profile.json");
-  if (!fs.existsSync(metaPath)) {
-    throw new Error(`Profile metadata missing: ${metaPath}`);
-  }
-  const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-  if (meta.name !== clean) {
-    throw new Error(`Profile metadata mismatch in ${metaPath}: expected "${clean}", got "${meta.name}".`);
-  }
-  if (meta.compatible_template_major !== compatConfig.supported_template_major) {
-    throw new Error(
-      `Profile "${clean}" requires template major ${meta.compatible_template_major}, harness uses ${compatConfig.supported_template_major}.`
-    );
-  }
-  const parsedProfVer = parseSemver(meta.version);
-  if (!parsedProfVer || parsedProfVer.major !== compatConfig.supported_profile_major) {
-    throw new Error(`Profile "${clean}" has incompatible version "${meta.version}".`);
-  }
-  return { meta, profileDir };
-}
-
-function validateCreatedAt(rawCreatedAt) {
-  if (rawCreatedAt === undefined || rawCreatedAt === null) {
-    return new Date().toISOString();
-  }
-  const trimmed = String(rawCreatedAt).trim();
-  const parsed = Date.parse(trimmed);
-  if (Number.isNaN(parsed) || trimmed.length < 10) {
-    throw new Error(`Invalid --created-at ISO timestamp "${rawCreatedAt}".`);
-  }
-  return trimmed;
 }
 
 function ensureParentDirsTracked(targetParent) {
@@ -188,7 +130,7 @@ export function bootstrapProject(options = {}) {
     options.description ?? "Project initialized from the AI harness Second Brain starter template."
   );
 
-  const resolvedProfile = resolveProfile(options.profile, compatConfig);
+  const resolvedProfile = resolveProfile(options.profile, compatConfig, PROFILES_DIR);
   const profileMeta = resolvedProfile ? resolvedProfile.meta : null;
 
   const defaultDest = path.join(WORKSPACE_ROOT, "projects", slug);
