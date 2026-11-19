@@ -16,6 +16,11 @@ import { getProjectStatus } from "../core/project-status.mjs";
 import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
 import { createTask, listTasks, getTask } from "../core/task-manager.mjs";
 import { captureEvidence } from "../core/evidence-capture.mjs";
+import {
+  discoverSkills,
+  resolveProjectForSkills,
+} from "../core/skills.mjs";
+import { STATIC_LINT_DISCLAIMER, lintDiscoveredSkills, lintSkill } from "../core/skills-lint.mjs";
 import { atomicWriteFile, redactSecretContent, validateOutputFilePath } from "../core/path-safety.mjs";
 import { resolveProjectDir } from "../core/project-locator.mjs";
 
@@ -41,6 +46,7 @@ Commands:
   evidence   Run an explicit command (shell: false) and record EVID-NNNN manifest
   validate   Validate a project's schemas, compatibility, IDs, references, and links
   context    Compile a deterministic, trust-tiered context packet for a task or query
+  skills     Discover, inspect, validate, and security-lint portable SKILL.md packages
   handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
   status     Inspect project health, operational task state, and Git status
 
@@ -216,6 +222,29 @@ Safety & Accuracy Notes:
   - Executes ONLY the explicit command after "--" with shell: false (no shell interpolation).
   - Secret tokens/keys are redacted before persisting output or printing diagnostics.
   - Exits 0 only when command exit code === 0 (writes draft EVID-NNNN and exits 1 on failures/timeouts).
+`);
+      break;
+    case "skills":
+      console.log(`Usage: geloforge skills <list|show|validate|lint> [options]
+
+Subcommands:
+  list       List discovered portable skills across project (.agents/skills) and global dirs
+  show       Inspect one skill's metadata, supporting resources, and instructions
+  validate   Validate SKILL.md frontmatter, path/symlink/secret safety, and local links
+  lint       Run static security and quality lint checks across discovered skills
+
+Common Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  --global-dir <path>     Override global skills directory (default: GELOFORGE_SKILLS_DIR or ~/.geloforge/skills)
+  --include-drafts        Include quarantined drafts under proposals/skills/ (never auto-trusted)
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+
+'skills show' Options:
+  --name <skill-name>     Target skill name (or pass as positional arg: geloforge skills show <name>)
+
+'skills lint' Options:
+  --strict                Fail (exit 1) on high/warning findings in addition to critical/error findings
 `);
       break;
   }
@@ -839,6 +868,241 @@ function handleEvidence(args) {
   return res.dryRun || res.verified ? 0 : 1;
 }
 
+function summarizeSkillForJson(skill) {
+  return {
+    name: skill.name,
+    folderName: skill.folderName,
+    source: skill.source,
+    trustTier: skill.trustTier,
+    trusted: skill.trusted,
+    valid: skill.valid,
+    blocked: skill.blocked,
+    hasSecrets: skill.hasSecrets,
+    displayPath: skill.displayPath,
+    contentDigest: skill.contentDigest,
+    estimatedTokens: skill.estimatedTokens,
+    description: skill.hasSecrets
+      ? "[REDACTED]"
+      : typeof skill.frontmatter?.description === "string"
+        ? skill.frontmatter.description
+        : null,
+    tags: skill.tags,
+    triggers: skill.triggers,
+    resources: skill.resources,
+    errors: skill.errors,
+    warnings: skill.warnings,
+  };
+}
+
+function handleSkills(args) {
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+    printSubHelp("skills");
+    return 0;
+  }
+  const [subcmd, ...rest] = args;
+  if (!["list", "show", "validate", "lint"].includes(subcmd)) {
+    throw new Error(`Unknown skills subcommand "${subcmd}". Expected: list, show, validate, or lint.`);
+  }
+
+  const parsed = parseArgs({
+    args: rest,
+    options: {
+      project: { type: "string", short: "p" },
+      "global-dir": { type: "string" },
+      name: { type: "string" },
+      "include-drafts": { type: "boolean", default: false },
+      strict: { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: subcmd === "show",
+  });
+
+  if (parsed.values.help) {
+    printSubHelp("skills");
+    return 0;
+  }
+  if (parsed.values.strict && subcmd !== "lint") {
+    throw new Error("--strict is only supported with 'geloforge skills lint'.");
+  }
+  if (parsed.values.name && subcmd !== "show") {
+    throw new Error("--name is only supported with 'geloforge skills show'.");
+  }
+
+  const loc = resolveProjectForSkills({
+    project: parsed.values.project,
+    harnessDir: HARNESS_DIR,
+  });
+  const discovery = discoverSkills({
+    projectDir: loc.projectDir,
+    globalSkillsDir: parsed.values["global-dir"],
+    proposalsDir: loc.proposalsDir,
+    includeDrafts: parsed.values["include-drafts"],
+  });
+
+  if (subcmd === "list") {
+    const payload = {
+      projectDir: discovery.projectDir,
+      globalSkillsDir: discovery.globalSkillsDir,
+      globalSourceLabel: discovery.globalSourceLabel,
+      skills: discovery.visibleSkills.map(summarizeSkillForJson),
+      quarantinedCount: discovery.quarantinedSkills.length,
+      conflicts: discovery.conflicts,
+      rootErrors: discovery.rootErrors,
+      rootWarnings: discovery.rootWarnings,
+    };
+    if (parsed.values.json) {
+      console.log(JSON.stringify(payload, null, 2));
+      return discovery.rootErrors.length > 0 ? 1 : 0;
+    }
+    console.log(`Project Root : ${discovery.projectDir || "(none — global skills only)"}`);
+    console.log(`Global Root  : ${discovery.globalSkillsDir || "(disabled)"} (${discovery.globalSourceLabel})`);
+    console.log(`Skills Found : ${discovery.visibleSkills.length} listed | ${discovery.quarantinedSkills.length} quarantined draft(s)`);
+    if (discovery.visibleSkills.length === 0) {
+      console.log('  (none found — create ".agents/skills/<name>/SKILL.md" or set GELOFORGE_SKILLS_DIR)');
+    } else {
+      for (const s of discovery.visibleSkills) {
+        const status = s.blocked ? "BLOCKED" : s.valid ? "valid" : "invalid";
+        const desc = s.hasSecrets
+          ? "[REDACTED]"
+          : String(s.frontmatter?.description || "(missing description)").replace(/\s+/g, " ").trim();
+        const shortDesc = desc.length > 72 ? `${desc.slice(0, 69)}...` : desc;
+        console.log(`  - ${s.name} [${s.source}, ${status}, ~${s.estimatedTokens} tok] — ${shortDesc}`);
+      }
+    }
+    if (!parsed.values["include-drafts"] && discovery.quarantinedSkills.length > 0) {
+      console.log(`  (Pass --include-drafts to view ${discovery.quarantinedSkills.length} quarantined draft skill(s) under ${loc.proposalsDir}/skills/)`);
+    }
+    for (const c of discovery.conflicts) console.log(`  - [CONFLICT] ${c.message}`);
+    for (const w of discovery.rootWarnings) console.log(`  - [WARN] ${w}`);
+    for (const e of discovery.rootErrors) console.error(`  - [ERR] ${e}`);
+    return discovery.rootErrors.length > 0 ? 1 : 0;
+  }
+
+  if (subcmd === "show") {
+    const targetName = parsed.values.name || parsed.positionals[0];
+    if (!targetName) {
+      throw new Error("Missing skill name for 'geloforge skills show <name>'.");
+    }
+    const found = discovery.visibleSkills.find((s) => s.name === targetName || s.folderName === targetName);
+    if (!found) {
+      const qFound = discovery.quarantinedSkills.find((s) => s.name === targetName || s.folderName === targetName);
+      if (qFound) {
+        throw new Error(
+          `Skill "${targetName}" is quarantined under ${qFound.displayPath} and excluded from active skills. Pass --include-drafts to inspect it safely.`
+        );
+      }
+      throw new Error(`Skill "${targetName}" not found in project or global skills directories.`);
+    }
+    const lintRes = lintSkill(found);
+    const bodyOut = found.hasSecrets
+      ? "[REDACTED: skill contains secret content or secret files and cannot be displayed verbatim]"
+      : found.body;
+    if (parsed.values.json) {
+      console.log(
+        JSON.stringify(
+          {
+            ...summarizeSkillForJson(found),
+            frontmatter: found.hasSecrets ? null : found.frontmatter,
+            body: bodyOut,
+            lint: lintRes,
+            disclaimer: STATIC_LINT_DISCLAIMER,
+          },
+          null,
+          2
+        )
+      );
+      return found.valid && !lintRes.hasCriticalOrError ? 0 : 1;
+    }
+
+    console.log(`Skill       : ${found.name} [${found.source}, ${found.trustTier}]`);
+    console.log(`Path        : ${found.displayPath}/SKILL.md (${found.contentDigest})`);
+    console.log(`Status      : ${found.blocked ? "BLOCKED" : found.valid ? "valid" : "invalid"} | ~${found.estimatedTokens} est. tokens`);
+    if (found.frontmatter?.license) console.log(`License     : ${found.frontmatter.license}`);
+    if (found.frontmatter?.compatibility) console.log(`Compat      : ${found.frontmatter.compatibility}`);
+    if (found.tags.length > 0) console.log(`Tags        : ${found.tags.join(", ")}`);
+    if (found.triggers.length > 0) console.log(`Triggers    : ${found.triggers.join(", ")}`);
+    console.log(`References  : ${found.resources.references.join(", ") || "(none)"}`);
+    console.log(`Templates   : ${found.resources.templates.join(", ") || "(none)"}`);
+    if (found.resources.scripts.length > 0) {
+      console.log(`Scripts     : ${found.resources.scripts.join(", ")} (NEVER auto-executed by GeloForge)`);
+    }
+    for (const f of lintRes.findings) {
+      console.log(`  - [${f.severity.toUpperCase()} ${f.ruleId}] ${f.message}`);
+    }
+    console.log("");
+    console.log(bodyOut);
+    return found.valid && !lintRes.hasCriticalOrError ? 0 : 1;
+  }
+
+  if (subcmd === "validate") {
+    const pool = [...discovery.allSkills];
+    if (parsed.values["include-drafts"]) {
+      pool.push(...discovery.quarantinedSkills);
+    }
+    const invalidSkills = pool.filter((s) => !s.valid);
+    const valid = discovery.rootErrors.length === 0 && invalidSkills.length === 0;
+    const payload = {
+      valid,
+      projectDir: discovery.projectDir,
+      globalSkillsDir: discovery.globalSkillsDir,
+      checkedCount: pool.length,
+      invalidCount: invalidSkills.length,
+      rootErrors: discovery.rootErrors,
+      rootWarnings: discovery.rootWarnings,
+      conflicts: discovery.conflicts,
+      skills: pool.map(summarizeSkillForJson),
+    };
+    if (parsed.values.json) {
+      console.log(JSON.stringify(payload, null, 2));
+      return valid ? 0 : 1;
+    }
+    console.log(`Skills Validation : ${valid ? "PASS" : "FAIL"}`);
+    console.log(`Checked Packages  : ${pool.length} | Invalid: ${invalidSkills.length} | Conflicts: ${discovery.conflicts.length}`);
+    for (const e of discovery.rootErrors) console.error(`  - [ERR ROOT] ${e}`);
+    for (const w of discovery.rootWarnings) console.log(`  - [WARN] ${w}`);
+    for (const c of discovery.conflicts) console.log(`  - [CONFLICT] ${c.message}`);
+    for (const s of pool) {
+      if (s.errors.length === 0 && s.warnings.length === 0) continue;
+      for (const err of s.errors) {
+        console.error(`  - [ERR ${err.code}] ${err.file}: ${err.message}`);
+        if (err.remediation) console.error(`      Fix: ${err.remediation}`);
+      }
+      for (const warn of s.warnings) {
+        console.log(`  - [WARN ${warn.code}] ${warn.file}: ${warn.message}`);
+      }
+    }
+    return valid ? 0 : 1;
+  }
+
+  // lint
+  const report = lintDiscoveredSkills(discovery, {
+    strict: parsed.values.strict,
+    includeDrafts: parsed.values["include-drafts"],
+  });
+  if (parsed.values.json) {
+    console.log(JSON.stringify(report, null, 2));
+    return report.passed ? 0 : 1;
+  }
+  console.log(`Skills Lint : ${report.passed ? "PASS" : "FAIL"}${report.strict ? " (strict)" : ""}`);
+  console.log(
+    `Counts      : critical=${report.counts.critical} | high=${report.counts.high} | error=${report.counts.error} | warning=${report.counts.warning}`
+  );
+  console.log(`Disclaimer  : ${report.disclaimer}`);
+  for (const e of report.rootErrors) console.error(`  - [CRITICAL ROOT] ${e}`);
+  for (const w of report.rootWarnings) console.log(`  - [WARN ROOT] ${w}`);
+  for (const c of report.conflicts) console.log(`  - [CONFLICT] ${c.message}`);
+  for (const sr of report.skills) {
+    for (const f of sr.findings) {
+      const printer = f.severity === "critical" || f.severity === "error" ? console.error : console.log;
+      printer(`  - [${f.severity.toUpperCase()} ${f.ruleId}] ${f.file}: ${f.message}`);
+      if (f.remediation) printer(`      Fix: ${f.remediation}`);
+    }
+  }
+  return report.passed ? 0 : 1;
+}
+
 function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
@@ -871,6 +1135,9 @@ function main() {
         break;
       case "context":
         code = handleContext(rest);
+        break;
+      case "skills":
+        code = handleSkills(rest);
         break;
       case "handoff":
         code = handleHandoff(rest);
