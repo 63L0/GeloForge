@@ -19,10 +19,22 @@ The **Deterministic Context Compiler** assembles **Layer 4 (`L4_TEMPORARY_CONTEX
 5. **Score & Select Optional Candidates:** Rank `prd.md`, `overview.md`, `profile.md`, `ADR-*`, `EVID-*`, `RES-*`, and `TASK.required_inputs` deterministically using explicit references, authority/freshness weights, and keyword overlap.
 6. **Budget Fitting & Honest Token Estimation:** Uses `Math.ceil(utf8_bytes / 4)` (`heuristic:ceil(utf8_bytes/4)` — not vendor-exact tokenization). **Never omits or truncates mandatory rules:** sets `budget_overrun: true` and escalates `effective_profile` when mandatory content exceeds the target budget.
 
-## 3. Starting Context Budget Targets (Not Hard Truncation Cliffs)
+## 3. Starting Context Budget Targets & Unavoidable Minimum Floors
+
+Targets below are **soft packing goals, not hard truncation cliffs**. Mandatory governance policies (`A0`), project manifest/state/constraints, target `TASK-NNNN`, and open `CONF-NNNN` contradictions are **never dropped** to hit a numerical target; when unavoidable mandatory context exceeds a target, `budget_overrun: true` and `budget_breakdown` (`policy_tokens`, `project_mandatory_tokens`, `optional_tokens`, `codebase_map_tokens`, `overhead_tokens`) are reported honestly alongside `effective_profile`.
 
 | Profile | Starting Target | Intended Use Case |
 | :--- | :--- | :--- |
 | `quick` | ~2,000 est. tokens | Narrow validation, status updates, or single-file checks |
 | `working` | ~8,000 est. tokens | Standard feature tasks, bug fixes, tests, or targeted ADR drafting |
 | `deep` | ~16,000 est. tokens | Complex architecture, multi-module debugging, security reviews, or conflict resolution |
+
+### Measured `quick` Profile Minimum Context Floor
+
+Even with a verified verbatim `A0` excerpt of `policies/memory-policy.md`, an untouched 1-task starter project compiles to **~2,600+ est. tokens** (`approval-boundaries.md` + `memory-policy.md` excerpt + `brain/manifest.yaml` + `brain/state/current.yaml` + `brain/requirements/constraints.md` + `TASK-0001` + trace/headers), and a realistic fixture with an open conflict plus task-linked ADR/evidence compiles to **~4,300+ est. tokens** under `quick` (`effective_profile: "working"`). In `quick` mode, the compiler compacts long `Omitted Candidates` trace listings in Markdown (full trace remains in `--json`) while preserving every mandatory safety rule and project invariant verbatim.
+
+## 4. Prompt-Injection Threat Model & Limitations
+
+- **What `<<<GELOFORGE_DOC>>>` isolation does:** Separates authoritative policies (`A0`) and project decisions (`A1`–`A2`) from unverified/external records (`A5`–`A6`, drafts) and escapes spoofed closing fences (`<<<ESCAPED_END_GELOFORGE_DOC>>>`) so untrusted files cannot forge delimiter boundaries.
+- **What marker escaping does NOT do:** Escaping document markers alone **does NOT prevent malicious instructions inside untrusted files, research notes, or source comments from semantically influencing an AI model's reasoning or tool requests**.
+- **Mitigations:** Use `--exclude-unverified` when strict trust isolation is required, rely on deterministic schema validation (`approved_by` checks on ADRs, rejection of canonical `is_example` fixtures), and treat human approval (`APPR-NNNN`) and OS/repository boundaries as the authoritative safety gate.

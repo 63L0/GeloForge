@@ -41,6 +41,48 @@
     "estimated_tokens": { "type": "integer", "minimum": 0 },
     "token_estimate_method": { "type": "string", "minLength": 1 },
     "budget_overrun": { "type": "boolean" },
+    "budget_breakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mandatory_tokens",
+        "policy_tokens",
+        "project_mandatory_tokens",
+        "optional_tokens",
+        "codebase_map_tokens",
+        "overhead_tokens"
+      ],
+      "properties": {
+        "mandatory_tokens": { "type": "integer", "minimum": 0 },
+        "policy_tokens": { "type": "integer", "minimum": 0 },
+        "project_mandatory_tokens": { "type": "integer", "minimum": 0 },
+        "optional_tokens": { "type": "integer", "minimum": 0 },
+        "codebase_map_tokens": { "type": "integer", "minimum": 0 },
+        "overhead_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "codebase_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "selected_files",
+        "total_discovered_files",
+        "estimated_tokens"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "selected_files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "total_discovered_files": { "type": "integer", "minimum": 0 },
+        "estimated_tokens": { "type": "integer", "minimum": 0 },
+        "map_budget": { "type": "integer", "minimum": 0 },
+        "truncated_scan": { "type": "boolean" },
+        "scan_mode": { "type": "string", "minLength": 1 }
+      }
+    },
     "compiled_at": { "type": "string", "minLength": 10 },
     "expires_at": { "type": ["string", "null"] },
     "compiler_version": { "type": "string", "minLength": 1 },

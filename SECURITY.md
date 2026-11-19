@@ -11,9 +11,11 @@ This repository clearly separates controls that are **technically enforced by co
 - **Single-Pass Template Rendering:** Substitutes allowlisted `{{...}}` keys in one pass so user-supplied values containing `{{...}}` cannot trigger secondary placeholder expansion; YAML scalar values are escaped.
 - **Zero-Network / Zero-Dependency Tooling:** `core/` and `scripts/` import only Node.js built-ins and make zero network requests (`tests/security.test.mjs` verifies absence of network APIs).
 - **Secret Hygiene & Exclusions:** `.gitignore` excludes `.env*`, keys/certs (`*.pem`, `*.key`, `*.p12`, `*.pfx`), `secrets/`, and `local-runtime/`; tests verify `git check-ignore` and scan tracked files for common key/token patterns.
+- **Context Compiler Input & Path Isolation ([core/context-compiler.mjs](./core/context-compiler.mjs)):** Blocks path traversal, symlinks/junctions, oversized (>512 KB) files, forbidden secret paths/patterns, unapproved `accepted` ADRs, and canonical `is_example: true` fixtures; quarantines `A5`–`A6` and draft items (or omits them with `--exclude-unverified`), and escapes spoofed `<<<END_GELOFORGE_DOC>>>` markers.
 
-### Documented-Only Safeguards (Not Technically Enforced Yet)
-- Role-based write ownership (`memory-policy.md`), approval gates (`APPR-NNNN`), max-2 agent concurrency, max-2 retry caps, and zero-spend limits (`token-efficiency.md`) are **not enforced by OS ACLs, Git hooks, or runtime interceptors** in Phase 1.
+### Prompt-Injection Threat Model & Documented-Only Safeguards
+- **Prompt-Injection Limitation (Important):** Wrapping files in `<<<GELOFORGE_DOC>>>` delimiters and escaping closing markers does **not** prevent adversarial text inside untrusted Markdown, external research, or mapped source code comments from semantically influencing an AI coding assistant. Delimiter isolation improves legibility and stops parser/boundary spoofing; it must **not** be treated as a sandbox against LLM prompt injection.
+- **Documented-Only Safeguards:** Role-based write ownership (`memory-policy.md`), approval gates (`APPR-NNNN`), max-2 agent concurrency, max-2 retry caps, and zero-spend limits (`token-efficiency.md`) are **not enforced by OS ACLs, Git hooks, or runtime interceptors** in the CLI today; untrusted agent claims must still be checked against real project artifacts and human approvals.
 
 ## Reporting Security Issues
 
