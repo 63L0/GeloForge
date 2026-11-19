@@ -14,6 +14,7 @@ import { validateProject } from "../core/project-validator.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectStatus } from "../core/project-status.mjs";
 import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
+import { createTask, listTasks, getTask } from "../core/task-manager.mjs";
 import { atomicWriteFile, validateOutputFilePath } from "../core/path-safety.mjs";
 import { resolveProjectDir } from "../core/project-locator.mjs";
 
@@ -35,6 +36,7 @@ Usage:
 Commands:
   init       Initialize a new project Second Brain (supports profiles & --dry-run)
   adopt      Add GeloForge Second Brain to an existing project without overwriting files
+  task       Create, list, or inspect scoped task contracts (TASK-NNNN)
   validate   Validate a project's schemas, compatibility, IDs, references, and links
   context    Compile a deterministic, trust-tiered context packet for a task or query
   handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
@@ -152,6 +154,42 @@ Create Options:
 Inspect Options:
   --inspect <file>             Validate and render an existing handoff YAML file
   -h, --help                   Show help
+`);
+      break;
+    case "task":
+      console.log(`Usage: geloforge task <new|list|show> [options]
+
+Subcommands:
+  new    Create a new schema-valid TASK-NNNN contract
+  list   List tasks under configured tasks_dir
+  show   Show details for a specific TASK-NNNN contract
+
+Common Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+
+'task new' Options:
+  --title <string>        Task title (required, >= 3 chars)
+  --objective <string>    Detailed task objective (defaults to title)
+  --id <TASK-NNNN>        Explicit task ID (auto-assigned if omitted)
+  --priority <level>      low, medium (default), high, or critical
+  --role <role>           orchestrator, researcher, software-architect, developer (default), qa-security-reviewer
+  --budget <profile>      quick, working (default), or deep
+  --status <status>       inbox, ready (default), active (default with --activate), blocked, in_review
+  --activate              Add task to active_tasks in operational state
+  --criteria <text>       Acceptance criterion (repeatable)
+  --scope-in <text>       In-scope item (repeatable)
+  --scope-out <text>      Out-of-scope item (repeatable)
+  --input <relpath>       Required project input file path (repeatable)
+  --dep <TASK-NNNN>       Dependency task ID (repeatable)
+  --created-by <name>     Author label (default: manifest owner)
+  --created-at <iso>      ISO-8601 timestamp override
+  --dry-run               Preview generated task without writing disk
+
+'task list' / 'task show' Options:
+  --status <status>       Filter tasks in 'list'
+  -t, --task <TASK-NNNN>  Target task ID for 'show' (or pass as positional arg)
 `);
       break;
   }
@@ -550,6 +588,148 @@ function handleHandoff(args) {
   return 0;
 }
 
+function handleTask(args) {
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+    printSubHelp("task");
+    return 0;
+  }
+  const [subcmd, ...rest] = args;
+  if (subcmd === "new") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        title: { type: "string" },
+        objective: { type: "string" },
+        id: { type: "string" },
+        priority: { type: "string" },
+        role: { type: "string" },
+        budget: { type: "string" },
+        status: { type: "string" },
+        activate: { type: "boolean", default: false },
+        criteria: { type: "string", multiple: true },
+        "scope-in": { type: "string", multiple: true },
+        "scope-out": { type: "string", multiple: true },
+        output: { type: "string", multiple: true },
+        input: { type: "string", multiple: true },
+        dep: { type: "string", multiple: true },
+        "created-by": { type: "string" },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: false,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = createTask({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      title: parsed.values.title,
+      objective: parsed.values.objective,
+      id: parsed.values.id,
+      priority: parsed.values.priority,
+      assignedRole: parsed.values.role,
+      contextBudget: parsed.values.budget,
+      status: parsed.values.status,
+      activate: parsed.values.activate,
+      acceptanceCriteria: parsed.values.criteria,
+      scopeIn: parsed.values["scope-in"],
+      scopeOut: parsed.values["scope-out"],
+      expectedOutputs: parsed.values.output,
+      requiredInputs: parsed.values.input,
+      dependencies: parsed.values.dep,
+      createdBy: parsed.values["created-by"],
+      createdAt: parsed.values["created-at"],
+      dryRun: parsed.values["dry-run"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(res.dryRun ? `DRY RUN — Task ${res.id} not written.` : `Task created: ${res.relPath}`);
+    console.log(`ID / Status : ${res.id} (${res.record.status}) | activated=${res.activated}`);
+    console.log(`Title       : ${res.record.title}`);
+    return 0;
+  }
+
+  if (subcmd === "list") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        status: { type: "string" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: false,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = listTasks({ projectDir, status: parsed.values.status, harnessDir: HARNESS_DIR });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Tasks in ${res.tasksDir}/ (${res.tasks.length}):`);
+    if (res.tasks.length === 0) {
+      console.log("  (none yet — run: geloforge task new --title \"...\")");
+    } else {
+      for (const t of res.tasks) {
+        console.log(
+          `  - ${t.id} [${t.status}${t.activeInState ? ", active-in-state" : ""}] (${t.priority}, evid=${t.evidenceCount}) — ${t.title}`
+        );
+      }
+    }
+    return 0;
+  }
+
+  if (subcmd === "show") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        task: { type: "string", short: "t" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const targetId = parsed.values.task || parsed.positionals[0];
+    if (!targetId) {
+      throw new Error("Missing task ID for 'geloforge task show <TASK-NNNN>'.");
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = getTask({ projectDir, taskId: targetId, harnessDir: HARNESS_DIR });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Task        : ${res.id} (${res.record.status})`);
+    console.log(`File        : ${res.relPath}`);
+    console.log(`Title       : ${res.record.title}`);
+    console.log(`Objective   : ${res.record.objective}`);
+    console.log(`Evidence    : ${(res.record.evidence_refs || []).join(", ") || "(none)"}`);
+    return 0;
+  }
+
+  throw new Error(`Unknown task subcommand "${subcmd}". Expected: new, list, or show.`);
+}
+
 function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
@@ -570,6 +750,9 @@ function main() {
         break;
       case "adopt":
         code = handleAdopt(rest);
+        break;
+      case "task":
+        code = handleTask(rest);
         break;
       case "validate":
         code = handleValidate(rest);

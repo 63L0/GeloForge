@@ -6,7 +6,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isSameOrInside } from "./path-safety.mjs";
+import { isSameOrInside, assertSafeWithinRoot, walkNonSymlinkFiles } from "./path-safety.mjs";
+import { parseYaml } from "./yaml-subset.mjs";
+import { validateAgainstSchema } from "./json-schema-lite.mjs";
+import { loadCompatibilityConfig, checkManifestCompatibility, checkRecordSchemaVersion } from "./compatibility.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -112,3 +115,117 @@ export function resolveProjectDir({ project = null, cwd = process.cwd(), harness
     `No GeloForge project found from "${path.resolve(cwd)}" (searched upward to Git root). Run "geloforge adopt" to add GeloForge to this repository, or pass "--project <path>".`
   );
 }
+
+/**
+ * Loads and schema-validates brain/manifest.yaml and state YAML safely inside projectDir.
+ */
+export function loadProjectManifestAndState(rawProjectDir, harnessDir = DEFAULT_HARNESS_DIR) {
+  const projectDir = path.resolve(rawProjectDir);
+  if (!fs.existsSync(projectDir)) {
+    throw new Error(`Project directory does not exist: ${projectDir}`);
+  }
+  const rootStat = fs.lstatSync(projectDir);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`Project root must be a real non-symlink directory: ${projectDir}`);
+  }
+
+  const schemasDir = path.join(path.resolve(harnessDir), "schemas");
+  const compatConfig = loadCompatibilityConfig();
+
+  const manifestPath = assertSafeWithinRoot(projectDir, "brain/manifest.yaml");
+  if (!fs.existsSync(manifestPath) || !fs.lstatSync(manifestPath).isFile()) {
+    throw new Error(`Missing or unsafe brain/manifest.yaml in ${projectDir}`);
+  }
+  const manifest = parseYaml(fs.readFileSync(manifestPath, "utf8"), "brain/manifest.yaml");
+  const manifestSchema = JSON.parse(fs.readFileSync(path.join(schemasDir, "project-manifest.schema.json"), "utf8"));
+  const mValid = validateAgainstSchema(manifest, manifestSchema);
+  if (!mValid.valid) {
+    throw new Error(`Invalid brain/manifest.yaml: ${mValid.errors.join("; ")}`);
+  }
+  const compat = checkManifestCompatibility(manifest, compatConfig);
+  if (!compat.compatible) {
+    throw new Error(`Incompatible brain/manifest.yaml: ${compat.errors.join("; ")}`);
+  }
+
+  const projectPaths = resolveProjectPaths(manifest);
+  const statePath = assertSafeWithinRoot(projectDir, projectPaths.state);
+  if (!fs.existsSync(statePath) || !fs.lstatSync(statePath).isFile()) {
+    throw new Error(`Missing or unsafe ${projectPaths.state} in ${projectDir}`);
+  }
+  const state = parseYaml(fs.readFileSync(statePath, "utf8"), projectPaths.state);
+  const sVer = checkRecordSchemaVersion(state, compatConfig);
+  if (!sVer.compatible) {
+    throw new Error(`${projectPaths.state}: ${sVer.error}`);
+  }
+  const stateSchema = JSON.parse(fs.readFileSync(path.join(schemasDir, "project-state.schema.json"), "utf8"));
+  const sValid = validateAgainstSchema(state, stateSchema);
+  if (!sValid.valid) {
+    throw new Error(`Invalid ${projectPaths.state}: ${sValid.errors.join("; ")}`);
+  }
+
+  return {
+    projectDir,
+    schemasDir,
+    compatConfig,
+    manifest,
+    state,
+    stateSchema,
+    stateFilePath: statePath,
+    projectPaths,
+  };
+}
+
+/**
+ * Scans record folders to discover existing IDs and allocate the next sequential ID (PREFIX-NNNN).
+ */
+export function scanAndAllocateRecordId({ projectDir, searchDirs, prefix, explicitId = null }) {
+  const idRegex = new RegExp(`^(${prefix})-(\\d{4})$`, "i");
+  const filePrefixRegex = new RegExp(`^(${prefix}-\\d{4})(?=[^0-9]|$)`, "i");
+  const existingIds = new Set();
+  let maxNum = 0;
+
+  for (const relDir of Array.from(new Set(searchDirs))) {
+    const absDir = assertSafeWithinRoot(projectDir, relDir);
+    if (!fs.existsSync(absDir)) continue;
+    const files = walkNonSymlinkFiles(projectDir, absDir, (p) => /\.(md|ya?ml)$/i.test(p));
+    for (const f of files) {
+      const base = path.basename(f);
+      const fnameMatch = base.match(filePrefixRegex);
+      if (fnameMatch) {
+        const up = fnameMatch[1].toUpperCase();
+        existingIds.add(up);
+        const n = Number.parseInt(up.split("-")[1], 10);
+        if (n > maxNum) maxNum = n;
+      }
+      try {
+        const raw = fs.readFileSync(f, "utf8");
+        const parsedIdMatch = raw.match(new RegExp(`^id:\\s*["']?(${prefix}-\\d{4})["']?\\s*$`, "im"));
+        if (parsedIdMatch) {
+          const up = parsedIdMatch[1].toUpperCase();
+          existingIds.add(up);
+          const n = Number.parseInt(up.split("-")[1], 10);
+          if (n > maxNum) maxNum = n;
+        }
+      } catch {
+        // Ignore unreadable file during ID scan
+      }
+    }
+  }
+
+  if (explicitId !== null && explicitId !== undefined) {
+    const clean = String(explicitId).trim().toUpperCase();
+    if (!idRegex.test(clean)) {
+      throw new Error(`Invalid record ID "${explicitId}". Expected format ${prefix}-NNNN.`);
+    }
+    if (existingIds.has(clean)) {
+      throw new Error(`Duplicate record ID "${clean}" already exists.`);
+    }
+    return { id: clean, existingIds };
+  }
+
+  return {
+    id: `${prefix}-${String(maxNum + 1).padStart(4, "0")}`,
+    existingIds,
+  };
+}
+
