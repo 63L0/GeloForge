@@ -827,13 +827,15 @@ export function discoverSkills({
     rootWarnings,
   });
 
-  // Resolve trusted precedence: project-local overrides global.
+  // Resolve trusted precedence: project-local overrides global by name OR folderName.
   // Fail-closed: invalid/blocked project-local skill blocks global fallback for the same name.
   const activeMap = new Map();
+  const projectByFolder = new Map();
   const shadowedSkills = [];
   const conflicts = [];
 
   for (const pkg of projectPackages) {
+    projectByFolder.set(pkg.folderName, pkg);
     if (activeMap.has(pkg.name)) {
       const existing = activeMap.get(pkg.name);
       const msg = `Duplicate project skill name "${pkg.name}" in ${pkg.displayPath} and ${existing.displayPath}.`;
@@ -853,24 +855,30 @@ export function discoverSkills({
   }
 
   for (const pkg of globalPackages) {
+    const projectWinner =
+      (activeMap.get(pkg.name)?.source === "project" ? activeMap.get(pkg.name) : null) ||
+      projectByFolder.get(pkg.name) ||
+      projectByFolder.get(pkg.folderName) ||
+      null;
+    if (projectWinner) {
+      const failClosedNote = projectWinner.valid
+        ? ""
+        : " (fail-closed: invalid/blocked project skill blocks global fallback)";
+      const msg = `Project skill "${pkg.name}" (${projectWinner.displayPath}) overrides global skill (${pkg.displayPath})${failClosedNote}.`;
+      conflicts.push({
+        name: pkg.name,
+        kind: "project_overrides_global",
+        winnerPath: projectWinner.displayPath,
+        loserPath: pkg.displayPath,
+        failClosed: !projectWinner.valid,
+        message: msg,
+      });
+      shadowedSkills.push({ ...pkg, shadowedBy: projectWinner.displayPath });
+      continue;
+    }
+
     if (activeMap.has(pkg.name)) {
       const winner = activeMap.get(pkg.name);
-      if (winner.source === "project") {
-        const failClosedNote = winner.valid
-          ? ""
-          : " (fail-closed: invalid/blocked project skill blocks global fallback)";
-        const msg = `Project skill "${pkg.name}" (${winner.displayPath}) overrides global skill (${pkg.displayPath})${failClosedNote}.`;
-        conflicts.push({
-          name: pkg.name,
-          kind: "project_overrides_global",
-          winnerPath: winner.displayPath,
-          loserPath: pkg.displayPath,
-          failClosed: !winner.valid,
-          message: msg,
-        });
-        shadowedSkills.push({ ...pkg, shadowedBy: winner.displayPath });
-        continue;
-      }
       // Duplicate inside global (e.g. folder mismatch causing identical frontmatter name)
       const msg = `Duplicate global skill name "${pkg.name}" in ${pkg.displayPath} and ${winner.displayPath}.`;
       addError(
