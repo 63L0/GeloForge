@@ -16,10 +16,18 @@ import { getGitRepoInfo } from "./git-utils.mjs";
 import { loadCompatibilityConfig, checkManifestCompatibility } from "./compatibility.mjs";
 import { buildCodebaseMap } from "./codebase-map.mjs";
 import { resolveProjectPaths } from "./project-locator.mjs";
+import {
+  TOKEN_ESTIMATE_METHOD,
+  estimateTokens,
+  tokenizeKeywords,
+  sanitizeFenceContent,
+} from "./text-utils.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_HARNESS_DIR = path.resolve(__dirname, "..");
+
+export { TOKEN_ESTIMATE_METHOD, estimateTokens };
 
 export const PROFILE_BUDGETS = {
   quick: 4000,
@@ -27,16 +35,11 @@ export const PROFILE_BUDGETS = {
   deep: 16000,
 };
 
-export const TOKEN_ESTIMATE_METHOD = "heuristic:ceil(utf8_bytes/4)";
 const MAX_DOC_BYTES = 512 * 1024;
 
-const STOP_WORDS = new Set([
-  "the", "and", "for", "with", "that", "this", "from", "into", "when", "what", "where",
-  "which", "will", "should", "must", "have", "has", "been", "being", "they", "their",
-  "them", "then", "than", "only", "also", "more", "most", "some", "such", "each",
-  "other", "about", "after", "before", "between", "through", "under", "over", "using",
-  "use", "used", "task", "project", "brain", "file", "files", "all", "not", "are", "but",
-]);
+function sha256Short(text) {
+  return `sha256:${crypto.createHash("sha256").update(text, "utf8").digest("hex").slice(0, 12)}`;
+}
 
 const RECORD_SPECS = [
   { prefix: "ADR", regex: /^ADR-\d{4}.*\.md$/i, schema: "adr.schema.json", frontmatter: true },
@@ -59,17 +62,6 @@ const CANONICAL_DIRS = new Set([
   "handoffs",
 ]);
 
-export function estimateTokens(text) {
-  if (!text) {
-    return 0;
-  }
-  return Math.ceil(Buffer.byteLength(text, "utf8") / 4);
-}
-
-function sha256Short(text) {
-  return `sha256:${crypto.createHash("sha256").update(text, "utf8").digest("hex").slice(0, 12)}`;
-}
-
 function loadSchema(schemasDir, name) {
   return JSON.parse(fs.readFileSync(path.join(schemasDir, name), "utf8"));
 }
@@ -80,24 +72,6 @@ function getGitHeadRevision(projectDir) {
     return "no-git-repo";
   }
   return info.unborn ? "git-unborn-head" : info.head;
-}
-
-function tokenizeKeywords(text) {
-  if (!text || typeof text !== "string") {
-    return new Set();
-  }
-  const tokens = text
-    .toLowerCase()
-    .split(/[^a-z0-9_-]+/)
-    .filter((t) => t.length >= 3 && !STOP_WORDS.has(t));
-  return new Set(tokens);
-}
-
-function sanitizeFenceContent(text) {
-  // Neutralize both closing and spoofed opening document fence markers inside untrusted content.
-  return text
-    .replace(/<<<END_GELOFORGE_DOC>>>/g, "<<<ESCAPED_END_GELOFORGE_DOC>>>")
-    .replace(/<<<GELOFORGE_DOC/g, "<<<ESCAPED_GELOFORGE_DOC");
 }
 
 function renderDocFence(doc) {

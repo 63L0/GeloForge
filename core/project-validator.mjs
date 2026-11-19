@@ -284,8 +284,12 @@ export function validateProject(rawProjectDir, options = {}) {
       const fileName = path.basename(filePath);
       const spec = matchRecordType(fileName);
       if (!spec) {
+        const relUnrecognized = path.relative(projectDir, filePath).replace(/\\/g, "/");
+        const skillsDraftPrefix = `${projectPaths.proposals_dir.replace(/\\/g, "/")}/skills/`;
+        if (relDir === projectPaths.proposals_dir && relUnrecognized.startsWith(skillsDraftPrefix)) {
+          continue;
+        }
         if (!/^(README|INDEX)\.md$/i.test(fileName)) {
-          const relUnrecognized = path.relative(projectDir, filePath).replace(/\\/g, "/");
           warnings.push(`Unrecognized file in structured record directory ${relDir}: ${relUnrecognized}`);
         }
         continue;
