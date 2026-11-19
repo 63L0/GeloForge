@@ -18,7 +18,7 @@ All notable changes to GeloForge are recorded in this file.
 - Documented measured `quick` minimum context floors (`~2,614`+ minimal / `~4,250`+ benchmark est. tokens) and explicit prompt-injection delimiter limitations in [context-compiler-spec.md](./context/context-compiler-spec.md) and [SECURITY.md](./SECURITY.md).
 
 ### Fixed
-- Portable Node test runner discovery on Windows (`node --test`), reliable JSON stdout flushing via `process.exitCode`, and Git worktree-prefix root resolution verified across Linux, macOS, and Windows (Node 20 & 22) in GitHub Actions CI.
+- Portable Node test discovery on Windows (`node --test`), reliable JSON stdout flushing via `process.exitCode`, and Git worktree-prefix root resolution verified across Linux, macOS, and Windows (Node 20 & 22) in GitHub Actions CI.
 
 ## [0.2.0] — 2026-11-19
 
