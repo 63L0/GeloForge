@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { bootstrapProject } from "./bootstrap-project.mjs";
@@ -21,6 +22,15 @@ import {
   resolveProjectForSkills,
 } from "../core/skills.mjs";
 import { STATIC_LINT_DISCLAIMER, lintDiscoveredSkills, lintSkill } from "../core/skills-lint.mjs";
+import {
+  draftSkillFromExperience,
+  generateApproverKeypair,
+  getSkillHistory,
+  promoteSkillProposal,
+  proposeSkillUpdate,
+  rollbackSkill,
+  signSkillApproval,
+} from "../core/skills-lifecycle.mjs";
 import { atomicWriteFile, redactSecretContent, validateOutputFilePath } from "../core/path-safety.mjs";
 import { resolveProjectDir } from "../core/project-locator.mjs";
 
@@ -228,26 +238,37 @@ Safety & Accuracy Notes:
 `);
       break;
     case "skills":
-      console.log(`Usage: geloforge skills <list|show|validate|lint> [options]
+      console.log(`Usage: geloforge skills <subcommand> [options]
 
-Subcommands:
-  list       List discovered portable skills across project (.agents/skills) and global dirs
-  show       Inspect one skill's metadata, supporting resources, and instructions
-  validate   Validate SKILL.md frontmatter, path/symlink/secret safety, and local links
-  lint       Run static security and quality lint checks across discovered skills
+Discovery & Static Checks:
+  list            List discovered portable skills across project (.agents/skills) and global dirs
+  show            Inspect one skill's metadata, supporting resources, and instructions
+  validate        Validate SKILL.md frontmatter, path/symlink/secret safety, and local links
+  lint            Run static security and quality lint checks across discovered skills
+
+Adaptive Skills Lifecycle (Evidence-Backed & Human-Authorized):
+  draft           Draft a quarantined skill in proposals/skills/ from verified EVID/HANDOFF records
+  propose-update  Propose an isolated update to an existing trusted skill with diff preview
+  keygen          Generate an Ed25519 approver keypair (public key in repo, private key external)
+  sign            Sign an APPR-NNNN approval bound to content SHA-256, base SHA-256, & evidence
+  promote         Promote a validated quarantined proposal after genuine authorization
+  history         Inspect append-only revision ledger and snapshot integrity for a skill
+  rollback        Restore an authorized verified snapshot revision (never bypasses approval)
+
+Authorization Options for 'promote' & 'rollback':
+  --approval <APPR-NNNN>  Verify cryptographic Ed25519 signature (recommended)
+  --mode pr-branch        Commit isolated branch for protected-branch human PR review (not pushed)
+  --interactive           Explicit TTY confirmation (convenience safeguard; weaker than Ed25519/PR)
+  (--approved-by is REFUSED: self-reported flags do not authorize promotion or rollback)
 
 Common Options:
   -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   --global-dir <path>     Override global skills directory (default: GELOFORGE_SKILLS_DIR or ~/.geloforge/skills)
   --include-drafts        Include quarantined drafts under proposals/skills/ (never auto-trusted)
+  --strict                In 'lint': fail on high/warning findings in addition to critical/error
+  --dry-run               Preview lifecycle operation without mutating disk
   --json                  Emit structured JSON output
   -h, --help              Show help
-
-'skills show' Options:
-  --name <skill-name>     Target skill name (or pass as positional arg: geloforge skills show <name>)
-
-'skills lint' Options:
-  --strict                Fail (exit 1) on high/warning findings in addition to critical/error findings
 `);
       break;
   }
@@ -916,14 +937,433 @@ function summarizeSkillForJson(skill) {
   };
 }
 
-function handleSkills(args) {
+async function promptTtyAuthorization({ action, skillName, targetRevision, contentSha256, expectedInput }) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      "--interactive requires a real interactive terminal (TTY). Use --approval <APPR-NNNN> or --mode pr-branch in non-interactive sessions."
+    );
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    console.log("");
+    console.log(
+      "Local Interactive Authorization (CONVENIENCE SAFEGUARD ONLY — weaker than Ed25519 signatures or protected-branch PR reviews):"
+    );
+    console.log(`  Action  : ${action}${targetRevision ? ` (${targetRevision})` : ""}`);
+    console.log(`  Skill   : ${skillName}`);
+    console.log(`  Digest  : ${contentSha256}`);
+    const answer = await rl.question(`Type exact phrase "${expectedInput}" to authorize: `);
+    return answer.trim() === expectedInput;
+  } finally {
+    rl.close();
+  }
+}
+
+async function handleSkillsLifecycle(subcmd, rest) {
+  if (subcmd === "draft") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        "from-evidence": { type: "string", multiple: true },
+        evidence: { type: "string", multiple: true },
+        "from-handoff": { type: "string", multiple: true },
+        handoff: { type: "string", multiple: true },
+        name: { type: "string" },
+        title: { type: "string" },
+        description: { type: "string" },
+        step: { type: "string", multiple: true },
+        tag: { type: "string", multiple: true },
+        trigger: { type: "string", multiple: true },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: false,
+    });
+    if (parsed.values.help) {
+      printSubHelp("skills");
+      return 0;
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = draftSkillFromExperience({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      evidenceIds: [...(parsed.values["from-evidence"] || []), ...(parsed.values.evidence || [])],
+      handoffIds: [...(parsed.values["from-handoff"] || []), ...(parsed.values.handoff || [])],
+      skillName: parsed.values.name,
+      title: parsed.values.title,
+      description: parsed.values.description,
+      steps: parsed.values.step,
+      tags: parsed.values.tag,
+      triggers: parsed.values.trigger,
+      createdAt: parsed.values["created-at"],
+      dryRun: parsed.values["dry-run"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(res.dryRun ? `DRY RUN — Quarantined draft "${res.skillName}" not written.` : `Skill draft created (QUARANTINED): ${res.proposalDir}/SKILL.md`);
+    console.log(`Candidate SHA : ${res.candidateDigest}`);
+    console.log(`Provenance    : ${res.evidenceDigests.join(", ")}`);
+    for (const w of res.stalenessWarnings) console.log(`  - [WARN] ${w}`);
+    return 0;
+  }
+
+  if (subcmd === "propose-update") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        name: { type: "string" },
+        "from-evidence": { type: "string", multiple: true },
+        evidence: { type: "string", multiple: true },
+        "from-handoff": { type: "string", multiple: true },
+        handoff: { type: "string", multiple: true },
+        reason: { type: "string" },
+        "patch-file": { type: "string" },
+        "append-note": { type: "string" },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("skills");
+      return 0;
+    }
+    const targetName = parsed.values.name || parsed.positionals[0];
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = proposeSkillUpdate({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      skillName: targetName,
+      evidenceIds: [...(parsed.values["from-evidence"] || []), ...(parsed.values.evidence || [])],
+      handoffIds: [...(parsed.values["from-handoff"] || []), ...(parsed.values.handoff || [])],
+      reason: parsed.values.reason,
+      patchFile: parsed.values["patch-file"],
+      appendNote: parsed.values["append-note"],
+      createdAt: parsed.values["created-at"],
+      dryRun: parsed.values["dry-run"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(res.dryRun ? `DRY RUN — Update proposal for "${res.skillName}" not written.` : `Update proposal staged (QUARANTINED): ${res.proposalDir}/SKILL.md`);
+    console.log(`Base / Cand   : ${res.baseSkillDigest.slice(0, 19)} -> ${res.candidateDigest.slice(0, 19)} (${res.diffSummary})`);
+    console.log(`Provenance    : ${res.evidenceDigests.join(", ")}`);
+    for (const w of res.stalenessWarnings) console.log(`  - [WARN] ${w}`);
+    return 0;
+  }
+
+  if (subcmd === "keygen") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        approver: { type: "string" },
+        out: { type: "string", short: "o" },
+        "created-at": { type: "string" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: false,
+    });
+    if (parsed.values.help) {
+      printSubHelp("skills");
+      return 0;
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = generateApproverKeypair({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      workspaceRoot: WORKSPACE_ROOT,
+      approverId: parsed.values.approver,
+      privateKeyOut: parsed.values.out,
+      createdAt: parsed.values["created-at"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Ed25519 Approver Registered : ${res.approverId} (${res.keyFingerprint})`);
+    console.log(`Public Registry (repo)      : ${res.registryPath}`);
+    console.log(`Private Key (external 0600) : ${res.privateKeyPath}`);
+    return 0;
+  }
+
+  if (subcmd === "sign") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        action: { type: "string", default: "promote" },
+        skill: { type: "string" },
+        name: { type: "string" },
+        proposal: { type: "string" },
+        revision: { type: "string" },
+        approver: { type: "string" },
+        key: { type: "string" },
+        rationale: { type: "string" },
+        "risk-assessment": { type: "string" },
+        "expires-at": { type: "string" },
+        "decided-at": { type: "string" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("skills");
+      return 0;
+    }
+    const skillName = parsed.values.skill || parsed.values.name || parsed.values.proposal || parsed.positionals[0];
+    const targetRev = parsed.values.revision || parsed.positionals[1];
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = signSkillApproval({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      action: parsed.values.action,
+      skillName,
+      targetRevision: targetRev,
+      approverId: parsed.values.approver,
+      privateKeyPath: parsed.values.key,
+      rationale: parsed.values.rationale,
+      riskAssessment: parsed.values["risk-assessment"],
+      expiresAt: parsed.values["expires-at"],
+      decidedAt: parsed.values["decided-at"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Signed Approval Created : ${res.approvalId} -> ${res.relPath}`);
+    console.log(`Bound Operation         : ${res.action} ${res.skillName}${res.targetRevision ? ` (${res.targetRevision})` : ""}`);
+    console.log(`Bound Content SHA-256   : ${res.contentSha256}`);
+    console.log(`Approver / Key          : ${res.approverId} (${res.keyFingerprint})`);
+    return 0;
+  }
+
+  if (subcmd === "promote") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        name: { type: "string" },
+        approval: { type: "string" },
+        mode: { type: "string" },
+        branch: { type: "string" },
+        interactive: { type: "boolean", default: false },
+        "approved-by": { type: "string" },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("skills");
+      return 0;
+    }
+    const proposalName = parsed.values.name || parsed.positionals[0];
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const authMode = parsed.values.interactive ? "interactive" : parsed.values.mode;
+
+    let interactiveConfirm = null;
+    if (authMode === "interactive" && !parsed.values["dry-run"] && !parsed.values["approved-by"] && !parsed.values.approval) {
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        throw new Error(
+          "--interactive requires a real interactive terminal (TTY). Use --approval <APPR-NNNN> or --mode pr-branch in non-interactive sessions."
+        );
+      }
+      const preview = promoteSkillProposal({
+        projectDir,
+        harnessDir: HARNESS_DIR,
+        proposalName,
+        dryRun: true,
+      });
+      const expectedInput = `promote ${preview.skillName} ${preview.candidateDigest.slice(7, 15)}`;
+      const ok = await promptTtyAuthorization({
+        action: preview.action,
+        skillName: preview.skillName,
+        targetRevision: null,
+        contentSha256: preview.candidateDigest,
+        expectedInput,
+      });
+      interactiveConfirm = () => ok;
+    }
+
+    const res = promoteSkillProposal({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      proposalName,
+      approvalId: parsed.values.approval,
+      mode: authMode,
+      branch: parsed.values.branch,
+      approvedBy: parsed.values["approved-by"],
+      interactiveConfirm,
+      createdAt: parsed.values["created-at"],
+      dryRun: parsed.values["dry-run"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(res.dryRun ? `DRY RUN — Promotion check passed for "${res.skillName}"` : `Promoted Skill (${res.action}) : ${res.activeRel} (${res.revision})`);
+    console.log(`Authorization Tier : ${res.authorizationTier || "preview"}${res.approvalId ? ` (${res.approvalId})` : ""}`);
+    console.log(`Digest / History   : ${res.candidateDigest}${res.historyRel ? ` | ${res.historyRel}` : ""}`);
+    if (res.prBranch) console.log(`PR Review Branch   : ${res.prBranch} (${res.prCommitSha}) — push & require PR approval before merging`);
+    if (res.authorizationWarning) console.log(`  - [NOTICE] ${res.authorizationWarning}`);
+    return 0;
+  }
+
+  if (subcmd === "history") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        name: { type: "string" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("skills");
+      return 0;
+    }
+    const targetName = parsed.values.name || parsed.positionals[0];
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = getSkillHistory({ projectDir, skillName: targetName, harnessDir: HARNESS_DIR });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Skill History : ${res.skillName} | active=${res.activeExists} | drift=${res.driftDetected}`);
+    console.log(`Current SHA   : ${res.currentSha256 || "(not active)"}`);
+    if (res.revisions.length === 0) {
+      console.log("  (no recorded revisions yet)");
+      return 0;
+    }
+    for (const r of res.revisions) {
+      console.log(
+        `  - ${r.revision} [${r.action}] tier=${r.authorization_tier} appr=${r.approval_ref || "none"} sha=${r.package_sha256.slice(0, 19)} snapOk=${r.snapshotValid}${r.restored_from_revision ? ` from=${r.restored_from_revision}` : ""}`
+      );
+    }
+    return 0;
+  }
+
+  if (subcmd === "rollback") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        name: { type: "string" },
+        revision: { type: "string" },
+        approval: { type: "string" },
+        mode: { type: "string" },
+        branch: { type: "string" },
+        interactive: { type: "boolean", default: false },
+        "approved-by": { type: "string" },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("skills");
+      return 0;
+    }
+    const skillName = parsed.values.name || parsed.positionals[0];
+    const targetRevision = parsed.values.revision || parsed.positionals[1];
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const authMode = parsed.values.interactive ? "interactive" : parsed.values.mode;
+
+    let interactiveConfirm = null;
+    if (authMode === "interactive" && !parsed.values["dry-run"] && !parsed.values["approved-by"] && !parsed.values.approval) {
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        throw new Error(
+          "--interactive requires a real interactive terminal (TTY). Use --approval <APPR-NNNN> or --mode pr-branch in non-interactive sessions."
+        );
+      }
+      const preview = rollbackSkill({
+        projectDir,
+        harnessDir: HARNESS_DIR,
+        skillName,
+        targetRevision,
+        dryRun: true,
+      });
+      const expectedInput = `rollback ${preview.skillName} ${preview.restoredDigest.slice(7, 15)}`;
+      const ok = await promptTtyAuthorization({
+        action: "rollback",
+        skillName: preview.skillName,
+        targetRevision: preview.targetRevision,
+        contentSha256: preview.restoredDigest,
+        expectedInput,
+      });
+      interactiveConfirm = () => ok;
+    }
+
+    const res = rollbackSkill({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      skillName,
+      targetRevision,
+      approvalId: parsed.values.approval,
+      mode: authMode,
+      branch: parsed.values.branch,
+      approvedBy: parsed.values["approved-by"],
+      interactiveConfirm,
+      createdAt: parsed.values["created-at"],
+      dryRun: parsed.values["dry-run"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(
+      res.dryRun
+        ? `DRY RUN — Rollback check passed for "${res.skillName}" -> ${res.targetRevision}`
+        : `Rolled Back Skill : ${res.activeRel} -> ${res.restoredFromRevision} (recorded as ${res.newRevision})`
+    );
+    console.log(`Authorization Tier : ${res.authorizationTier || "preview"}${res.approvalId ? ` (${res.approvalId})` : ""}`);
+    console.log(`Restored SHA-256   : ${res.restoredDigest}`);
+    if (res.prBranch) console.log(`PR Review Branch   : ${res.prBranch} (${res.prCommitSha}) — push & require PR approval before merging`);
+    if (res.authorizationWarning) console.log(`  - [NOTICE] ${res.authorizationWarning}`);
+    return 0;
+  }
+
+  throw new Error(`Unknown skills subcommand "${subcmd}".`);
+}
+
+async function handleSkills(args) {
   if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
     printSubHelp("skills");
     return 0;
   }
   const [subcmd, ...rest] = args;
+  if (["draft", "propose-update", "keygen", "sign", "promote", "history", "rollback"].includes(subcmd)) {
+    return handleSkillsLifecycle(subcmd, rest);
+  }
   if (!["list", "show", "validate", "lint"].includes(subcmd)) {
-    throw new Error(`Unknown skills subcommand "${subcmd}". Expected: list, show, validate, or lint.`);
+    throw new Error(
+      `Unknown skills subcommand "${subcmd}". Expected: list, show, validate, lint, draft, propose-update, keygen, sign, promote, history, or rollback.`
+    );
   }
 
   const parsed = parseArgs({
@@ -1125,7 +1565,7 @@ function handleSkills(args) {
   return report.passed ? 0 : 1;
 }
 
-function main() {
+async function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
     printMainHelp();
@@ -1159,7 +1599,7 @@ function main() {
         code = handleContext(rest);
         break;
       case "skills":
-        code = handleSkills(rest);
+        code = await handleSkills(rest);
         break;
       case "handoff":
         code = handleHandoff(rest);
@@ -1180,5 +1620,5 @@ function main() {
 
 const isDirectRun = Boolean(process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename));
 if (isDirectRun) {
-  main();
+  await main();
 }
