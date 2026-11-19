@@ -2,7 +2,7 @@
 
 **Build with AI coding assistants without losing context, decisions, or verification truth.**
 
-**Version:** `0.3.0` (Release Candidate — not yet tagged or published) | **License:** [MIT](./LICENSE)
+**Version:** `0.3.0` | **License:** [MIT](./LICENSE)
 
 GeloForge is a zero-dependency, provider-neutral toolkit for organizing projects, managing project memory, compiling bounded prompt context, mapping source symbols, and handing off verified work across coding sessions or different AI assistants.
 
@@ -25,7 +25,7 @@ It stores persistent project memory in plain Markdown and YAML inside your proje
 
 - **Node.js `>= 20.0.0`** (uses built-in Node modules only — **zero third-party `npm install` packages and zero paid APIs**).
 - **Git** (used for `.gitignore`-aware mapping, Git state/drift tracking, and optional `--git` project creation).
-- **Tested Platforms:** Verified directly on **Windows 11** (`Node.js v24.21.0`). Cross-platform Linux and macOS CI workflows are configured in [.github/workflows/ci.yml](./.github/workflows/ci.yml), **not yet directly executed in Linux or macOS runners during local audit**.
+- **Tested Platforms:** Automated tests verified across **Linux (`ubuntu-latest`)**, **macOS (`macos-latest`)**, and **Windows (`windows-latest`)** on **Node.js 20 and 22** via [.github/workflows/ci.yml](./.github/workflows/ci.yml), plus local Windows 11 verification (`Node.js v24.21.0`).
 
 Clone the repository and run the full test suite:
 
