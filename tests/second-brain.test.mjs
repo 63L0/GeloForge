@@ -355,3 +355,41 @@ example_notice: "EXAMPLE ONLY"
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
   }
 });
+
+test("Second Brain validator rejects mutually exclusive task states, warns on stray files, and emits --json", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "harness-sb-state-"));
+  try {
+    const projectDir = path.join(tmp, "state-check");
+    bootstrapProject({ name: "Second Brain Fixture", slug: "second-brain-fixture", dest: projectDir });
+    populateRichValidRecords(projectDir);
+
+    // Put TASK-0001 in active_tasks, blocked_tasks, AND last_completed_task simultaneously.
+    const statePath = path.join(projectDir, "brain", "state", "current.yaml");
+    const mutated = fs
+      .readFileSync(statePath, "utf8")
+      .replace("blocked_tasks: []", 'blocked_tasks:\n  - "TASK-0001"')
+      .replace("last_completed_task: null", 'last_completed_task: "TASK-0001"');
+    fs.writeFileSync(statePath, mutated, "utf8");
+
+    // Add an unrecognized note file inside tasks/
+    fs.writeFileSync(path.join(projectDir, "tasks", "random-notes.md"), "# Random notes\n", "utf8");
+
+    const res = validateProject(projectDir);
+    assert.equal(res.valid, false);
+    const errTxt = res.errors.join("\n");
+    assert.match(errTxt, /cannot be in both active_tasks and blocked_tasks/);
+    assert.match(errTxt, /last_completed_task "TASK-0001" cannot also be in active_tasks/);
+    assert.ok(res.warnings.some((w) => /Unrecognized file in structured record directory tasks/.test(w)));
+
+    const jsonCli = spawnSync(process.execPath, [VALIDATE_CLI, "--project", projectDir, "--json"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    assert.equal(jsonCli.status, 1);
+    const parsedJson = JSON.parse(jsonCli.stdout);
+    assert.equal(parsedJson.valid, false);
+    assert.ok(parsedJson.errors.length >= 2);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
+  }
+});

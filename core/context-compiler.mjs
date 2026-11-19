@@ -132,17 +132,45 @@ function loadMandatorySafetyPolicies(harnessDir, profile, warnings) {
   const approvalRaw = fs.readFileSync(approvalPath, "utf8");
   const memoryRaw = fs.readFileSync(memoryPath, "utf8");
 
+  let approvalSectionText = approvalRaw;
+  let approvalReason = "Mandatory global A0 security and approval boundary rules (verbatim).";
+  if (profile === "quick") {
+    const startIdx = approvalRaw.indexOf("## Authority Level `A0`");
+    const endIdx = approvalRaw.indexOf("\nRelated:");
+    if (startIdx !== -1 && endIdx > startIdx) {
+      const candidate = approvalRaw.slice(startIdx, endIdx).trim();
+      const hasAllRules = ["1.", "2.", "3.", "4.", "5.", "6.", "7.", "8."].every((n) => candidate.includes(n));
+      const hasAllCategories = [
+        "requirements_change",
+        "architecture_change",
+        "security_boundary",
+        "spend_or_paid_api",
+        "external_mutation",
+        "destructive_action",
+        "policy_exception",
+      ].every((cat) => candidate.includes(cat));
+      if (approvalRaw.includes(candidate) && hasAllRules && hasAllCategories) {
+        approvalSectionText = `${candidate}\n\n[Integrity-verified verbatim A0 rules & APPR matrix from harness/policies/approval-boundaries.md (${sha256Short(approvalRaw)})]`;
+        approvalReason = "Mandatory A0 rules & approval boundary matrix (verified verbatim excerpt; full policy in working/deep).";
+      } else {
+        warnings.push("Policy digest verification failed for policies/approval-boundaries.md; included full policy verbatim.");
+      }
+    } else {
+      warnings.push("Policy section markers missing in policies/approval-boundaries.md; included full policy verbatim.");
+    }
+  }
+
   const docs = [
     {
       path: "harness/policies/approval-boundaries.md",
       memory_layer: "L1_AUTHORITATIVE",
       authority_level: "A0",
       revision: sha256Short(approvalRaw),
-      reason: "Mandatory global A0 security and approval boundary rules (verbatim).",
+      reason: approvalReason,
       mandatory: true,
       trustLabel: "authoritative-policy",
       section: "policies",
-      text: approvalRaw,
+      text: approvalSectionText,
     },
   ];
 
@@ -536,6 +564,11 @@ export function compileContext(options = {}) {
     for (const dep of targetTask.data.dependencies || []) directRefIds.add(dep);
     for (const ev of targetTask.data.evidence_refs || []) directRefIds.add(ev);
     if (targetTask.data.approval_ref) directRefIds.add(targetTask.data.approval_ref);
+    for (const rec of parsedRecords) {
+      if (Array.isArray(rec.data.related_tasks) && rec.data.related_tasks.includes(taskId)) {
+        for (const adrId of rec.data.related_adrs || []) directRefIds.add(adrId);
+      }
+    }
 
     for (const inp of targetTask.data.required_inputs || []) {
       if (!inp || typeof inp.path !== "string") continue;
@@ -769,33 +802,9 @@ export function compileContext(options = {}) {
   });
 
   // 7. Budget fitting — mandatory documents are NEVER dropped.
-  const fixedHeaderOverheadTokens = 260;
-  const mandatoryTokenSum =
-    fixedHeaderOverheadTokens +
-    mandatoryDocs.reduce((acc, doc) => acc + estimateTokens(renderDocFence(doc)) + 4, 0);
-
-  let remainingBudget = tokenBudgetTarget - mandatoryTokenSum;
-  const selectedOptional = [];
-
-  for (const cand of optionalCandidates) {
-    const entryTokens = estimateTokens(renderDocFence(cand)) + 4;
-    if (remainingBudget >= entryTokens) {
-      selectedOptional.push(cand);
-      remainingBudget -= entryTokens;
-    } else {
-      omittedCandidates.push({
-        path: cand.path,
-        reason: `Budget limit reached (${entryTokens} est. tokens needed, ${Math.max(0, remainingBudget)} remaining)`,
-      });
-    }
-  }
-
-  const includedDocs = [...mandatoryDocs, ...selectedOptional];
   const gitRevision = getGitHeadRevision(projectDir);
-
-  // Build Markdown packet organized strictly by trust class
-  const renderSection = (title, sectionKey, emptyNote = null) => {
-    const items = includedDocs.filter((d) => d.section === sectionKey);
+  const renderSectionFrom = (docsList) => (title, sectionKey, emptyNote = null) => {
+    const items = docsList.filter((d) => d.section === sectionKey);
     if (items.length === 0 && !emptyNote) {
       return "";
     }
@@ -809,6 +818,57 @@ export function compileContext(options = {}) {
     }
     return lines.join("\n");
   };
+
+  // Measure actual mandatory + header + trace baseline accurately before packing optional docs.
+  const mandatoryOnlyMd = assembleMarkdown({
+    manifest,
+    taskId,
+    query,
+    gitRevision,
+    profile,
+    effectiveProfile: profile,
+    tokenBudgetTarget,
+    estimatedTokens: 0,
+    budgetOverrun: false,
+    freshnessWarnings,
+    unresolvedConflictIds,
+    warnings,
+    omittedCandidates,
+    includedDocs: mandatoryDocs,
+    renderSection: renderSectionFrom(mandatoryDocs),
+  });
+  const actualMandatoryTokens = estimateTokens(mandatoryOnlyMd);
+  const explicitBudgetProvided = options.budget !== undefined && options.budget !== null;
+
+  let remainingBudget = tokenBudgetTarget - actualMandatoryTokens;
+  // When a quick profile overflows on mandatory records alone (without an explicit --budget override),
+  // reserve a tight escalated allowance strictly for directly task-referenced records (e.g. linked ADRs/EVID).
+  const autoEscalateQuickDirectCap =
+    !explicitBudgetProvided && profile === "quick" && remainingBudget < 0
+      ? Math.min(PROFILE_BUDGETS.working - actualMandatoryTokens, 1500)
+      : 0;
+  let remainingQuickDirect = Math.max(0, autoEscalateQuickDirectCap);
+
+  const selectedOptional = [];
+
+  for (const cand of optionalCandidates) {
+    const entryTokens = estimateTokens(renderDocFence(cand)) + 30;
+    if (remainingBudget >= entryTokens) {
+      selectedOptional.push(cand);
+      remainingBudget -= entryTokens;
+    } else if (cand.isDirectRef && remainingQuickDirect >= entryTokens) {
+      selectedOptional.push(cand);
+      remainingQuickDirect -= entryTokens;
+    } else {
+      omittedCandidates.push({
+        path: cand.path,
+        reason: `Budget limit reached (${entryTokens} est. tokens needed, ${Math.max(0, remainingBudget)} remaining)`,
+      });
+    }
+  }
+
+  const includedDocs = [...mandatoryDocs, ...selectedOptional];
+  const renderSection = renderSectionFrom(includedDocs);
 
   // Pre-compute effective profile & final markdown deterministically
   const preliminaryMarkdown = assembleMarkdown({
