@@ -8,11 +8,11 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseYaml, extractFrontmatter } from "./yaml-subset.mjs";
 import { validateAgainstSchema } from "./json-schema-lite.mjs";
-import { assertSafeWithinRoot, hasSecretContent, isForbiddenSecretPath } from "./path-safety.mjs";
+import { assertSafeWithinRoot, hasSecretContent, isForbiddenSecretPath, walkNonSymlinkFiles } from "./path-safety.mjs";
+import { getGitRepoInfo } from "./git-utils.mjs";
 import { loadCompatibilityConfig, checkManifestCompatibility } from "./compatibility.mjs";
 import { buildCodebaseMap } from "./codebase-map.mjs";
 
@@ -74,23 +74,11 @@ function loadSchema(schemasDir, name) {
 }
 
 function getGitHeadRevision(projectDir) {
-  try {
-    const inside = execFileSync("git", ["-C", projectDir, "rev-parse", "--is-inside-work-tree"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-    if (inside !== "true") {
-      return "no-git-repo";
-    }
-    return execFileSync("git", ["-C", projectDir, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    return fs.existsSync(path.join(projectDir, ".git")) ? "git-unborn-head" : "no-git-repo";
+  const info = getGitRepoInfo(projectDir);
+  if (!info.available) {
+    return "no-git-repo";
   }
+  return info.unborn ? "git-unborn-head" : info.head;
 }
 
 function tokenizeKeywords(text) {
@@ -105,8 +93,10 @@ function tokenizeKeywords(text) {
 }
 
 function sanitizeFenceContent(text) {
-  // Neutralize any spoofed closing delimiter inside untrusted project content.
-  return text.replace(/<<<END_GELOFORGE_DOC>>>/g, "<<<ESCAPED_END_GELOFORGE_DOC>>>");
+  // Neutralize both closing and spoofed opening document fence markers inside untrusted content.
+  return text
+    .replace(/<<<END_GELOFORGE_DOC>>>/g, "<<<ESCAPED_END_GELOFORGE_DOC>>>")
+    .replace(/<<<GELOFORGE_DOC/g, "<<<ESCAPED_GELOFORGE_DOC");
 }
 
 function renderDocFence(doc) {
@@ -252,36 +242,6 @@ function safeReadProjectFile(projectDir, relPath, warnings) {
     revision: sha256Short(text),
     bytes: Buffer.byteLength(text, "utf8"),
   };
-}
-
-function walkNonSymlinkFiles(rootDir, absDir, predicate, warnings) {
-  if (!fs.existsSync(absDir)) {
-    return [];
-  }
-  const dirStat = fs.lstatSync(absDir);
-  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
-    warnings.push(`Skipped symbolic link or non-directory: ${path.relative(rootDir, absDir)}`);
-    return [];
-  }
-  const results = [];
-  const entries = fs.readdirSync(absDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-  for (const entry of entries) {
-    if (entry.name === ".git" || entry.name === "node_modules") {
-      continue;
-    }
-    const full = path.join(absDir, entry.name);
-    const stat = fs.lstatSync(full);
-    if (stat.isSymbolicLink()) {
-      warnings.push(`Blocked symbolic link inside project: ${path.relative(rootDir, full).replace(/\\/g, "/")}`);
-      continue;
-    }
-    if (stat.isDirectory()) {
-      results.push(...walkNonSymlinkFiles(rootDir, full, predicate, warnings));
-    } else if (stat.isFile() && predicate(full)) {
-      results.push(full);
-    }
-  }
-  return results;
 }
 
 function matchRecordSpec(fileName) {
@@ -714,10 +674,46 @@ export function compileContext(options = {}) {
         basePriority = -20;
       }
     } else if (rec.spec.prefix === "EVID") {
-      trustLabel = d.status === "verified" ? "verified-evidence" : "non-authoritative-unverified";
-      section = d.status === "verified" ? "operational" : "unverified";
-      basePriority = d.status === "verified" ? 22 : 5;
-      reason = d.status === "verified" ? "Verified implementation/test evidence." : `Unverified evidence (${d.status}).`;
+      const checks = Array.isArray(d.checks) ? d.checks : [];
+      const passedCount = checks.filter((c) => c.result === "passed").length;
+      const hasFailedOrBlocked = checks.some((c) => c.result === "failed" || c.result === "blocked");
+      const trulyVerified = d.status === "verified" && passedCount > 0 && !hasFailedOrBlocked && d.is_example !== true;
+      if (trulyVerified) {
+        trustLabel = "verified-evidence";
+        section = "operational";
+        basePriority = 22;
+        reason = "Verified implementation/test evidence.";
+      } else {
+        trustLabel = "non-authoritative-unverified";
+        section = "unverified";
+        basePriority = 5;
+        if (d.status === "verified") {
+          warnings.push(
+            `Quarantined ${rec.relFile}: status is "verified" without >= 1 passing check and zero failed/blocked checks.`
+          );
+        }
+        reason = `Unverified or contradicted evidence (${d.status}; ${passedCount} passed).`;
+      }
+    } else if (rec.spec.prefix === "HANDOFF") {
+      if (d.status === "draft") {
+        trustLabel = "non-authoritative-unverified";
+        section = "unverified";
+        basePriority = 6;
+        reason = "Draft agent handoff (unverified).";
+      } else if (d.status === "rejected" || d.status === "superseded") {
+        trustLabel = "historical";
+        section = "operational";
+        basePriority = -20;
+        reason = `Historical agent handoff (${d.status}).`;
+      } else {
+        const hasWarnings = (d.unverified_claims?.length || 0) > 0 || (d.contradiction_warnings?.length || 0) > 0;
+        trustLabel = hasWarnings ? "operational-handoff-with-warnings" : "operational-handoff";
+        section = "operational";
+        basePriority = 18;
+        reason = hasWarnings
+          ? "Submitted cross-agent handoff (contains unverified claims / contradiction warnings)."
+          : "Submitted cross-agent handoff.";
+      }
     } else if (rec.spec.prefix === "RES") {
       trustLabel = "non-authoritative-external-research";
       section = "unverified";

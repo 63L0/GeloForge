@@ -4,58 +4,22 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { parseYaml } from "./yaml-subset.mjs";
 import { validateProject } from "./project-validator.mjs";
+import { getGitStatusScoped } from "./git-utils.mjs";
 
 function inspectGitState(projectDir) {
-  try {
-    const inside = execFileSync("git", ["-C", projectDir, "rev-parse", "--is-inside-work-tree"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-    if (inside !== "true") {
-      return { available: false, branch: null, head: null, dirtyCount: 0, clean: null };
-    }
-
-    const branch = execFileSync("git", ["-C", projectDir, "branch", "--show-current"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim() || null;
-
-    let head = null;
-    try {
-      head = execFileSync("git", ["-C", projectDir, "rev-parse", "HEAD"], {
-        encoding: "utf8",
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      }).trim();
-    } catch {
-      head = "unborn";
-    }
-
-    const porcelain = execFileSync("git", ["-C", projectDir, "status", "--porcelain"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const dirtyLines = porcelain
-      .split(/\r?\n/)
-      .map((l) => l.trimEnd())
-      .filter(Boolean);
-
-    return {
-      available: true,
-      branch,
-      head,
-      dirtyCount: dirtyLines.length,
-      clean: dirtyLines.length === 0,
-    };
-  } catch {
+  const gs = getGitStatusScoped(projectDir);
+  if (!gs.available) {
     return { available: false, branch: null, head: null, dirtyCount: 0, clean: null };
   }
+  return {
+    available: true,
+    branch: gs.branch,
+    head: gs.unborn ? "unborn" : gs.head,
+    dirtyCount: gs.dirtyCount,
+    clean: !gs.dirty,
+  };
 }
 
 export function getProjectStatus(rawProjectDir, options = {}) {
@@ -63,8 +27,12 @@ export function getProjectStatus(rawProjectDir, options = {}) {
     throw new Error("Missing required project path (--project <path>).");
   }
   const projectDir = path.resolve(rawProjectDir);
-  if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
+  if (!fs.existsSync(projectDir)) {
     throw new Error(`Project directory does not exist: ${projectDir}`);
+  }
+  const rootStat = fs.lstatSync(projectDir);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`Project root must be a real non-symlink directory: ${projectDir}`);
   }
 
   const validation = validateProject(projectDir, options);

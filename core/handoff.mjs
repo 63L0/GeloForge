@@ -7,7 +7,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseYaml, extractFrontmatter } from "./yaml-subset.mjs";
 import { validateAgainstSchema } from "./json-schema-lite.mjs";
@@ -18,7 +17,9 @@ import {
   hasSecretContent,
   isForbiddenSecretPath,
   validateOutputFilePath,
+  walkNonSymlinkFiles,
 } from "./path-safety.mjs";
+import { getGitRepoInfo, getGitStatusScoped } from "./git-utils.mjs";
 import { checkRecordSchemaVersion, loadCompatibilityConfig } from "./compatibility.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -36,7 +37,7 @@ const ALLOWED_ROLES = new Set([
 const ALLOWED_HANDOFF_STATUSES = new Set(["draft", "submitted", "acknowledged", "rejected", "superseded"]);
 const MAX_RECORD_BYTES = 512 * 1024;
 const VERIFICATION_CLAIM_REGEX =
-  /\b(?:tests?\s+pass(?:ed|ing)?|all\s+checks?\s+pass(?:ed)?|verified\s+pass(?:ing)?|suite\s+pass(?:ed)?|ci\s+green|coverage\s+\d+%)\b/i;
+  /\b(?:tests?\s+(?:are\s+)?pass(?:ed|ing)?|all\s+checks?\s+(?:are\s+)?pass(?:ed|ing)?|checks?\s+pass(?:ed|ing)?|build\s+(?:passed|succeeded|green)|(?:0|zero)\s+(?:test\s+)?failures?|verified\s+pass(?:ing)?|suite\s+pass(?:ed|ing)?|ci\s+(?:green|pass(?:ed|ing)?)|coverage\s+\d+%)\b/i;
 
 function loadSchema(harnessDir, name) {
   return JSON.parse(fs.readFileSync(path.join(harnessDir, "schemas", name), "utf8"));
@@ -75,117 +76,20 @@ function readSafeProjectText(projectDir, relPath, warnings) {
   return { resolved, text };
 }
 
-function walkNonSymlinkFiles(rootDir, absDir, predicate, warnings) {
-  if (!fs.existsSync(absDir)) {
-    return [];
-  }
-  const dirStat = fs.lstatSync(absDir);
-  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
-    warnings.push(`Skipped symbolic link directory: ${path.relative(rootDir, absDir).replace(/\\/g, "/")}`);
-    return [];
-  }
-  const out = [];
-  const entries = fs.readdirSync(absDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-  for (const entry of entries) {
-    if (entry.name === ".git" || entry.name === "node_modules") continue;
-    const full = path.join(absDir, entry.name);
-    const stat = fs.lstatSync(full);
-    if (stat.isSymbolicLink()) {
-      warnings.push(`Skipped symbolic link inside project: ${path.relative(rootDir, full).replace(/\\/g, "/")}`);
-      continue;
-    }
-    if (stat.isDirectory()) {
-      out.push(...walkNonSymlinkFiles(rootDir, full, predicate, warnings));
-    } else if (stat.isFile() && predicate(full)) {
-      out.push(full);
-    }
-  }
-  return out;
-}
-
 function collectGitState(projectDir, warnings) {
-  try {
-    const inside = execFileSync("git", ["-C", projectDir, "rev-parse", "--is-inside-work-tree"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-    if (inside !== "true") {
-      return { available: false, branch: null, head: null, dirty: false, changed_files: [] };
-    }
-  } catch {
+  const gs = getGitStatusScoped(projectDir, warnings);
+  if (!gs.available) {
     return { available: false, branch: null, head: null, dirty: false, changed_files: [] };
   }
-
-  let branch = null;
-  try {
-    branch = execFileSync("git", ["-C", projectDir, "symbolic-ref", "--short", "HEAD"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    try {
-      branch = execFileSync("git", ["-C", projectDir, "rev-parse", "--abbrev-ref", "HEAD"], {
-        encoding: "utf8",
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      }).trim();
-    } catch {
-      branch = null;
-    }
-  }
-
-  let head = null;
-  try {
-    head = execFileSync("git", ["-C", projectDir, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    head = "unborn-head";
-  }
-
-  let rawChanged = [];
-  let dirty = false;
-  try {
-    const statusOut = execFileSync("git", ["-C", projectDir, "status", "--porcelain", "-z", "-uall"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    const tokens = statusOut.split("\0").filter(Boolean);
-    for (let i = 0; i < tokens.length; i += 1) {
-      const entry = tokens[i];
-      if (entry.length < 4) continue;
-      dirty = true;
-      const xy = entry.slice(0, 2);
-      const filePath = entry.slice(3).replace(/\\/g, "/");
-      if (xy.includes("R") || xy.includes("C")) {
-        i += 1;
-      }
-      if (isForbiddenSecretPath(filePath)) {
-        warnings.push(`Excluded sensitive changed path from git_state.changed_files: ${filePath}`);
-        continue;
-      }
-      rawChanged.push(filePath);
-    }
-  } catch (err) {
-    warnings.push(`Unable to collect git status: ${err.message}`);
-  }
-
-  const changedFiles = Array.from(new Set(rawChanged)).sort((a, b) => a.localeCompare(b));
-  if (changedFiles.length > 100) {
-    warnings.push(`Truncated git_state.changed_files from ${changedFiles.length} to 100 entries.`);
+  if (gs.changedFiles.length > 100) {
+    warnings.push(`Truncated git_state.changed_files from ${gs.changedFiles.length} to 100 entries.`);
   }
   return {
     available: true,
-    branch: branch || null,
-    head,
-    dirty,
-    changed_files: changedFiles.slice(0, 100),
+    branch: gs.branch,
+    head: gs.unborn ? "unborn-head" : gs.head,
+    dirty: gs.dirty,
+    changed_files: gs.changedFiles.slice(0, 100),
   };
 }
 
@@ -375,69 +279,62 @@ function loadProjectSnapshot(projectDir, harnessDir, warnings) {
     requirements.push(path.relative(projectDir, reqFile).replace(/\\/g, "/"));
   }
 
-  const decisions = [];
-  const decisionSchema = loadSchema(harnessDir, "adr.schema.json");
-  for (const df of walkNonSymlinkFiles(projectDir, path.join(projectDir, "brain", "decisions"), (p) => /^ADR-\d{4}.*\.md$/i.test(path.basename(p)), warnings)) {
-    const rel = path.relative(projectDir, df).replace(/\\/g, "/");
-    const r = readSafeProjectText(projectDir, rel, warnings);
-    if (!r) continue;
-    try {
-      const data = extractFrontmatter(r.text, rel);
-      const v = validateAgainstSchema(data, decisionSchema);
-      if (v.valid) decisions.push({ rel, data });
-    } catch (err) {
-      warnings.push(`Skipped malformed ADR ${rel}: ${err.message}`);
-    }
-  }
-
-  const tasks = [];
-  const taskSchema = loadSchema(harnessDir, "task-contract.schema.json");
-  for (const tf of walkNonSymlinkFiles(projectDir, path.join(projectDir, "tasks"), (p) => /^TASK-\d{4}.*\.ya?ml$/i.test(path.basename(p)), warnings)) {
-    const rel = path.relative(projectDir, tf).replace(/\\/g, "/");
-    const r = readSafeProjectText(projectDir, rel, warnings);
-    if (!r) continue;
-    try {
-      const data = parseYaml(r.text, rel);
-      const v = validateAgainstSchema(data, taskSchema);
-      if (v.valid) tasks.push({ rel, data });
-    } catch (err) {
-      warnings.push(`Skipped malformed TASK ${rel}: ${err.message}`);
-    }
-  }
-
-  const evidences = [];
-  const evidSchema = loadSchema(harnessDir, "evidence-manifest.schema.json");
-  for (const ef of walkNonSymlinkFiles(projectDir, path.join(projectDir, "evidence"), (p) => /^EVID-\d{4}.*\.ya?ml$/i.test(path.basename(p)), warnings)) {
-    const rel = path.relative(projectDir, ef).replace(/\\/g, "/");
-    const r = readSafeProjectText(projectDir, rel, warnings);
-    if (!r) continue;
-    try {
-      const data = parseYaml(r.text, rel);
-      const v = validateAgainstSchema(data, evidSchema);
-      if (v.valid) evidences.push({ rel, data });
-    } catch (err) {
-      warnings.push(`Skipped malformed EVID ${rel}: ${err.message}`);
-    }
-  }
-
-  const conflicts = [];
-  const confSchema = loadSchema(harnessDir, "conflict-record.schema.json");
-  for (const cf of walkNonSymlinkFiles(projectDir, path.join(projectDir, "brain", "conflicts"), (p) => /^CONF-\d{4}.*\.ya?ml$/i.test(path.basename(p)), warnings)) {
-    const rel = path.relative(projectDir, cf).replace(/\\/g, "/");
-    const r = readSafeProjectText(projectDir, rel, warnings);
-    if (!r) continue;
-    try {
-      const data = parseYaml(r.text, rel);
-      const v = validateAgainstSchema(data, confSchema);
-      if (v.valid) {
-        conflicts.push({ rel, data });
-      } else {
-        warnings.push(`Skipped invalid CONF ${rel}: ${v.errors.join("; ")}`);
+  const scanTypedRecords = ({ relDir, filenameRegex, parser, schemaName, label }) => {
+    const out = [];
+    const schema = loadSchema(harnessDir, schemaName);
+    const files = walkNonSymlinkFiles(
+      projectDir,
+      path.join(projectDir, relDir),
+      (p) => filenameRegex.test(path.basename(p)),
+      warnings
+    );
+    for (const file of files) {
+      const rel = path.relative(projectDir, file).replace(/\\/g, "/");
+      const r = readSafeProjectText(projectDir, rel, warnings);
+      if (!r) continue;
+      try {
+        const data = parser(r.text, rel);
+        const v = validateAgainstSchema(data, schema);
+        if (v.valid) {
+          out.push({ rel, data });
+        } else {
+          warnings.push(`Skipped invalid ${label} ${rel}: ${v.errors.join("; ")}`);
+        }
+      } catch (err) {
+        warnings.push(`Skipped malformed ${label} ${rel}: ${err.message}`);
       }
-    } catch (err) {
-      warnings.push(`Skipped malformed CONF ${rel}: ${err.message}`);
     }
-  }
+    return out;
+  };
+
+  const decisions = scanTypedRecords({
+    relDir: "brain/decisions",
+    filenameRegex: /^ADR-\d{4}.*\.md$/i,
+    parser: extractFrontmatter,
+    schemaName: "adr.schema.json",
+    label: "ADR",
+  });
+  const tasks = scanTypedRecords({
+    relDir: "tasks",
+    filenameRegex: /^TASK-\d{4}.*\.ya?ml$/i,
+    parser: parseYaml,
+    schemaName: "task-contract.schema.json",
+    label: "TASK",
+  });
+  const evidences = scanTypedRecords({
+    relDir: "evidence",
+    filenameRegex: /^EVID-\d{4}.*\.ya?ml$/i,
+    parser: parseYaml,
+    schemaName: "evidence-manifest.schema.json",
+    label: "EVID",
+  });
+  const conflicts = scanTypedRecords({
+    relDir: "brain/conflicts",
+    filenameRegex: /^CONF-\d{4}.*\.ya?ml$/i,
+    parser: parseYaml,
+    schemaName: "conflict-record.schema.json",
+    label: "CONF",
+  });
 
   const existingHandoffs = [];
   for (const dirName of ["handoffs", "tasks"]) {
@@ -464,12 +361,16 @@ function summarizeEvidence(ev) {
   const checks = Array.isArray(ev.data.checks) ? ev.data.checks : [];
   const passed = checks.filter((c) => c.result === "passed").length;
   const failed = checks.filter((c) => c.result === "failed").length;
-  const other = checks.length - passed - failed;
-  const verifiedStatus = ev.data.status === "verified" && failed === 0 && !ev.data.is_example;
+  const blocked = checks.filter((c) => c.result === "blocked").length;
+  const other = checks.length - passed - failed - blocked;
+  const verifiedStatus =
+    ev.data.status === "verified" && passed > 0 && failed === 0 && blocked === 0 && !ev.data.is_example;
   return {
     verified: verifiedStatus,
     failedCount: failed,
-    summary: `${passed} passed, ${failed} failed, ${other} other (status=${ev.data.status})`,
+    blockedCount: blocked,
+    passedCount: passed,
+    summary: `${passed} passed, ${failed} failed, ${blocked} blocked, ${other} other (status=${ev.data.status})`,
   };
 }
 
@@ -859,6 +760,10 @@ export function inspectHandoff(options = {}) {
   if (!schemaCheck.valid) {
     errors.push(...schemaCheck.errors);
   }
+  const canonicalTopDir = relLabel.split("/")[0];
+  if ((canonicalTopDir === "handoffs" || canonicalTopDir === "tasks") && record.is_example === true) {
+    errors.push(`Example fixture (is_example: true) is forbidden in canonical handoff path ${relLabel}.`);
+  }
 
   const snap = loadProjectSnapshot(projectDir, harnessDir, warnings);
   if (record.task_id && !snap.tasks.some((t) => t.data.id === record.task_id)) {
@@ -871,6 +776,37 @@ export function inspectHandoff(options = {}) {
       errors.push(`Broken reference evidence_refs entry "${evId}" not found in evidence/.`);
     } else if (!summarizeEvidence(ev).verified) {
       warnings.push(`Referenced evidence "${evId}" is not currently verified (${summarizeEvidence(ev).summary}).`);
+    }
+  }
+  for (const ve of record.verified_evidence || []) {
+    const ev = evMap.get(ve.id);
+    if (!ev) {
+      errors.push(`Forged/missing verified_evidence entry "${ve.id}" not found in evidence/.`);
+      continue;
+    }
+    if (ev.data.is_example) {
+      errors.push(`Example evidence fixture "${ve.id}" cannot appear in verified_evidence.`);
+      continue;
+    }
+    const evSummary = summarizeEvidence(ev);
+    if (!evSummary.verified) {
+      errors.push(`Evidence "${ve.id}" in verified_evidence failed authenticity check (${evSummary.summary}).`);
+    }
+    if (ve.path && ve.path !== ev.rel) {
+      errors.push(`Evidence "${ve.id}" path mismatch in verified_evidence ("${ve.path}" vs "${ev.rel}").`);
+    }
+  }
+  for (const art of record.artifacts_produced || []) {
+    if (art && typeof art.path === "string") {
+      if (isForbiddenSecretPath(art.path)) {
+        errors.push(`Forbidden secret path in artifacts_produced: "${art.path}".`);
+        continue;
+      }
+      try {
+        assertSafeWithinRoot(projectDir, art.path);
+      } catch (err) {
+        errors.push(`Unsafe path in artifacts_produced "${art.path}": ${err.message}`);
+      }
     }
   }
   const confMap = new Map(snap.conflicts.map((c) => [c.data.id, c]));
@@ -886,16 +822,17 @@ export function inspectHandoff(options = {}) {
     }
   }
 
-  const currentGit = collectGitState(projectDir, warnings);
+  const currentGit = getGitRepoInfo(projectDir);
+  const currentHead = currentGit.available ? (currentGit.unborn ? "unborn-head" : currentGit.head) : null;
   const recordedHead = record.git_state?.head || null;
   const gitDrift = {
     available: currentGit.available,
     recordedHead,
-    currentHead: currentGit.head,
-    changed: Boolean(currentGit.available && recordedHead && currentGit.head && recordedHead !== currentGit.head),
+    currentHead,
+    changed: Boolean(currentGit.available && recordedHead && currentHead && recordedHead !== currentHead),
   };
   if (gitDrift.changed) {
-    warnings.push(`Git HEAD moved since handoff (${recordedHead} -> ${currentGit.head}).`);
+    warnings.push(`Git HEAD moved since handoff (${recordedHead} -> ${currentHead}).`);
   }
 
   return {

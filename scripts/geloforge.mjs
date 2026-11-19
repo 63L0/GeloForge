@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Unified non-interactive CLI entrypoint for GeloForge.
- * Commands: init, validate, context, status.
+ * Commands: init, validate, context, handoff, status.
  */
 
 import fs from "node:fs";
@@ -253,6 +253,9 @@ function handleContext(args) {
 
   let mapBudgetNum;
   if (parsed.values["map-budget"] !== undefined) {
+    if (!parsed.values.map) {
+      throw new Error("--map-budget requires --map.");
+    }
     if (!/^\d+$/.test(parsed.values["map-budget"].trim())) {
       throw new Error(`Invalid --map-budget "${parsed.values["map-budget"]}". Must be a positive integer.`);
     }

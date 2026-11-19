@@ -113,6 +113,42 @@ function validateWindowsCompatibleSegments(resolvedPath) {
   }
 }
 
+function isOsManagedDarwinSymlink(cursorPath) {
+  return process.platform === "darwin" && (cursorPath === "/tmp" || cursorPath === "/var" || cursorPath === "/etc");
+}
+
+function assertSafeAncestors(resolvedTarget, protectedDirs, kindLabel) {
+  let cursor = path.dirname(resolvedTarget);
+  const visited = new Set();
+  while (cursor && !visited.has(cursor)) {
+    visited.add(cursor);
+    try {
+      const stat = fs.lstatSync(cursor);
+      if (stat.isSymbolicLink() && !isOsManagedDarwinSymlink(cursor)) {
+        throw new Error(`Refusing ${kindLabel} with symbolic link or junction ancestor: ${cursor}`);
+      }
+      const realAnc = fs.realpathSync(cursor);
+      const relTail = path.relative(cursor, resolvedTarget);
+      const effectiveTarget = path.resolve(realAnc, relTail);
+      for (const dir of protectedDirs) {
+        const realProtected = fs.existsSync(dir) ? fs.realpathSync(dir) : dir;
+        if (isSameOrInside(realAnc, realProtected) || isSameOrInside(effectiveTarget, realProtected)) {
+          throw new Error(`Refusing ${kindLabel} resolving inside protected directory via ${cursor} -> ${realAnc}`);
+        }
+      }
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        throw err;
+      }
+    }
+    const parent = path.dirname(cursor);
+    if (parent === cursor) {
+      break;
+    }
+    cursor = parent;
+  }
+}
+
 export function validateDestinationPath(rawDest, { harnessDir, workspaceRoot }) {
   if (typeof rawDest !== "string" || rawDest.trim().length === 0) {
     throw new Error("Destination path must not be empty.");
@@ -169,36 +205,7 @@ export function validateDestinationPath(rawDest, { harnessDir, workspaceRoot }) 
     }
   }
 
-  // Walk existing ancestors to detect symbolic links / NTFS junctions and symlink-mediated escapes.
-  let cursor = path.dirname(resolved);
-  const visited = new Set();
-  while (cursor && !visited.has(cursor)) {
-    visited.add(cursor);
-    try {
-      const stat = fs.lstatSync(cursor);
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing destination with symbolic link or junction ancestor: ${cursor}`);
-      }
-      const realAnc = fs.realpathSync(cursor);
-      const relTail = path.relative(cursor, resolved);
-      const effectiveTarget = path.resolve(realAnc, relTail);
-      for (const dir of protectedDirs) {
-        const realProtected = fs.existsSync(dir) ? fs.realpathSync(dir) : dir;
-        if (isSameOrInside(realAnc, realProtected) || isSameOrInside(effectiveTarget, realProtected)) {
-          throw new Error(`Refusing destination resolving inside protected directory via ${cursor} -> ${realAnc}`);
-        }
-      }
-    } catch (err) {
-      if (err.code !== "ENOENT") {
-        throw err;
-      }
-    }
-    const parent = path.dirname(cursor);
-    if (parent === cursor) {
-      break;
-    }
-    cursor = parent;
-  }
+  assertSafeAncestors(resolved, protectedDirs, "destination");
 
   return resolved;
 }
@@ -336,6 +343,11 @@ export function validateOutputFilePath(rawOutPath, { harnessDir, workspaceRoot }
   }
   validateWindowsCompatibleSegments(resolved);
 
+  const relFromRoot = resolved.slice(parsed.root.length);
+  if (isForbiddenSecretPath(relFromRoot)) {
+    throw new Error(`Refusing to write output to sensitive secret/credential path: "${rawOutPath}".`);
+  }
+
   const protectedDirs = [path.resolve(harnessDir)];
   if (workspaceRoot && fs.existsSync(path.join(workspaceRoot, "worktrees"))) {
     protectedDirs.push(path.resolve(workspaceRoot, "worktrees"));
@@ -360,36 +372,46 @@ export function validateOutputFilePath(rawOutPath, { harnessDir, workspaceRoot }
     }
   }
 
-  let cursor = path.dirname(resolved);
-  const visited = new Set();
-  while (cursor && !visited.has(cursor)) {
-    visited.add(cursor);
-    try {
-      const stat = fs.lstatSync(cursor);
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing output path with symbolic link or junction ancestor: ${cursor}`);
-      }
-      const realAnc = fs.realpathSync(cursor);
-      const effectiveTarget = path.resolve(realAnc, path.relative(cursor, resolved));
-      for (const dir of protectedDirs) {
-        const realProtected = fs.existsSync(dir) ? fs.realpathSync(dir) : dir;
-        if (isSameOrInside(realAnc, realProtected) || isSameOrInside(effectiveTarget, realProtected)) {
-          throw new Error(`Refusing output path resolving inside protected directory via ${cursor} -> ${realAnc}`);
-        }
-      }
-    } catch (err) {
-      if (err.code !== "ENOENT") {
-        throw err;
-      }
-    }
-    const parent = path.dirname(cursor);
-    if (parent === cursor) {
-      break;
-    }
-    cursor = parent;
-  }
+  assertSafeAncestors(resolved, protectedDirs, "output path");
 
   return resolved;
+}
+
+export function walkNonSymlinkFiles(rootDir, absDir, predicate = () => true, warnings = null, options = {}) {
+  if (!fs.existsSync(absDir)) {
+    return [];
+  }
+  const onSymlink = typeof options.onSymlink === "function" ? options.onSymlink : null;
+  const dirStat = fs.lstatSync(absDir);
+  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+    const relDir = path.relative(rootDir, absDir).replace(/\\/g, "/") || ".";
+    const msg = `Blocked symbolic link directory inside project: ${relDir}`;
+    if (onSymlink) onSymlink(relDir, msg);
+    else if (Array.isArray(warnings)) warnings.push(msg);
+    return [];
+  }
+  const results = [];
+  const entries = fs.readdirSync(absDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    if (entry.name === ".git" || entry.name === "node_modules") {
+      continue;
+    }
+    const full = path.join(absDir, entry.name);
+    const stat = fs.lstatSync(full);
+    if (stat.isSymbolicLink()) {
+      const rel = path.relative(rootDir, full).replace(/\\/g, "/");
+      const msg = `Blocked symbolic link inside project: ${rel}`;
+      if (onSymlink) onSymlink(rel, msg);
+      else if (Array.isArray(warnings)) warnings.push(msg);
+      continue;
+    }
+    if (stat.isDirectory()) {
+      results.push(...walkNonSymlinkFiles(rootDir, full, predicate, warnings, options));
+    } else if (stat.isFile() && predicate(full)) {
+      results.push(full);
+    }
+  }
+  return results;
 }
 
 export function assertNoSymlinkInTree(rootDir) {

@@ -7,7 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { listGitVisibleFiles } from "./git-utils.mjs";
 import { assertSafeWithinRoot, hasSecretContent, isForbiddenSecretPath } from "./path-safety.mjs";
 
 const MAX_DISCOVERED_PATHS = 10000;
@@ -38,7 +38,6 @@ const EXCLUDED_DIRS = new Set([
   "venv",
   "target",
   "vendor",
-  "bin",
   "obj",
   "secrets",
   ".aws",
@@ -76,6 +75,7 @@ const BINARY_AND_ASSET_EXTS = new Set([
   ".woff", ".woff2", ".ttf", ".otf", ".eot",
   ".mp3", ".wav", ".ogg", ".flac", ".mp4", ".mov", ".avi", ".webm",
   ".sqlite", ".sqlite3", ".db", ".map", ".crt", ".cer", ".der", ".csr",
+  ".pdb", ".nupkg", ".jar", ".war", ".ear", ".suo", ".user",
 ]);
 
 const MAP_STOP_WORDS = new Set([
@@ -94,6 +94,7 @@ function estimateTokens(text) {
 function sanitizeInline(text) {
   return String(text || "")
     .replace(/<<<END_GELOFORGE_DOC>>>/g, "<<<ESCAPED_END_GELOFORGE_DOC>>>")
+    .replace(/<<<GELOFORGE_DOC/g, "<<<ESCAPED_GELOFORGE_DOC")
     .replace(/[\r\n]+/g, " ")
     .trim();
 }
@@ -116,17 +117,24 @@ function isExcludedPath(relPath, { excludeSecondBrainDirs = true } = {}) {
   const segments = norm.split("/").filter(Boolean);
   const baseLower = segments[segments.length - 1].toLowerCase();
   if (
+    baseLower === ".ds_store" ||
     baseLower === "secrets.json" ||
     baseLower === "secrets.yaml" ||
     baseLower === "secrets.yml" ||
     baseLower.startsWith("secrets.")
   ) {
-    return "forbidden-secret-path";
+    return baseLower === ".ds_store" ? "binary-or-asset" : "forbidden-secret-path";
   }
 
   for (let i = 0; i < segments.length - 1; i += 1) {
     const dirLower = segments[i].toLowerCase();
     if (EXCLUDED_DIRS.has(dirLower)) return "excluded-dir";
+    if (dirLower === "bin" && i + 1 < segments.length - 1) {
+      const nextLower = segments[i + 1].toLowerCase();
+      if (nextLower === "debug" || nextLower === "release") {
+        return "excluded-dir";
+      }
+    }
     if (excludeSecondBrainDirs && i === 0 && SECOND_BRAIN_DIRS.has(dirLower)) {
       return "second-brain-dir";
     }
@@ -158,13 +166,15 @@ function compileGitignoreMatcher(gitignoreText, baseRelDir = "") {
     if (anchored) pat = pat.slice(1);
     if (!pat) continue;
 
-    const escaped = pat
-      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-      .replace(/\*\*\//g, "(?:.*/)?")
-      .replace(/\*\*/g, ".*")
-      .replace(/\*/g, "[^/]*")
-      .replace(/\?/g, "[^/]");
     const hasSlash = pat.includes("/");
+    const escaped = pat
+      .replace(/\*\*\//g, "\0GLOBSTAR_DIR\0")
+      .replace(/\*\*/g, "\0GLOBSTAR\0")
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, "[^/]*")
+      .replace(/\?/g, "[^/]")
+      .replace(/\0GLOBSTAR_DIR\0/g, "(?:.*/)?")
+      .replace(/\0GLOBSTAR\0/g, ".*");
     const regexStr = anchored || hasSlash
       ? `^${escaped}(?:/.*)?$`
       : `(?:^|/)${escaped}(?:/.*)?$`;
@@ -183,47 +193,21 @@ function isIgnoredByRules(relPath, isDir, rules) {
       if (!norm.startsWith(prefix)) continue;
       target = norm.slice(prefix.length);
     }
-    if (rule.dirOnly && !isDir && !target.includes("/")) {
-      // File cannot match dirOnly rule on its own filename alone unless parent matched
-      if (!rule.regex.test(`${target}/`)) {
+    if (rule.dirOnly && !isDir) {
+      if (!target.includes("/")) {
         continue;
       }
+      const parentDir = path.posix.dirname(target);
+      if (rule.regex.test(parentDir)) {
+        ignored = !rule.negate;
+      }
+      continue;
     }
     if (rule.regex.test(target)) {
       ignored = !rule.negate;
     }
   }
   return ignored;
-}
-
-function discoverFilesWithGit(projectDir, warnings) {
-  try {
-    const inside = execFileSync("git", ["-C", projectDir, "rev-parse", "--is-inside-work-tree"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-    if (inside !== "true") {
-      return null;
-    }
-    const out = execFileSync(
-      "git",
-      ["-C", projectDir, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-      {
-        encoding: "utf8",
-        maxBuffer: 16 * 1024 * 1024,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      }
-    );
-    const paths = out.split("\0").filter(Boolean);
-    return { mode: "git-ls-files", paths };
-  } catch (err) {
-    if (fs.existsSync(path.join(projectDir, ".git"))) {
-      warnings.push(`Git discovery failed (${err.message}); falling back to filesystem walk.`);
-    }
-    return null;
-  }
 }
 
 function discoverFilesFallback(projectDir, warnings, excludeSecondBrainDirs) {
@@ -602,8 +586,8 @@ export function buildCodebaseMap(options = {}) {
   const queryKeywords = options.queryKeywords instanceof Set ? options.queryKeywords : tokenizeKeywords(options.queryText || "");
   const queryMentionsTests = queryKeywords.has("test") || queryKeywords.has("tests") || queryKeywords.has("spec");
 
-  // 1. Discover files (Git .gitignore-aware when available, deterministic fallback walk otherwise)
-  const gitDiscovery = discoverFilesWithGit(projectDir, warnings);
+  // 1. Discover files (Git .gitignore-aware when project root is Git root, deterministic walk otherwise)
+  const gitDiscovery = listGitVisibleFiles(projectDir, warnings);
   const rawDiscovery = gitDiscovery || discoverFilesFallback(projectDir, warnings, excludeSecondBrainDirs);
   const scanMode = rawDiscovery.mode;
 
