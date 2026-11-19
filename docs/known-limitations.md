@@ -1,32 +1,26 @@
-# Known Limitations (Phase 1 Baseline)
+# Known Limitations
 
-This document records the exact boundary between what exists and was verified in Phase 1 versus what is documentation-only or not implemented.
+This document maintains an honest boundary between **technically enforced capabilities**, **documented-only safeguards**, **not-implemented features**, and **untested environments**.
 
-## Status Summary by Category
+## 1. Technically Enforced & Verified Today
+- **Workspace & Repository Separation:** Verified no root `.git`, independent harness Git repo, `.gitattributes` LF normalization, and `.gitignore` exclusions tested via `git check-ignore`.
+- **Bootstrap Path, Symlink & Transactional Safety:** [path-safety.mjs](../core/path-safety.mjs) and [bootstrap-project.mjs](../scripts/bootstrap-project.mjs) enforce traversal blocking, NTFS junction/symlink ancestor refusal, overwrite refusal, single-pass placeholder rendering, and atomic staging rollback.
+- **Second Brain Structural & Reference Validation:** [project-validator.mjs](../core/project-validator.mjs) enforces YAML/frontmatter parsing, 12 strict JSON schemas (`"additionalProperties": false`), version compatibility ([compatibility.mjs](../core/compatibility.mjs)), duplicate-ID rejection, cross-record link verification, and relative Markdown link checks.
+- **Zero-Network / Zero-Dependency Guarantees:** Static and runtime tests verify zero third-party packages and zero network module usage in `core/` and `scripts/`.
 
-### Implemented and Verified
-- Workspace layout (`C:\AI-Workspace\{harness,projects,worktrees,local-runtime}`) with no root Git repository and an independent Git repository for `harness\`.
-- Eleven machine-validatable JSON Schemas ([schemas/](../schemas/README.md)), nine contract templates, and nine clearly marked non-authoritative examples ([contracts/examples/](../contracts/examples/README.md)).
-- Reusable Second Brain template ([templates/project-starter/](../templates/project-starter/README.md)).
-- Zero-dependency project generator ([bootstrap-project.mjs](../scripts/bootstrap-project.mjs)) with dry-run, input validation, overwrite refusal, and optional local Git initialization.
-- Zero-dependency local validation script ([validate-foundation.mjs](../validators/validate-foundation.mjs)).
+## 2. Documented Only (NOT Technically Enforced)
+- **Write Ownership & Authority Hierarchy (`A0`–`A6`):** [memory-policy.md](../policies/memory-policy.md) defines role write limits, but no OS ACLs, Git pre-commit hooks, or runtime sandboxes restrict who edits project files today.
+- **Approval Boundaries & Spend Caps:** [approval-boundaries.md](../policies/approval-boundaries.md) and [token-efficiency.md](../policies/token-efficiency.md) (`max 2 specialists`, `max 2 retries`, `zero automatic spend`) are policy targets only—not enforced by a runtime interceptor.
+- **Provider Adapters & Agent Roles:** [adapters/](../adapters/README.md) and [roles/](../roles/README.md) are documentation-only contracts.
 
-### Documented Only (No Runtime Enforcement)
-- **Write Ownership & Authority Rules** ([memory-policy.md](../policies/memory-policy.md)): No OS-level or Git-hook filesystem write enforcement exists in Phase 1. Any user or tool with filesystem access could technically edit any file.
-- **Approval Boundaries** ([approval-boundaries.md](../policies/approval-boundaries.md)): Approval workflows (`APPR-NNNN`) rely on operator discipline; no automated interceptors enforce them yet.
-- **Token Efficiency Targets** ([token-efficiency.md](../policies/token-efficiency.md)): Max 2 specialist agents, max 2 retries, and spend limits are policy targets only, not runtime limits.
-- **Agent Roles** ([roles/](../roles/README.md)): Role documents specify future behavior only; no operational subagent runner exists.
+## 3. Not Implemented
+- Deterministic Context Compiler runtime ([context-compiler-spec.md](../context/context-compiler-spec.md)).
+- Restricted Integration Controller and automated knowledge promotion.
+- Operational Codex CLI, Gemini CLI, or multi-agent subagent execution.
+- Automated `CHKPT-NNNN` checkpoints, worktree orchestration, `skills/`, `evaluations/`, vector databases, RAG services, or paid API integrations.
+- Public open-source `LICENSE` file (`package.json` remains `"private": true`; the repository owner must select and commit a `LICENSE` before making any GitHub repository public).
 
-### Not Implemented
-- Deterministic Context Compiler ([context-compiler-spec.md](../context/context-compiler-spec.md)).
-- Restricted Integration Controller and automatic knowledge promotion.
-- Codex CLI and Gemini CLI configurations/adapters.
-- Multi-agent orchestration, schedulers, worktree managers, checkpoints, `skills/`, and `evaluations/`.
-- Vector databases, RAG pipelines, background services, cloud resources, paid APIs, and remote Git integration.
-
-### Technical Scope Limits of Phase 1 Validator
-- **Custom Zero-Dependency YAML Subset Parser** ([yaml-subset.mjs](../validators/lib/yaml-subset.mjs)): Because installing external npm packages (`js-yaml`, `ajv`) is prohibited in Phase 1, the validator uses a strict YAML 1.2 subset parser supporting block mappings, nested mappings, block sequences, scalars, empty `[]`/`{}`, simple inline scalar arrays, and block scalars (`|` / `>`). Complex YAML features (anchors/aliases `&/*`, multi-line flow objects, custom tags) are intentionally rejected.
-- **JSON Schema Subset** ([json-schema-lite.mjs](../validators/lib/json-schema-lite.mjs)): Supports the Draft 2020-12 keywords used across the 11 harness schemas (`type`, `required`, `properties`, `additionalProperties`, `enum`, `const`, `pattern`, `minLength`, `maxLength`, `minimum`, `maximum`, `items`, `minItems`, `uniqueItems`), not advanced keywords like `$ref`, `oneOf`, or `allOf`.
-
-### Blocked (Untestable in Phase 1)
-- End-to-end multi-agent handoff execution, runtime token-budget compliance, automated checkpoint resume, and Restricted Integration Controller promotion cannot be tested because those runtime components do not exist yet.
+## 4. Technical Scope & Platform Limits
+- **Zero-Dependency Parser Subset:** [yaml-subset.mjs](../core/yaml-subset.mjs) and [json-schema-lite.mjs](../core/json-schema-lite.mjs) intentionally cover the YAML 1.2 and Draft 2020-12 subsets needed by harness contracts (no YAML anchors/aliases `&/*` or JSON Schema `$ref`/`oneOf`/`allOf`).
+- **Platform Testing Boundary:** All tests were executed directly on **Windows 11** (`Node.js >= 20`). Code uses platform-neutral `node:path` APIs and avoids hardcoded drive letters or usernames, but **Linux and macOS execution have NOT been tested directly**.
+- **Token Savings Claims:** No token reduction percentages are claimed until the future Context Compiler and provider usage logging are implemented and measured.
