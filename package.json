@@ -24,10 +24,15 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "bin": {
+    "geloforge": "./scripts/geloforge.mjs"
+  },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "validate": "node --test tests/*.test.mjs",
     "validate:project": "node scripts/validate-project.mjs",
-    "bootstrap": "node scripts/bootstrap-project.mjs"
+    "bootstrap": "node scripts/bootstrap-project.mjs",
+    "geloforge": "node scripts/geloforge.mjs",
+    "benchmark": "node scripts/benchmark-context.mjs"
   }
 }
