@@ -46,14 +46,15 @@ export function getGitRepoInfo(projectDir) {
   let isRepoRoot = false;
   let relPrefix = "";
   try {
-    const topLevel = runGit(resolvedProj, ["rev-parse", "--show-toplevel"]).trim();
-    const realProj = fs.realpathSync(resolvedProj);
-    const realTop = fs.realpathSync(topLevel);
-    const rel = path.relative(realTop, realProj).replace(/\\/g, "/");
-    isRepoRoot = rel === "";
-    relPrefix = rel;
+    // Ask Git directly for the path within the worktree. Git's own prefix is
+    // consistent across Windows drive-letter casing and POSIX path spellings.
+    // A nested project inside an outer repository must NOT count as its root.
+    relPrefix = runGit(resolvedProj, ["rev-parse", "--show-prefix"]).trim().replace(/\\/g, "/").replace(/\/$/, "");
+    isRepoRoot = relPrefix === "";
   } catch {
-    isRepoRoot = fs.existsSync(path.join(resolvedProj, ".git"));
+    // Do not infer a Git root from uncertain metadata; prefer safe fallback.
+    isRepoRoot = false;
+    relPrefix = "";
   }
 
   let branch = null;
