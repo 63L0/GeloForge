@@ -218,12 +218,124 @@ export function assertSafeWithinRoot(baseDir, relativeOrTargetPath) {
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
     throw new Error(`Path escapes project root: ${relativeOrTargetPath}`);
   }
-  if (fs.existsSync(resolved)) {
-    const stat = fs.lstatSync(resolved);
-    if (stat.isSymbolicLink()) {
-      throw new Error(`Symbolic links are not allowed inside project metadata paths: ${relativeOrTargetPath}`);
+
+  // Check every existing path component between baseResolved and resolved for symlinks/junctions.
+  const segments = rel.split(/[\\/]+/).filter(Boolean);
+  let cursor = baseResolved;
+  for (const seg of segments) {
+    cursor = path.join(cursor, seg);
+    if (fs.existsSync(cursor)) {
+      const stat = fs.lstatSync(cursor);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Symbolic links are not allowed inside project paths: ${relativeOrTargetPath}`);
+      }
+    } else {
+      try {
+        const brokenStat = fs.lstatSync(cursor);
+        if (brokenStat.isSymbolicLink()) {
+          throw new Error(`Symbolic links are not allowed inside project paths: ${relativeOrTargetPath}`);
+        }
+      } catch (err) {
+        if (err.code !== "ENOENT") {
+          throw err;
+        }
+      }
+      break;
     }
   }
+  return resolved;
+}
+
+export function isForbiddenSecretPath(relativePath) {
+  const normalized = relativePath.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.length === 0) {
+    return false;
+  }
+  if (segments.includes(".git") || segments.includes("secrets")) {
+    return true;
+  }
+  const base = segments[segments.length - 1];
+  if (base === ".env" || base.startsWith(".env.")) {
+    return true;
+  }
+  return /\.(pem|key|p12|pfx|jks|keystore|mobileprovision)$/i.test(base);
+}
+
+export function validateOutputFilePath(rawOutPath, { harnessDir, workspaceRoot }) {
+  if (typeof rawOutPath !== "string" || rawOutPath.trim().length === 0) {
+    throw new Error("Output path must not be empty.");
+  }
+  if (CONTROL_CHAR_REGEX.test(rawOutPath)) {
+    throw new Error("Output path contains illegal control characters.");
+  }
+  if (/^(\\\\|\/\/)/.test(rawOutPath)) {
+    throw new Error(`Refusing UNC or device network path as output target: "${rawOutPath}".`);
+  }
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(rawOutPath)) {
+    throw new Error(`Refusing output path containing traversal segment "..": "${rawOutPath}".`);
+  }
+
+  const resolved = path.resolve(rawOutPath);
+  const parsed = path.parse(resolved);
+  if (resolved === parsed.root) {
+    throw new Error(`Refusing to write output file at filesystem root "${resolved}".`);
+  }
+  validateWindowsCompatibleSegments(resolved);
+
+  const protectedDirs = [path.resolve(harnessDir)];
+  if (workspaceRoot && fs.existsSync(path.join(workspaceRoot, "worktrees"))) {
+    protectedDirs.push(path.resolve(workspaceRoot, "worktrees"));
+  }
+  for (const dir of protectedDirs) {
+    if (isSameOrInside(resolved, dir)) {
+      throw new Error(`Refusing to write output inside protected directory: ${dir}`);
+    }
+  }
+
+  try {
+    const targetStat = fs.lstatSync(resolved);
+    if (targetStat.isSymbolicLink()) {
+      throw new Error(`Refusing to write output to a symbolic link: ${resolved}`);
+    }
+    if (targetStat.isDirectory()) {
+      throw new Error(`Output file path points to an existing directory: ${resolved}`);
+    }
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+
+  let cursor = path.dirname(resolved);
+  const visited = new Set();
+  while (cursor && !visited.has(cursor)) {
+    visited.add(cursor);
+    try {
+      const stat = fs.lstatSync(cursor);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Refusing output path with symbolic link or junction ancestor: ${cursor}`);
+      }
+      const realAnc = fs.realpathSync(cursor);
+      const effectiveTarget = path.resolve(realAnc, path.relative(cursor, resolved));
+      for (const dir of protectedDirs) {
+        const realProtected = fs.existsSync(dir) ? fs.realpathSync(dir) : dir;
+        if (isSameOrInside(realAnc, realProtected) || isSameOrInside(effectiveTarget, realProtected)) {
+          throw new Error(`Refusing output path resolving inside protected directory via ${cursor} -> ${realAnc}`);
+        }
+      }
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        throw err;
+      }
+    }
+    const parent = path.dirname(cursor);
+    if (parent === cursor) {
+      break;
+    }
+    cursor = parent;
+  }
+
   return resolved;
 }
 
