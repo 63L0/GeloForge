@@ -45,6 +45,7 @@ const EXCLUDED_DIRS = new Set([
 ]);
 
 const SECOND_BRAIN_DIRS = new Set([
+  ".geloforge",
   "brain",
   "tasks",
   "evidence",

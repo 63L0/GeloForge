@@ -742,6 +742,15 @@ function scanSkillsRoot({ absRoot, source, trustTier, displayRoot, rootErrors, r
     const full = path.join(absRoot, entry.name);
     const st = fs.lstatSync(full);
 
+    if (
+      !st.isSymbolicLink() &&
+      (entry.name === ".proposals" ||
+        entry.name.startsWith(".geloforge-stage-") ||
+        entry.name.startsWith(".geloforge-backup-"))
+    ) {
+      continue;
+    }
+
     if (entry.isFile() || (st.isFile() && !st.isSymbolicLink())) {
       if (entry.name === "SKILL.md") {
         rootErrors.push(
@@ -1335,4 +1344,54 @@ export function resolveProjectForSkills({ project = null, cwd = process.cwd(), h
     discoveredFromCwd: false,
   };
 }
+
+/**
+ * Computes a deterministic canonical tree SHA-256 over all files inside a skill package.
+ * Fails closed on symlinks/junctions, forbidden secret paths, or embedded secret literals.
+ */
+export function computeSkillPackageDigest(rawSkillDir) {
+  const skillDir = path.resolve(rawSkillDir);
+  if (!fs.existsSync(skillDir)) {
+    throw new Error(`Skill directory does not exist: ${skillDir}`);
+  }
+  const dirStat = fs.lstatSync(skillDir);
+  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+    throw new Error(`Refusing symbolic link or non-directory skill root: ${skillDir}`);
+  }
+
+  const walkRes = walkSkillDirectorySafe(skillDir);
+  if (walkRes.symlinks.length > 0) {
+    throw new Error(`Blocked symbolic link/junction inside skill package: ${walkRes.symlinks[0]}`);
+  }
+
+  const files = [];
+  const treeHasher = crypto.createHash("sha256");
+  const sortedFiles = [...walkRes.files].sort((a, b) => a.relPath.localeCompare(b.relPath));
+
+  for (const f of sortedFiles) {
+    if (isForbiddenSecretPath(f.relPath)) {
+      throw new Error(`Forbidden secret or credential file inside skill package: ${f.relPath}`);
+    }
+    const buf = fs.readFileSync(f.absPath);
+    if (!buf.includes(0) && buf.length <= MAX_SKILL_BYTES) {
+      const text = buf.toString("utf8");
+      if (hasSecretContent(text)) {
+        throw new Error(`Embedded credential or private-key literal detected in skill file: ${f.relPath}`);
+      }
+    }
+    const fileSha = crypto.createHash("sha256").update(buf).digest("hex");
+    treeHasher.update(`${f.relPath}\0${fileSha}\n`, "utf8");
+    files.push({
+      relPath: f.relPath,
+      sha256: `sha256:${fileSha}`,
+      bytes: buf.length,
+    });
+  }
+
+  return {
+    digest: `sha256:${treeHasher.digest("hex")}`,
+    files,
+  };
+}
+
 

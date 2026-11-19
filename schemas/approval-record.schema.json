@@ -58,6 +58,43 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
+    "skill_authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "skill_name", "content_sha256", "authorization_tier"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["promote_new", "promote_update", "rollback"]
+        },
+        "skill_name": { "type": "string", "minLength": 1 },
+        "proposal_id": { "type": ["string", "null"] },
+        "target_revision": { "type": ["string", "null"] },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "base_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "evidence_digests": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "authorization_tier": {
+          "type": "string",
+          "enum": ["cryptographic_ed25519", "git_pr_review_pending", "local_interactive_tty"]
+        },
+        "approver_id": { "type": ["string", "null"] },
+        "key_fingerprint": { "type": ["string", "null"] },
+        "signature_algorithm": {
+          "type": ["string", "null"],
+          "enum": ["ed25519", null]
+        },
+        "signature_base64": { "type": ["string", "null"] }
+      }
+    },
     "is_example": { "type": "boolean" },
     "example_notice": { "type": "string" }
   }
