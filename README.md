@@ -1,22 +1,30 @@
 # GeloForge
 
-**Foundation Version:** `0.2.0` | **License:** [MIT](./LICENSE)
+**Build with AI without losing track of your project.**
 
-A reusable toolkit that helps developers organize projects, manage AI coding agents, and keep project knowledge in one place, so they can build software more efficiently without starting from scratch every time.
+**Version:** `0.2.0` | **License:** [MIT](./LICENSE)
 
-> **Current Release Scope (GeloForge Foundation):** This release provides reusable project scaffolding, a structured Markdown/YAML Second Brain, JSON Schema & cross-reference validation, optional project profiles, and documentation/contracts for future AI agent workflows. **Multi-agent orchestration, Codex/Gemini CLI runtime adapters, and the deterministic Context Compiler are NOT implemented yet.**
+GeloForge is an open-source starter kit for developers who use AI coding assistants.
+
+When you're building software with AI, project details can end up scattered across chats. You might find yourself explaining the same requirements again, hunting for decisions you made last week, or setting up the same folders for every new project.
+
+GeloForge gives you a more organized starting point. It creates a project structure with a **Second Brain**: a set of files where you can keep your requirements, plans, decisions, and progress. Those files stay with your project, so you and your AI coding tools can refer back to them.
+
+It also includes reusable project templates and checks to catch common mistakes in project records.
+
+> **What works today:** Project creation, Second Brain files, optional project profiles, and validation tools. You can use these with a single AI coding assistant. **Automatic AI agent coordination and automatic context selection are planned, not built yet.**
 
 ---
 
-## 1. What Is GeloForge and What Problems Does It Solve?
+## 1. Why Use GeloForge?
 
-AI-assisted software projects frequently lose context across sessions, repeat architectural decisions, scatter requirements across chats, and require rebuilding folder structures and safety rules for every new project.
+- **Spend less time setting up.** Start a web, desktop, mobile, automation, or AI-system project from a consistent template.
+- **Keep the important stuff together.** Store requirements, architecture decisions, tasks, and progress in your project instead of relying on old chat conversations.
+- **Use your preferred AI coding tool.** Give Codex, Gemini, or another assistant the same project files as reference. GeloForge doesn't run those tools for you yet.
+- **Catch issues early.** Validate project records, links, and references before they cause confusion.
+- **Keep projects independent.** Each new project has its own files and can have its own Git repository.
 
-GeloForge solves this by providing a **provider-neutral project foundation**:
-
-- **Persistent Second Brain:** Keeps requirements, architecture decisions (`ADR-NNNN`), operational state, tasks, and verification evidence in plain version-controlled Markdown and YAML inside every project—independent of any AI tool's chat history.
-- **One Base + Domain Profiles:** Bootstraps clean project repositories with optional domain conventions without duplicating schemas or maintaining multiple diverging templates.
-- **Validation Before Drift:** Catches malformed records, duplicate IDs, broken cross-record references, stale research, and unsafe paths locally with zero external dependencies.
+**New here?** Jump to [Installation and Setup](#5-installation-and-setup), then [Create a New Project](#6-how-to-create-a-new-project--use-project-profiles).
 
 ## 2. What Is Implemented Today?
 
