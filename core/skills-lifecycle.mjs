@@ -59,8 +59,8 @@ function sha256Tag(input) {
   return `sha256:${sha256Hex(input)}`;
 }
 
-function loadSchema(harnessDir, schemaName) {
-  return JSON.parse(fs.readFileSync(path.join(harnessDir, "schemas", schemaName), "utf8"));
+function loadSchema(schemasDir, schemaName) {
+  return JSON.parse(fs.readFileSync(path.join(schemasDir, schemaName), "utf8"));
 }
 
 function assertSafeDirNonSymlink(absDir, label) {
@@ -149,15 +149,15 @@ function validatePrivateKeyOutPath(rawPath, { projectDir, harnessDir, workspaceR
   return resolved;
 }
 
-function validatePrivateKeyReadPath(rawPath, projectDir, label = "--key") {
+function validateExternalFileReadPath(rawPath, projectDir, label = "--key", { forbidInsideRepo = true } = {}) {
   if (typeof rawPath !== "string" || rawPath.trim().length === 0) {
-    throw new Error(`Missing required ${label} private key path.`);
+    throw new Error(`Missing required ${label} file path.`);
   }
   if (CONTROL_CHAR_REGEX.test(rawPath) || /^(\\\\|\/\/)/.test(rawPath) || /(^|[\\/])\.\.([\\/]|$)/.test(rawPath)) {
-    throw new Error(`Unsafe ${label} private key path: "${rawPath}".`);
+    throw new Error(`Unsafe ${label} file path: "${rawPath}".`);
   }
   const resolved = path.resolve(rawPath);
-  if (isSameOrInside(resolved, path.resolve(projectDir))) {
+  if (forbidInsideRepo && isSameOrInside(resolved, path.resolve(projectDir))) {
     throw new Error(`Refusing private key stored inside project repository (${resolved}); keep signing keys outside version control.`);
   }
   let cursor = resolved;
@@ -168,10 +168,10 @@ function validatePrivateKeyReadPath(rawPath, projectDir, label = "--key") {
       process.platform === "darwin" && (cursor === "/tmp" || cursor === "/var" || cursor === "/etc");
     const st = fs.lstatSync(cursor);
     if (st.isSymbolicLink() && !isDarwinSys) {
-      throw new Error(`Refusing symbolic link/junction in private key path: ${cursor}`);
+      throw new Error(`Refusing symbolic link/junction in ${label} path: ${cursor}`);
     }
     if (cursor === resolved && !st.isFile()) {
-      throw new Error(`Private key path is not a regular file: ${resolved}`);
+      throw new Error(`${label} path is not a regular file: ${resolved}`);
     }
     const parent = path.dirname(cursor);
     if (parent === cursor) break;
@@ -639,6 +639,21 @@ function validateAndLintSkillStaging({ stageDir, skillName, displayRoot }) {
   return { pkg, lint, digestInfo };
 }
 
+function ensureProposalSlotAvailable(projectDir, proposalDir, metaRel, metaAbs) {
+  let allowMetaOverwrite = false;
+  if (fs.existsSync(metaAbs)) {
+    const existing = readSafeYamlWithinProject(projectDir, metaRel);
+    if (existing?.data?.status === "promoted" && !fs.existsSync(proposalDir)) {
+      allowMetaOverwrite = true;
+    } else {
+      throw new Error(
+        `Proposal metadata "${metaRel}" already exists; resolve or remove pending proposal before creating a new one.`
+      );
+    }
+  }
+  return allowMetaOverwrite;
+}
+
 /**
  * Phase 3: Creates a quarantined portable SKILL.md draft under <proposalsDir>/skills/
  * backed strictly by verified EVID-* / HANDOFF-* facts without auto-activating.
@@ -707,9 +722,7 @@ export function draftSkillFromExperience(options = {}) {
   if (fs.existsSync(proposalSkillDir)) {
     throw new Error(`Proposal "${skillName}" already exists under ${proposalSkillRel}. Avoid duplicate proposals.`);
   }
-  if (fs.existsSync(metaAbs)) {
-    throw new Error(`Proposal metadata "${metaRel}" already exists for "${skillName}".`);
-  }
+  const allowMetaOverwrite = ensureProposalSlotAvailable(projectDir, proposalSkillDir, metaRel, metaAbs);
 
   const markdown = buildDraftSkillMarkdown({
     skillName,
@@ -777,7 +790,7 @@ export function draftSkillFromExperience(options = {}) {
     assertSafeAncestorChain(proposalSkillDir, projectDir, proposalSkillRel);
     renameSyncRetry(stageDir, proposalSkillDir);
     atomicWriteFile(metaAbs, serializeYaml(proposalMeta, { headerComment: "Quarantined GeloForge skill draft metadata" }), {
-      allowOverwrite: false,
+      allowOverwrite: allowMetaOverwrite,
     });
 
     return {
@@ -909,9 +922,7 @@ export function proposeSkillUpdate(options = {}) {
       `An update or draft proposal for "${skillName}" already exists at ${proposalRel}.${staleNote} Resolve or remove it before creating another proposal.`
     );
   }
-  if (fs.existsSync(metaAbs)) {
-    throw new Error(`Proposal metadata "${metaRel}" already exists; remove or resolve before proposing a new update.`);
-  }
+  const allowMetaOverwrite = ensureProposalSlotAvailable(projectDir, proposalDir, metaRel, metaAbs);
 
   let candidateSkillMd = "";
   if (options.patchFile) {
@@ -1029,7 +1040,7 @@ export function proposeSkillUpdate(options = {}) {
     assertSafeAncestorChain(proposalDir, projectDir, proposalRel);
     renameSyncRetry(stageDir, proposalDir);
     atomicWriteFile(metaAbs, serializeYaml(proposalMeta, { headerComment: "Quarantined GeloForge skill update proposal metadata" }), {
-      allowOverwrite: false,
+      allowOverwrite: allowMetaOverwrite,
     });
 
     return {
@@ -1116,6 +1127,7 @@ export function generateApproverKeypair(options = {}) {
   return {
     approverId,
     keyFingerprint,
+    publicKeyPem,
     registryPath: registry.relPath,
     privateKeyPath: privOutAbs,
     createdAt,
@@ -1381,7 +1393,7 @@ export function signSkillApproval(options = {}) {
   }
 
   const approverId = validateScalarText("--approver", options.approverId);
-  const privKeyAbs = validatePrivateKeyReadPath(options.privateKeyPath, projectDir);
+  const privKeyAbs = validateExternalFileReadPath(options.privateKeyPath, projectDir, "--key", { forbidInsideRepo: true });
   const privateKeyObj = crypto.createPrivateKey(fs.readFileSync(privKeyAbs, "utf8"));
   if (privateKeyObj.asymmetricKeyType !== "ed25519") {
     throw new Error(`Private key must be Ed25519 (got ${privateKeyObj.asymmetricKeyType}).`);
@@ -1514,6 +1526,7 @@ export function verifySignedSkillApproval({
   expectedContentSha256,
   expectedBaseSha256 = null,
   expectedEvidenceDigests = [],
+  publicKeyPath = null,
   nowIso = new Date().toISOString(),
 }) {
   const loadedAppr = findRecordYamlById(projectDir, projectPaths.proposals_dir, "APPR", approvalId);
@@ -1565,14 +1578,30 @@ export function verifySignedSkillApproval({
     throw new Error(`Approval evidence binding mismatch (${loadedAppr.relPath}): source evidence changed after signing.`);
   }
 
-  const registry = loadApproversRegistry(projectDir);
-  const regEntry = registry.approvers.find((a) => a.approver_id === sa.approver_id);
-  if (!regEntry) {
-    throw new Error(`Approver "${sa.approver_id}" not found in ${registry.relPath}.`);
-  }
-  const regFingerprint = `ed25519:${sha256Hex(regEntry.public_key_pem).slice(0, 16)}`;
-  if (regEntry.key_fingerprint !== sa.key_fingerprint || regFingerprint !== sa.key_fingerprint) {
-    throw new Error(`Public key fingerprint mismatch for approver "${sa.approver_id}".`);
+  let trustedPubPem;
+  let trustedFingerprint;
+  if (publicKeyPath) {
+    const pubAbs = validateExternalFileReadPath(publicKeyPath, projectDir, "--public-key", { forbidInsideRepo: false });
+    const pubObj = crypto.createPublicKey(fs.readFileSync(pubAbs, "utf8"));
+    if (pubObj.asymmetricKeyType !== "ed25519") {
+      throw new Error(`Pinned --public-key must be Ed25519 (got ${pubObj.asymmetricKeyType}).`);
+    }
+    trustedPubPem = pubObj.export({ type: "spki", format: "pem" });
+    trustedFingerprint = `ed25519:${sha256Hex(trustedPubPem).slice(0, 16)}`;
+    if (trustedFingerprint !== sa.key_fingerprint) {
+      throw new Error(`Pinned --public-key fingerprint (${trustedFingerprint}) mismatches approval (${sa.key_fingerprint}).`);
+    }
+  } else {
+    const registry = loadApproversRegistry(projectDir);
+    const regEntry = registry.approvers.find((a) => a.approver_id === sa.approver_id);
+    if (!regEntry) {
+      throw new Error(`Approver "${sa.approver_id}" not found in ${registry.relPath}.`);
+    }
+    trustedPubPem = regEntry.public_key_pem;
+    trustedFingerprint = `ed25519:${sha256Hex(trustedPubPem).slice(0, 16)}`;
+    if (regEntry.key_fingerprint !== sa.key_fingerprint || trustedFingerprint !== sa.key_fingerprint) {
+      throw new Error(`Public key fingerprint mismatch for approver "${sa.approver_id}".`);
+    }
   }
 
   const payloadStr = buildApprovalSigningPayload({
@@ -1591,7 +1620,7 @@ export function verifySignedSkillApproval({
   const ok = crypto.verify(
     null,
     Buffer.from(payloadStr, "utf8"),
-    crypto.createPublicKey(regEntry.public_key_pem),
+    crypto.createPublicKey(trustedPubPem),
     Buffer.from(sa.signature_base64, "base64")
   );
   if (!ok) {
@@ -1711,6 +1740,7 @@ function assertAuthorizedOperation({
   evidenceDigests,
   targetRecords,
   approvalId,
+  publicKeyPath = null,
   mode,
   branch,
   approvedBy,
@@ -1745,6 +1775,7 @@ function assertAuthorizedOperation({
       expectedContentSha256: contentSha256,
       expectedBaseSha256: baseSha256,
       expectedEvidenceDigests: evidenceDigests,
+      publicKeyPath,
       nowIso: timestamp,
     });
     return {
@@ -1909,6 +1940,7 @@ function applyAuthorizedSkillPackageChange({
     execFileSync("git", ["-C", projectDir, "checkout", "-b", auth.prBranch], {
       encoding: "utf8",
       windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
     });
   }
 
@@ -1990,15 +2022,17 @@ function applyAuthorizedSkillPackageChange({
     execFileSync("git", ["-C", projectDir, "add", "--all", "--", ...stageList], {
       encoding: "utf8",
       windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
     });
     execFileSync(
       "git",
       ["-C", projectDir, "commit", "-m", `skills(${skillName}): ${action} (${expectedDigest.slice(0, 19)})`],
-      { encoding: "utf8", windowsHide: true }
+      { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }
     );
     const commitSha = execFileSync("git", ["-C", projectDir, "rev-parse", "HEAD"], {
       encoding: "utf8",
       windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
     }).trim();
     prDetails = {
       approvalId: appr.id,
@@ -2061,6 +2095,7 @@ export function promoteSkillProposal(options = {}) {
     evidenceDigests: gate.bundle.evidenceDigests,
     targetRecords: [gate.proposalRel, ...gate.bundle.evidenceList.map((e) => e.relPath)],
     approvalId: options.approvalId,
+    publicKeyPath: options.publicKeyPath,
     mode: options.mode,
     branch: options.branch,
     approvedBy: options.approvedBy,
@@ -2210,6 +2245,7 @@ export function rollbackSkill(options = {}) {
     evidenceDigests,
     targetRecords: [gate.snapshotRel, gate.histInfo.histRel],
     approvalId: options.approvalId,
+    publicKeyPath: options.publicKeyPath,
     mode: options.mode,
     branch: options.branch,
     approvedBy: options.approvedBy,

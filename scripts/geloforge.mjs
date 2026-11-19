@@ -257,6 +257,7 @@ Adaptive Skills Lifecycle (Evidence-Backed & Human-Authorized):
 
 Authorization Options for 'promote' & 'rollback':
   --approval <APPR-NNNN>  Verify cryptographic Ed25519 signature (recommended)
+  --public-key <file>     Verify signature against an external pinned SPKI public key PEM
   --mode pr-branch        Commit isolated branch for protected-branch human PR review (not pushed)
   --interactive           Explicit TTY confirmation (convenience safeguard; weaker than Ed25519/PR)
   (--approved-by is REFUSED: self-reported flags do not authorize promotion or rollback)
@@ -1160,6 +1161,7 @@ async function handleSkillsLifecycle(subcmd, rest) {
         project: { type: "string", short: "p" },
         name: { type: "string" },
         approval: { type: "string" },
+        "public-key": { type: "string" },
         mode: { type: "string" },
         branch: { type: "string" },
         interactive: { type: "boolean", default: false },
@@ -1209,6 +1211,7 @@ async function handleSkillsLifecycle(subcmd, rest) {
       harnessDir: HARNESS_DIR,
       proposalName,
       approvalId: parsed.values.approval,
+      publicKeyPath: parsed.values["public-key"],
       mode: authMode,
       branch: parsed.values.branch,
       approvedBy: parsed.values["approved-by"],
@@ -1273,6 +1276,7 @@ async function handleSkillsLifecycle(subcmd, rest) {
         name: { type: "string" },
         revision: { type: "string" },
         approval: { type: "string" },
+        "public-key": { type: "string" },
         mode: { type: "string" },
         branch: { type: "string" },
         interactive: { type: "boolean", default: false },
@@ -1325,6 +1329,7 @@ async function handleSkillsLifecycle(subcmd, rest) {
       skillName,
       targetRevision,
       approvalId: parsed.values.approval,
+      publicKeyPath: parsed.values["public-key"],
       mode: authMode,
       branch: parsed.values.branch,
       approvedBy: parsed.values["approved-by"],
