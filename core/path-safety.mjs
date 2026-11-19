@@ -363,7 +363,7 @@ export function redactSecretContent(text) {
   }
   let out = text;
   out = out.replace(
-    /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/g,
+    /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----|$)/g,
     "[REDACTED_SECRET]"
   );
   for (const pat of SECRET_CONTENT_PATTERNS) {

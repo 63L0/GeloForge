@@ -15,7 +15,8 @@ import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectStatus } from "../core/project-status.mjs";
 import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
 import { createTask, listTasks, getTask } from "../core/task-manager.mjs";
-import { atomicWriteFile, validateOutputFilePath } from "../core/path-safety.mjs";
+import { captureEvidence } from "../core/evidence-capture.mjs";
+import { atomicWriteFile, redactSecretContent, validateOutputFilePath } from "../core/path-safety.mjs";
 import { resolveProjectDir } from "../core/project-locator.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -37,6 +38,7 @@ Commands:
   init       Initialize a new project Second Brain (supports profiles & --dry-run)
   adopt      Add GeloForge Second Brain to an existing project without overwriting files
   task       Create, list, or inspect scoped task contracts (TASK-NNNN)
+  evidence   Run an explicit command (shell: false) and record EVID-NNNN manifest
   validate   Validate a project's schemas, compatibility, IDs, references, and links
   context    Compile a deterministic, trust-tiered context packet for a task or query
   handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
@@ -190,6 +192,30 @@ Common Options:
 'task list' / 'task show' Options:
   --status <status>       Filter tasks in 'list'
   -t, --task <TASK-NNNN>  Target task ID for 'show' (or pass as positional arg)
+`);
+      break;
+    case "evidence":
+      console.log(`Usage: geloforge evidence capture --task TASK-NNNN [options] -- <command> [args...]
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  -t, --task <TASK-NNNN>  Target task contract ID (required)
+  --name <string>         Short check name (defaults to command executable)
+  --title <string>        Manifest title override
+  --id <EVID-NNNN>        Explicit evidence ID (auto-assigned if omitted)
+  --role <role>           Producer role (default: developer)
+  --verified-by <label>   Verifier label used ONLY when exit code === 0
+  --timeout <ms>          Command timeout in ms (50-600000, default: 60000)
+  --no-link               Do not attach EVID-NNNN to TASK-NNNN or project state
+  --created-at <iso>      ISO-8601 timestamp override
+  --dry-run               Preview manifest without executing command or writing files
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+
+Safety & Accuracy Notes:
+  - Executes ONLY the explicit command after "--" with shell: false (no shell interpolation).
+  - Secret tokens/keys are redacted before persisting output or printing diagnostics.
+  - Exits 0 only when command exit code === 0 (writes draft EVID-NNNN and exits 1 on failures/timeouts).
 `);
       break;
   }
@@ -730,6 +756,86 @@ function handleTask(args) {
   throw new Error(`Unknown task subcommand "${subcmd}". Expected: new, list, or show.`);
 }
 
+function handleEvidence(args) {
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+    printSubHelp("evidence");
+    return 0;
+  }
+  const [subcmd, ...rest] = args;
+  if (subcmd !== "capture") {
+    throw new Error(`Unknown evidence subcommand "${subcmd}". Expected: capture.`);
+  }
+
+  // Split raw argv at the first "--" so command flags (--test, --json, -v) never collide with CLI flags.
+  const dashIdx = rest.indexOf("--");
+  const gfArgs = dashIdx === -1 ? rest : rest.slice(0, dashIdx);
+  const cmdArgv = dashIdx === -1 ? [] : rest.slice(dashIdx + 1);
+
+  const parsed = parseArgs({
+    args: gfArgs,
+    options: {
+      project: { type: "string", short: "p" },
+      task: { type: "string", short: "t" },
+      name: { type: "string" },
+      title: { type: "string" },
+      id: { type: "string" },
+      role: { type: "string" },
+      "verified-by": { type: "string" },
+      timeout: { type: "string" },
+      "no-link": { type: "boolean", default: false },
+      "created-at": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (parsed.values.help) {
+    printSubHelp("evidence");
+    return 0;
+  }
+
+  let timeoutMs;
+  if (parsed.values.timeout !== undefined) {
+    if (!/^\d+$/.test(parsed.values.timeout.trim())) {
+      throw new Error(`Invalid --timeout "${parsed.values.timeout}". Must be a positive integer.`);
+    }
+    timeoutMs = Number.parseInt(parsed.values.timeout.trim(), 10);
+  }
+
+  const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+  const res = captureEvidence({
+    projectDir,
+    harnessDir: HARNESS_DIR,
+    taskId: parsed.values.task,
+    name: parsed.values.name,
+    title: parsed.values.title,
+    id: parsed.values.id,
+    producedByRole: parsed.values.role,
+    verifiedBy: parsed.values["verified-by"],
+    timeoutMs,
+    linkTask: !parsed.values["no-link"],
+    createdAt: parsed.values["created-at"],
+    dryRun: parsed.values["dry-run"],
+    commandArgv: cmdArgv,
+  });
+
+  if (parsed.values.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return res.dryRun || res.verified ? 0 : 1;
+  }
+
+  console.log(
+    res.dryRun
+      ? `DRY RUN — Evidence ${res.id} not written.`
+      : `Evidence recorded: ${res.relPath} (status=${res.status}, check=${res.checkResult})`
+  );
+  console.log(`Task / Cmd  : ${res.taskId} | ${res.command}`);
+  console.log(`Duration    : ${res.durationMs}ms | exit=${res.exitCode ?? "n/a"} | linked=${res.linkedToTask}`);
+  return res.dryRun || res.verified ? 0 : 1;
+}
+
 function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
@@ -754,6 +860,9 @@ function main() {
       case "task":
         code = handleTask(rest);
         break;
+      case "evidence":
+        code = handleEvidence(rest);
+        break;
       case "validate":
         code = handleValidate(rest);
         break;
@@ -772,7 +881,7 @@ function main() {
     }
     process.exitCode = code;
   } catch (err) {
-    console.error(`ERROR: ${err.message}`);
+    console.error(`ERROR: ${redactSecretContent(err.message)}`);
     process.exitCode = 1;
   }
 }
