@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseYaml, extractFrontmatter } from "./yaml-subset.mjs";
 import { validateAgainstSchema } from "./json-schema-lite.mjs";
-import { assertSafeWithinRoot } from "./path-safety.mjs";
+import { assertSafeWithinRoot, isForbiddenSecretPath, walkNonSymlinkFiles } from "./path-safety.mjs";
 import {
   loadCompatibilityConfig,
   checkManifestCompatibility,
@@ -42,25 +42,6 @@ function loadSchema(schemaName) {
     SCHEMA_CACHE.set(schemaName, JSON.parse(fs.readFileSync(schemaPath, "utf8")));
   }
   return SCHEMA_CACHE.get(schemaName);
-}
-
-function walkFiles(dir, predicate = () => true) {
-  if (!fs.existsSync(dir)) {
-    return [];
-  }
-  const results = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === ".git" || entry.name === "node_modules") {
-      continue;
-    }
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...walkFiles(full, predicate));
-    } else if (entry.isFile() && predicate(full)) {
-      results.push(full);
-    }
-  }
-  return results;
 }
 
 function stripFencedAndInlineCode(markdown) {
@@ -106,7 +87,7 @@ export function validateProject(rawProjectDir, options = {}) {
   }
 
   const projectDir = path.resolve(rawProjectDir);
-  if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
+  if (!fs.existsSync(projectDir)) {
     return {
       valid: false,
       errors: [`Project directory does not exist: ${projectDir}`],
@@ -116,8 +97,19 @@ export function validateProject(rawProjectDir, options = {}) {
       checkedMarkdownFiles: 0,
     };
   }
+  const projectStat = fs.lstatSync(projectDir);
+  if (projectStat.isSymbolicLink() || !projectStat.isDirectory()) {
+    return {
+      valid: false,
+      errors: [`Project root must be a real non-symlink directory: ${projectDir}`],
+      warnings,
+      compatibilityStatus: "invalid",
+      recordCount: 0,
+      checkedMarkdownFiles: 0,
+    };
+  }
 
-  // 1. Core required files
+  // 1. Core required files (also verifying none are symlinks or traversal escapes)
   const requiredCoreFiles = [
     "brain/manifest.yaml",
     "brain/state/current.yaml",
@@ -127,9 +119,15 @@ export function validateProject(rawProjectDir, options = {}) {
     "brain/architecture/overview.md",
   ];
   for (const rel of requiredCoreFiles) {
-    const full = path.join(projectDir, rel);
-    if (!fs.existsSync(full)) {
-      errors.push(`Missing required project file: ${rel}`);
+    try {
+      const full = assertSafeWithinRoot(projectDir, rel);
+      if (!fs.existsSync(full)) {
+        errors.push(`Missing required project file: ${rel}`);
+      } else if (!fs.lstatSync(full).isFile()) {
+        errors.push(`Required project path must be a regular file: ${rel}`);
+      }
+    } catch (err) {
+      errors.push(`Core project file unsafe (${rel}): ${err.message}`);
     }
   }
 
@@ -216,6 +214,7 @@ export function validateProject(rawProjectDir, options = {}) {
     "tasks",
     "evidence",
     "proposals",
+    "handoffs",
   ];
   const canonicalDirs = new Set([
     "brain/decisions",
@@ -224,6 +223,7 @@ export function validateProject(rawProjectDir, options = {}) {
     "brain/incidents",
     "tasks",
     "evidence",
+    "handoffs",
   ]);
   const records = [];
   const seenIds = new Map();
@@ -233,11 +233,17 @@ export function validateProject(rawProjectDir, options = {}) {
     if (!fs.existsSync(absDir)) {
       continue;
     }
-    const files = walkFiles(absDir, (p) => /\.(md|ya?ml)$/i.test(p));
+    const files = walkNonSymlinkFiles(projectDir, absDir, (p) => /\.(md|ya?ml)$/i.test(p), null, {
+      onSymlink: (_rel, msg) => errors.push(msg),
+    });
     for (const filePath of files) {
       const fileName = path.basename(filePath);
       const spec = matchRecordType(fileName);
       if (!spec) {
+        if (!/^(README|INDEX)\.md$/i.test(fileName)) {
+          const relUnrecognized = path.relative(projectDir, filePath).replace(/\\/g, "/");
+          warnings.push(`Unrecognized file in structured record directory ${relDir}: ${relUnrecognized}`);
+        }
         continue;
       }
       const relFile = path.relative(projectDir, filePath).replace(/\\/g, "/");
@@ -303,7 +309,27 @@ export function validateProject(rawProjectDir, options = {}) {
     for (const id of state.open_conflicts || []) ensureIdExists("brain/state/current.yaml#open_conflicts", id);
     if (state.last_verified_evidence) ensureIdExists("brain/state/current.yaml#last_verified_evidence", state.last_verified_evidence);
     if (state.last_completed_task) ensureIdExists("brain/state/current.yaml#last_completed_task", state.last_completed_task);
+
+    const activeSet = new Set(state.active_tasks || []);
+    const blockedSet = new Set(state.blocked_tasks || []);
+    for (const id of activeSet) {
+      if (blockedSet.has(id)) {
+        errors.push(`brain/state/current.yaml: task "${id}" cannot be in both active_tasks and blocked_tasks`);
+      }
+    }
+    if (state.last_completed_task) {
+      if (activeSet.has(state.last_completed_task)) {
+        errors.push(`brain/state/current.yaml: last_completed_task "${state.last_completed_task}" cannot also be in active_tasks`);
+      }
+      if (blockedSet.has(state.last_completed_task)) {
+        errors.push(`brain/state/current.yaml: last_completed_task "${state.last_completed_task}" cannot also be in blocked_tasks`);
+      }
+    }
   }
+
+  const evidById = new Map(
+    records.filter((r) => r.spec.prefix === "EVID" && r.data && typeof r.data.id === "string").map((r) => [r.data.id, r])
+  );
 
   for (const { relFile, spec, data } of records) {
     if (!data || typeof data !== "object") continue;
@@ -333,6 +359,39 @@ export function validateProject(rawProjectDir, options = {}) {
       if (data.task_id) ensureIdExists(`${relFile}#task_id`, data.task_id);
       for (const ev of data.evidence_refs || []) ensureIdExists(`${relFile}#evidence_refs`, ev);
       for (const conf of data.conflicts_detected || []) ensureIdExists(`${relFile}#conflicts_detected`, conf);
+      for (const adr of data.relevant_decisions || []) ensureIdExists(`${relFile}#relevant_decisions`, adr);
+      for (const ve of data.verified_evidence || []) {
+        if (!ve || typeof ve.id !== "string") continue;
+        const evRec = evidById.get(ve.id);
+        if (!evRec) {
+          errors.push(`${relFile}#verified_evidence: forged or missing evidence ID "${ve.id}"`);
+          continue;
+        }
+        const checks = Array.isArray(evRec.data.checks) ? evRec.data.checks : [];
+        const passed = checks.filter((c) => c.result === "passed").length;
+        const bad = checks.filter((c) => c.result === "failed" || c.result === "blocked").length;
+        if (evRec.data.status !== "verified" || passed === 0 || bad > 0 || evRec.data.is_example === true) {
+          errors.push(
+            `${relFile}#verified_evidence: evidence "${ve.id}" is not verified with passing checks (${passed} passed, ${bad} failed/blocked, status=${evRec.data.status})`
+          );
+        }
+        if (ve.path && ve.path !== evRec.relFile) {
+          errors.push(`${relFile}#verified_evidence: path mismatch for "${ve.id}" ("${ve.path}" vs "${evRec.relFile}")`);
+        }
+      }
+      for (const art of data.artifacts_produced || []) {
+        if (art && typeof art.path === "string") {
+          if (isForbiddenSecretPath(art.path)) {
+            errors.push(`${relFile}#artifacts_produced: forbidden secret path "${art.path}"`);
+            continue;
+          }
+          try {
+            assertSafeWithinRoot(projectDir, art.path);
+          } catch (err) {
+            errors.push(`${relFile}#artifacts_produced: ${err.message}`);
+          }
+        }
+      }
     } else if (spec.prefix === "EVID") {
       if (data.task_id) ensureIdExists(`${relFile}#task_id`, data.task_id);
     } else if (spec.prefix === "CONF") {
@@ -358,7 +417,9 @@ export function validateProject(rawProjectDir, options = {}) {
   // 6. Markdown links, placeholder hygiene, and portability scan
   const harnessTokenRegex =
     /\{\{(PROJECT_NAME|PROJECT_SLUG|PROJECT_ID|PROJECT_DESCRIPTION|PROJECT_OWNER|CREATED_AT|CREATED_DATE|HARNESS_VERSION|TEMPLATE_VERSION|PROFILE_NAME|PROFILE_VERSION)\}\}/;
-  const mdFiles = walkFiles(projectDir, (p) => p.endsWith(".md"));
+  const mdFiles = walkNonSymlinkFiles(projectDir, projectDir, (p) => p.endsWith(".md"), null, {
+    onSymlink: (_rel, msg) => errors.push(msg),
+  });
   const linkRegex = /!?\[[^\]]*\]\(([^)]+)\)/g;
   const projectBaseResolved = path.resolve(projectDir);
 
@@ -404,7 +465,9 @@ export function validateProject(rawProjectDir, options = {}) {
   }
 
   // Check YAML files for leftover harness placeholders too
-  const yamlFiles = walkFiles(projectDir, (p) => /\.ya?ml$/i.test(p));
+  const yamlFiles = walkNonSymlinkFiles(projectDir, projectDir, (p) => /\.ya?ml$/i.test(p), null, {
+    onSymlink: (_rel, msg) => errors.push(msg),
+  });
   for (const yf of yamlFiles) {
     const raw = fs.readFileSync(yf, "utf8");
     if (harnessTokenRegex.test(raw)) {

@@ -1,16 +1,11 @@
 # Future Harness Roadmap
 
-> **Status: ALL ITEMS BELOW ARE NOT IMPLEMENTED.**
-> Phase 1.2 delivers only the foundational core modules, schemas, templates, project profiles, compatibility checks, transactional generator, and project validator.
+> **Status:** Stage 2 (`Context Compiler` + `geloforge` CLI) and Stage 3 (`Selective Codebase Mapping` + `Cross-Agent File Handoffs`) are **IMPLEMENTED in v0.3.0 RC**. Items below remain **NOT IMPLEMENTED**.
 
 ## Planned Future Phases (Design Only)
 
-### Phase 2 — Deterministic Context Compiler
-- **Status:** **NOT IMPLEMENTED** (specification at [context-compiler-spec.md](../context/context-compiler-spec.md)).
-- Implement a deterministic compiler assembling bounded Layer 4 packets into `<workspace-root>/local-runtime/context-cache/` with freshness checks, open-conflict surfacing, and empirical token counting.
-
-### Phase 3 — Restricted Integration Controller & Checkpoint Recovery
-- **Status:** **NOT IMPLEMENTED**.
+### Phase 3 Extensions — On-Disk Cache, Restricted Integration Controller & Checkpoint Recovery
+- **Status:** **NOT IMPLEMENTED** (on-disk packet caching under `<workspace-root>/local-runtime/context-cache/` deferred pending multi-project cache-invalidation benchmarks).
 - Build a gated promotion tool validating `EVID-NNNN` and owner `APPR-NNNN` records before promoting `proposals/` into canonical `brain/requirements/` or `brain/decisions/`.
 - Add resumable `CHKPT-NNNN` checkpoint tooling in `<workspace-root>/local-runtime/checkpoints/` and isolated Git worktree management in `<workspace-root>/worktrees/`.
 

@@ -1,6 +1,21 @@
 # Changelog
 
-All notable changes to the AI Development Harness foundation are recorded in this file.
+All notable changes to GeloForge are recorded in this file.
+
+## [0.3.0] — Unreleased (Release Candidate)
+
+### Added
+- **Deterministic Context Compiler ([context-compiler.mjs](./core/context-compiler.mjs)):** Compiles trust-tiered (`A0` policies, open `CONF-NNNN` contradictions, `A1`–`A2` decisions/constraints, `A3`–`A4` operational/verified state, and quarantined `A5`–`A6`/draft items) `L4` Markdown packets + strict `CPACK-0001` JSON manifests with `--task`/`--query`, `--profile` (`quick`/`working`/`deep`), `--exclude-unverified`, and fixed-point `budget_breakdown`.
+- **Selective Codebase Mapper ([codebase-map.mjs](./core/codebase-map.mjs)):** Deterministic, `.gitignore`-aware repository symbol mapper integrated via `geloforge context --map [--map-budget <int>]`, supporting JS/TS, Python, Go, Rust, Java, C#, Kotlin, C/C++, Shell, SQL, Markdown, JSON, YAML, TOML, graceful unsupported-language fallback, 1-hop import graph boost, bounded pre-ranked scanning on large repositories, and hard exclusions for `.env*`, keys, lockfiles, build outputs (`dist/`, `node_modules/`, `bin/Debug/`, `bin/Release/`, `obj/`), and binaries.
+- **Cross-Agent File-Based Handoff Engine ([handoff.mjs](./core/handoff.mjs)):** `geloforge handoff` creates and inspects (`--inspect`) schema-valid `HANDOFF-NNNN` YAML + Markdown transfers across roles and AI tools while separating audited `verified_evidence` (`status: "verified"` with `>= 1` passed and `0` failed/blocked checks) from `unverified_claims` and surfacing `contradiction_warnings`, Git state/drift, and read-only `brain/` references.
+- **Unified CLI ([scripts/geloforge.mjs](./scripts/geloforge.mjs)) & Status Engine ([core/project-status.mjs](./core/project-status.mjs)):** Added single entrypoint with `init`, `validate`, `context`, `handoff`, and `status` commands (with `--json` and atomic `--out`).
+- **Shared Project-Scoped Git Helpers ([git-utils.mjs](./core/git-utils.mjs)) & Hardened Path Safety ([path-safety.mjs](./core/path-safety.mjs)):** Shared secret-content scanner, atomic temp+rename writer, symlink-safe walker, macOS `/tmp`/`/var` ancestor compatibility, secret `--out` blocking, and project-scoped Git status preventing parent-repository dirty-file leakage.
+- **Deterministic Benchmark & Cross-Platform CI ([scripts/benchmark-context.mjs](./scripts/benchmark-context.mjs), [.github/workflows/ci.yml](./.github/workflows/ci.yml)):** Synthetic benchmarks covering context recall/size, 250-file & 1,200-file codebase mapping, and handoff completeness, plus GitHub Actions matrix configuration for Linux, macOS, and Windows (Node 20 & 22).
+- **Additive Schema Extensions:** Extended [context-pack-manifest.schema.json](./schemas/context-pack-manifest.schema.json) (`budget_breakdown`, `codebase_map`) and [agent-handoff.schema.json](./schemas/agent-handoff.schema.json) (`from_tool`, `to_tool`, `git_state`, `verified_evidence`, `unverified_claims`, `contradiction_warnings`, etc.) while keeping `schema_version` `"1.0"` and `"1.1"` compatibility.
+
+### Changed
+- Tightened [project-validator.mjs](./core/project-validator.mjs) to scan `handoffs/`, detect mutually exclusive task states, warn on unrecognized files in record folders, reject symlinked roots/files in Second Brain trees, and audit `HANDOFF` `verified_evidence` entries against real `EVID-*` records.
+- Documented measured `quick` minimum context floors (`~2,614`+ minimal / `~4,250`+ benchmark est. tokens) and explicit prompt-injection delimiter limitations in [context-compiler-spec.md](./context/context-compiler-spec.md) and [SECURITY.md](./SECURITY.md).
 
 ## [0.2.0] — 2026-11-19
 

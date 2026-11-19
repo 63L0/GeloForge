@@ -7,11 +7,11 @@ import { parseArgs } from "node:util";
 import { validateProject } from "../core/project-validator.mjs";
 
 function printHelp() {
-  console.log(`AI Harness Project Validator
+  console.log(`GeloForge Project Validator
 
 Usage:
-  node scripts/validate-project.mjs --project <path>
-  node scripts/validate-project.mjs <path>
+  node scripts/validate-project.mjs --project <path> [--json]
+  node scripts/validate-project.mjs <path> [--json]
 `);
 }
 
@@ -21,6 +21,7 @@ function main() {
     parsed = parseArgs({
       options: {
         project: { type: "string", short: "p" },
+        json: { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
       },
       strict: true,
@@ -44,6 +45,14 @@ function main() {
   }
 
   const result = validateProject(target);
+  if (parsed.values.json) {
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.valid) {
+      process.exit(1);
+    }
+    return;
+  }
+
   console.log(`Project Validation: ${result.valid ? "PASS" : "FAIL"}`);
   console.log(`Compatibility     : ${result.compatibilityStatus}`);
   console.log(`Records Checked   : ${result.recordCount}`);

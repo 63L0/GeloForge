@@ -1,55 +1,33 @@
 # GeloForge
 
-**Build with AI without losing track of your project.**
+**Build with AI coding assistants without losing context, decisions, or verification truth.**
 
-**Version:** `0.2.0` | **License:** [MIT](./LICENSE)
+**Version:** `0.3.0` (Release Candidate — not yet tagged or published) | **License:** [MIT](./LICENSE)
 
-GeloForge is an open-source starter kit for developers who use AI coding assistants.
+GeloForge is a zero-dependency, provider-neutral toolkit for organizing projects, managing project memory, compiling bounded prompt context, mapping source symbols, and handing off verified work across coding sessions or different AI assistants.
 
-When you're building software with AI, project details can end up scattered across chats. You might find yourself explaining the same requirements again, hunting for decisions you made last week, or setting up the same folders for every new project.
-
-GeloForge gives you a more organized starting point. It creates a project structure with a **Second Brain**: a set of files where you can keep your requirements, plans, decisions, and progress. Those files stay with your project, so you and your AI coding tools can refer back to them.
-
-It also includes reusable project templates and checks to catch common mistakes in project records.
-
-> **What works today:** Project creation, Second Brain files, optional project profiles, and validation tools. You can use these with a single AI coding assistant. **Automatic AI agent coordination and automatic context selection are planned, not built yet.**
+It stores persistent project memory in plain Markdown and YAML inside your project's own repository (**Second Brain**) so you are never locked into one AI tool or chat history.
 
 ---
 
-## 1. Why Use GeloForge?
+## 1. What GeloForge Does Today
 
-- **Spend less time setting up.** Start a web, desktop, mobile, automation, or AI-system project from a consistent template.
-- **Keep the important stuff together.** Store requirements, architecture decisions, tasks, and progress in your project instead of relying on old chat conversations.
-- **Use your preferred AI coding tool.** Give Codex, Gemini, or another assistant the same project files as reference. GeloForge doesn't run those tools for you yet.
-- **Catch issues early.** Validate project records, links, and references before they cause confusion.
-- **Keep projects independent.** Each new project has its own files and can have its own Git repository.
+- **Unified CLI ([scripts/geloforge.mjs](./scripts/geloforge.mjs)):** Non-interactive `geloforge` commands (`init`, `validate`, `context`, `handoff`, `status`) with `--json` output and safe atomic `--out` writes.
+- **Transactional Project Scaffolding (`init`):** Initializes a reusable Second Brain ([templates/project-starter/](./templates/project-starter/README.md)) plus optional domain overlays (`web`, `desktop`, `mobile`, `automation`, `ai-system`).
+- **Deterministic Context Compiler (`context`):** Assembles trust-tiered `L4` Markdown packets + `CPACK-0001` JSON manifests with explicit `budget_breakdown`, `--exclude-unverified`, open-conflict surfacing, and verified `A0` safety preservation ([context-compiler.mjs](./core/context-compiler.mjs)).
+- **Selective Codebase Mapping (`context --map`):** Extracts deterministic multi-language symbol outlines, local import boost, and `L<line>` references within `--map-budget`, respecting `.gitignore` and excluding `.env*`, keys, binaries, and build outputs ([codebase-map.mjs](./core/codebase-map.mjs)).
+- **Cross-Agent File-Based Handoffs (`handoff`):** Generates and cross-validates (`--inspect`) schema-strict `HANDOFF-NNNN` transfers that separate audited `verified_evidence` (`EVID-*`) from `unverified_claims`, surface `contradiction_warnings`, and capture project-scoped Git state/drift ([handoff.mjs](./core/handoff.mjs)).
+- **Strict Validation & Health Checks (`validate`, `status`):** Checks 12 JSON Schemas ([schemas/](./schemas/README.md)), `1.0`/`1.1` compatibility ([compatibility.mjs](./core/compatibility.mjs)), duplicate IDs, cross-record references, symlink safety, forged evidence entries, and relative Markdown links ([project-validator.mjs](./core/project-validator.mjs)).
 
-**New here?** Jump to [Installation and Setup](#5-installation-and-setup), then [Create a New Project](#6-how-to-create-a-new-project--use-project-profiles).
+---
 
-## 2. What Is Implemented Today?
+## 2. Requirements & Installation
 
-- **Provider-neutral core ([core/](./core/project-validator.mjs)):** Zero-dependency YAML 1.2 subset parser ([yaml-subset.mjs](./core/yaml-subset.mjs)), JSON Schema subset validator ([json-schema-lite.mjs](./core/json-schema-lite.mjs)), portable path/symlink safety ([path-safety.mjs](./core/path-safety.mjs)), version compatibility engine ([compatibility.mjs](./core/compatibility.mjs)), and full Second Brain validator ([project-validator.mjs](./core/project-validator.mjs)).
-- **12 JSON Schemas ([schemas/](./schemas/README.md)) & 10 contract templates + marked examples ([contracts/](./contracts/README.md)):** Manifests (`1.0`/`1.1`), project state (`1.0`/`1.1`), ADRs, tasks, handoffs, research, evidence, approvals, conflicts, incidents, checkpoints, and context packs.
-- **Base Second Brain + 5 optional project profiles ([templates/](./templates/profiles/README.md)):** Minimal starter ([project-starter/](./templates/project-starter/README.md)) with concise `AGENTS.md` / `GEMINI.md` entrypoints and domain overlays (`web`, `desktop`, `mobile`, `automation`, `ai-system`).
-- **Transactional project generator ([scripts/bootstrap-project.mjs](./scripts/bootstrap-project.mjs)):** Stages into a temporary sibling directory, validates before commit, blocks traversal/overwrites/symlinks/double-interpolation, and supports `--dry-run`, `--profile`, and optional `--git`.
-- **Standalone project validator ([scripts/validate-project.mjs](./scripts/validate-project.mjs)) & `node:test` suite (`tests/`).**
+- **Node.js `>= 20.0.0`** (uses built-in Node modules only — **zero third-party `npm install` packages and zero paid APIs**).
+- **Git** (used for `.gitignore`-aware mapping, Git state/drift tracking, and optional `--git` project creation).
+- **Tested Platforms:** Verified directly on **Windows 11** (`Node.js v24.21.0`). Cross-platform Linux and macOS CI workflows are configured in [.github/workflows/ci.yml](./.github/workflows/ci.yml), **not yet directly executed in Linux or macOS runners during local audit**.
 
-## 3. What Is Not Implemented Yet?
-
-- Deterministic Context Compiler executable ([context-compiler-spec.md](./context/context-compiler-spec.md) is design-only).
-- Restricted Integration Controller and automatic proposal-to-canonical promotion.
-- Operational Codex CLI, Gemini CLI, or multi-agent subagent runners ([adapters/](./adapters/README.md) and [roles/](./roles/README.md) are documentation-only).
-- OS/filesystem write-ownership enforcement, automated checkpoints, live task schedulers, `skills/`, `evaluations/`, vector databases, RAG pipelines, or paid API integrations.
-
-## 4. Requirements and Prerequisites
-
-- **Node.js `>= 20.0.0`** (uses built-in `node:test`, `node:fs`, `node:path`, `node:util`, `node:child_process`; **zero `npm install` dependencies required**).
-- **Git** (used for cloning GeloForge and optional `--git` repository initialization on new projects).
-- **Platform status:** Directly tested on **Windows 11**. Code avoids hardcoded drive letters and usernames via `node:path`, but **Linux and macOS execution have not been tested directly**.
-
-## 5. Installation and Setup
-
-Clone the repository and verify all foundation tests locally (no `npm install` or API keys needed):
+Clone the repository and run the full test suite:
 
 ```bash
 git clone https://github.com/63L0/GeloForge.git
@@ -57,63 +35,143 @@ cd GeloForge
 npm test
 ```
 
-If you use the multi-project workspace layout (`<workspace>/harness`, `<workspace>/projects`, `<workspace>/worktrees`, `<workspace>/local-runtime`), clone GeloForge as `<workspace>/harness`; otherwise, specify `--dest` when creating projects anywhere on disk.
+Run commands directly via `node scripts/geloforge.mjs <command>`, `npm run geloforge -- <command>`, or link globally from the repo root with `npm link` to invoke `geloforge` directly.
 
-## 6. How to Create a New Project & Use Project Profiles
+---
 
-GeloForge pairs a single minimal starter (`templates/project-starter/`) with optional domain overlays (`templates/profiles/`): `web`, `desktop`, `mobile`, `automation`, and `ai-system`. Every profile shares the exact same Second Brain contracts while adding `brain/profile.md` and domain `.gitignore` entries.
+## 3. How to Start a Project
+
+Preview first with `--dry-run`, or scaffold an isolated project with its own Git repository:
 
 ```bash
-# 1. Preview without writing files
-node scripts/bootstrap-project.mjs --name "My Web App" --profile web --dest ../my-web-app --git --dry-run
+# Preview files without touching disk
+node scripts/geloforge.mjs init --name "My Web App" --profile web --dest ../projects/my-web-app --git --dry-run
 
-# 2. Generate a web project with its own isolated Git repository
-node scripts/bootstrap-project.mjs --name "My Web App" --profile web --dest ../my-web-app --git
+# Create a TypeScript/React/API web project
+node scripts/geloforge.mjs init --name "My Web App" --profile web --dest ../projects/my-web-app --git
 
-# 3. Generate a desktop project
-node scripts/bootstrap-project.mjs --name "My Desktop App" --profile desktop --dest ../my-desktop-app --git
+# Check operational & Git health
+node scripts/geloforge.mjs status --project ../projects/my-web-app
 ```
 
-See [docs/new-projects.md](./docs/new-projects.md) and [templates/profiles/README.md](./templates/profiles/README.md) for all flags (`--slug`, `--owner`, `--description`, `--created-at`).
+Available overlays under [templates/profiles/](./templates/profiles/README.md): `web`, `desktop`, `mobile`, `automation`, and `ai-system`. See [docs/new-projects.md](./docs/new-projects.md) for all initialization flags (`--slug`, `--owner`, `--description`, `--created-at`).
 
-## 7. How the Second Brain Works
+---
 
-Every generated project keeps persistent project memory inside its own repository in plain Markdown and YAML across four conceptual layers:
+## 4. How to Use the Context Compiler
 
-1. **Authoritative (`L1_AUTHORITATIVE`):** `brain/manifest.yaml`, `brain/requirements/{prd.md, constraints.md}`, `brain/architecture/overview.md`, `brain/decisions/ADR-*.md`.
-2. **Operational (`L2_OPERATIONAL`):** `brain/state/current.yaml`, `tasks/`, plus on-demand `brain/conflicts/`, `brain/incidents/`, and `proposals/`.
-3. **Research & Evidence (`L3_RESEARCH_EVIDENCE`):** On-demand `brain/research/`, `brain/lessons/`, and `evidence/EVID-*.yaml`.
-4. **Temporary Context (`L4_TEMPORARY_CONTEXT`):** Reserved outside Git for ephemeral future compiler packets (**not implemented**).
-
-Provider entrypoints (`AGENTS.md` and `GEMINI.md`) stay minimal and point to `brain/INDEX.md` instead of duplicating memory. Details: [docs/second-brain.md](./docs/second-brain.md) and [policies/memory-policy.md](./policies/memory-policy.md).
-
-## 8. How to Run Validation and Tests
+Compile a deterministic, trust-tiered context packet for a task (`TASK-NNNN`) or ad-hoc description (`--query`):
 
 ```bash
-# Run the full GeloForge foundation test suite
+# Task-targeted packet with default working (~8,000 est. tokens) budget
+node scripts/geloforge.mjs context --project ../projects/my-web-app --task TASK-0001
+
+# Strict trust mode: omit A5-A6 external research & unverified drafts completely
+node scripts/geloforge.mjs context --project ../projects/my-web-app --task TASK-0001 --exclude-unverified
+
+# Save Markdown atomically to a file outside protected directories
+node scripts/geloforge.mjs context --project ../projects/my-web-app --query "checkout pricing" --profile deep --out ../packets/task-context.md
+```
+
+- **Budget Profiles & Honest Minimum Floor:** `quick` targets `~2,000`, `working` targets `~8,000`, and `deep` targets `~16,000` estimated tokens (`Math.ceil(utf8_bytes / 4)` — heuristic, not vendor tokenizer exact). Mandatory `A0` safety policies, constraints, active task contracts, and open `CONF-NNNN` conflicts are **never silently truncated** to hit `2,000`; an untouched minimal 1-task starter already measures `~2,600+` est. tokens under `quick`, so `budget_overrun: true` and `budget_breakdown` report actual sizes honestly alongside `effective_profile`.
+- **Prompt-Injection Boundary Note:** Packet sections separate authoritative decisions (`A1`–`A2`) from unverified records (`A5`–`A6`, drafts) and escape spoofed document markers (`<<<ESCAPED_END_GELOFORGE_DOC>>>` / `<<<ESCAPED_GELOFORGE_DOC`). However, **document markers alone cannot prevent persuasive text inside untrusted files or source comments from influencing an AI model**. Use `--exclude-unverified` when strict trust isolation is needed. Details: [context-compiler-spec.md](./context/context-compiler-spec.md).
+
+---
+
+## 5. How to Use Codebase Mapping
+
+Add `--map` to include a compact structural outline of the most relevant source files without dumping the entire repository:
+
+```bash
+# Include mapped source symbols with an explicit map budget
+node scripts/geloforge.mjs context --project ../projects/my-web-app --task TASK-0001 --map --map-budget 1000
+
+# Inspect full machine-readable manifest, selection reasons, and budget breakdown
+node scripts/geloforge.mjs context --project ../projects/my-web-app --task TASK-0001 --map --json
+```
+
+- Respects `.gitignore` rules via `git ls-files` (when project root is a Git repo) or `.gitignore`-aware fallback walks, hard-blocking `.env*`, `secrets/`, private keys, credentials, binaries, lockfiles, `node_modules/`, `dist/`, `obj/`, and `bin/Debug`/`bin/Release`.
+- Extracts outline signatures with `L<line>` pointers for JavaScript/TypeScript, Python, Go, Rust, Java, C#, Kotlin, C/C++, Shell, SQL, Markdown, JSON, YAML, and TOML, and degrades cleanly to summary mode for unsupported extensions.
+- Pre-ranks path relevance on repositories larger than `maxScannedFiles` (`500` default) and boosts files imported by high-priority task inputs, omitting files already included verbatim via `TASK.required_inputs`.
+
+---
+
+## 6. How to Generate and Inspect a Handoff
+
+Transfer verified state between coding sessions, agent roles, or AI tools without inventing test results:
+
+```bash
+# Create a structured handoff record in handoffs/HANDOFF-0001-*.yaml
+node scripts/geloforge.mjs handoff \
+  --project ../projects/my-web-app \
+  --task TASK-0001 \
+  --from-role developer --to-role qa-security-reviewer \
+  --from-tool codex --to-tool gemini-cli \
+  --completed "Implemented integer cents pricing API" \
+  --open "Run staging rate-limit verification" \
+  --claim "Local load smoke ran cleanly" \
+  --next-action "Verify EVID-0001 and resolve open conflicts before merge."
+
+# Validate and inspect a handoff from another session or tool (detects Git HEAD drift & forged evidence)
+node scripts/geloforge.mjs handoff --project ../projects/my-web-app --inspect handoffs/HANDOFF-0001-task-0001.yaml
+```
+
+- `verified_evidence` is populated **only** from audited `evidence/EVID-*.yaml` files with `status: "verified"`, at least one `"passed"` check, zero `"failed"`/`"blocked"` checks, and `is_example !== true`.
+- Unbacked test/build assertions passed in `--completed` or `--claim` remain inside `unverified_claims` and trigger explicit `contradiction_warnings`.
+
+---
+
+## 7. Working with One AI Agent or Switching Between Agents
+
+GeloForge works identically whether you use a single coding assistant across sessions or hand work between multiple tools (such as Codex, Gemini CLI, Google Antigravity, or Claude Code):
+
+- **Single Agent (Session-to-Session Resume):**
+  1. Run `geloforge context --project <dir> --task TASK-0001 --map` and supply the packet to your assistant.
+  2. Have your assistant implement changes and run real project tests; record the verified test results in `evidence/EVID-NNNN-*.yaml`.
+  3. Close the session with `geloforge handoff --project <dir> --task TASK-0001 --from-role developer --to-role developer ...`.
+  4. In the next session, run `geloforge handoff --inspect` + `geloforge context --task TASK-0001 --map`.
+- **Switching Between Different AI Agents:**
+  1. Agent A finishes its work and writes a `HANDOFF-NNNN` record specifying `--from-tool <toolA> --to-tool <toolB>` alongside current Git `HEAD` and dirty files.
+  2. Agent B runs `geloforge validate` and `geloforge handoff --inspect` to verify schema truth, detect Git drift, distinguish verified `EVID-*` from `unverified_claims`, and compile its own fresh `geloforge context` packet from the shared Second Brain.
+
+---
+
+## 8. What Requires Manual Work & What Is Not Implemented Yet
+
+**Still Requires Manual Action:**
+- Running your project's own test commands and writing/reviewing `evidence/EVID-NNNN-*.yaml` manifests (GeloForge audits existing `EVID-*` files; it does not run arbitrary project test suites automatically).
+- Recording human approval (`approved_by` / `APPR-NNNN`), promoting proposals into canonical `brain/decisions/` or `brain/requirements/`, and resolving `CONF-NNNN` conflicts.
+- Invoking your chosen AI coding assistant CLI or IDE with compiled packets or handoffs.
+
+**Not Implemented Yet:**
+- Live multi-agent orchestrators, autonomous agent runners, or background daemons.
+- Restricted Integration Controller for automated proposal-to-canonical promotion.
+- OS/Git pre-commit write-ownership enforcement or runtime spend interceptors (`policies/` ownership rules remain documented governance only).
+- On-disk compiled context caching (`<workspace-root>/local-runtime/context-cache/`), automated `CHKPT-NNNN` checkpoint tooling, vector databases, RAG pipelines, or paid API integrations.
+
+---
+
+## 9. Validation, Benchmarks, and Updates
+
+```bash
+# Run GeloForge's full zero-dependency test suite
 npm test
 
-# Validate any generated or existing project's Second Brain
-node scripts/validate-project.mjs --project ../my-web-app
+# Validate a project's Second Brain, symlinks, references, and handoff authenticity
+node scripts/geloforge.mjs validate --project ../projects/my-web-app
+
+# Run deterministic size/recall/latency benchmarks on synthetic repositories
+npm run benchmark
 ```
 
-Validation checks YAML/frontmatter syntax, strict JSON Schemas, version compatibility, duplicate record IDs, cross-record references, `is_example` canonical guards, relative Markdown links, and path portability.
+- **Benchmark Caveat:** `npm run benchmark` evaluates deterministic document recall, `.gitignore`/secret exclusions, byte/token estimates, latency, and heap/RSS deltas on synthetic repositories. **It does not measure live LLM task accuracy or vendor API billing.**
+- **Updating GeloForge:** Inspect [CHANGELOG.md](./CHANGELOG.md), [core/compatibility.json](./core/compatibility.json), and [docs/versioning-and-upgrades.md](./docs/versioning-and-upgrades.md). Validate existing projects (`1.0` and `1.1` schemas remain supported).
 
-## 9. How to Update GeloForge
+---
 
-1. Inspect [CHANGELOG.md](./CHANGELOG.md), [core/compatibility.json](./core/compatibility.json), and [docs/versioning-and-upgrades.md](./docs/versioning-and-upgrades.md).
-2. Pull updates inside your GeloForge clone and run `npm test`.
-3. Run `node scripts/validate-project.mjs --project <path>` against existing projects to confirm compatibility or check for additive upgrade notices (`1.0` → `1.1`).
+## 10. Error Recovery, Security, Attribution, and License
 
-## 10. How to Recover from an Error
-
-- **Bootstrap failure:** The generator stages files into a sibling `.harness-stage-*` directory and validates before atomic rename; failures delete staging automatically without touching existing files.
-- **Project validation failure:** `validate-project.mjs` reports exact file paths, duplicate IDs, or broken references without modifying your project.
-- **Repository regression:** Use standard Git recovery (`git status`, `git diff`, `git revert <commit>`); see [docs/versioning-and-upgrades.md](./docs/versioning-and-upgrades.md).
-
-## 11. Limitations, Future Roadmap, and License
-
-- **Known Limitations:** [docs/known-limitations.md](./docs/known-limitations.md) (explicitly separates technically enforced protections from documented-only policies).
-- **Future Roadmap:** [docs/future-roadmap.md](./docs/future-roadmap.md) (future Context Compiler, Restricted Integration Controller, and Codex/Gemini provider adapters — all **not implemented**).
-- **Security & Contributing:** [SECURITY.md](./SECURITY.md) | [CONTRIBUTING.md](./CONTRIBUTING.md)
-- **License:** Released under the [MIT License](./LICENSE) (`Copyright (c) 2026 63L0`). Note: `"private": true` in [package.json](./package.json) prevents accidental npm registry publishing while keeping this GitHub repository open-source under MIT.
+- **Recovery:** Project scaffolding (`bootstrap-project.mjs`) stages into `.harness-stage-*` and CLI `--out` / handoff writes use `.geloforge-tmp-*` atomic temp-file renames without overwriting existing targets unless `--out` explicitly targets a safe non-handoff file. Use standard Git recovery (`git status`, `git diff`, `git revert <commit>`) for repository rollbacks.
+- **Security & Limitations:** See [SECURITY.md](./SECURITY.md), [CONTRIBUTING.md](./CONTRIBUTING.md), and [docs/known-limitations.md](./docs/known-limitations.md).
+- **Third-Party Research Attribution:** Architectural patterns in v0.3 were informed by public open-source tools documented in [docs/research/upstream-patterns-v0.3.md](./docs/research/upstream-patterns-v0.3.md) (GitHub Spec Kit `[MIT]`, BMad Method `[MIT]`, OpenHands `[MIT]`, and Aider `[Apache-2.0]` repo-map concepts re-implemented cleanly in original Node.js without copying Apache-2.0 source code and with strict `.env*`/secret blacklists).
+- **License:** Released under the [MIT License](./LICENSE) (`Copyright (c) 2026 63L0`). Note: `"private": true` in [package.json](./package.json) prevents accidental npm registry publishing while keeping this repository open-source under MIT.
