@@ -7,6 +7,7 @@ import path from "node:path";
 import { parseYaml } from "./yaml-subset.mjs";
 import { validateProject } from "./project-validator.mjs";
 import { getGitStatusScoped } from "./git-utils.mjs";
+import { resolveProjectPaths } from "./project-locator.mjs";
 
 function inspectGitState(projectDir) {
   const gs = getGitStatusScoped(projectDir);
@@ -47,11 +48,12 @@ export function getProjectStatus(rawProjectDir, options = {}) {
     }
   }
 
+  const projectPaths = resolveProjectPaths(manifest);
   let state = null;
-  const statePath = path.join(projectDir, "brain", "state", "current.yaml");
+  const statePath = path.join(projectDir, projectPaths.state);
   if (fs.existsSync(statePath)) {
     try {
-      state = parseYaml(fs.readFileSync(statePath, "utf8"), "brain/state/current.yaml");
+      state = parseYaml(fs.readFileSync(statePath, "utf8"), projectPaths.state);
     } catch {
       state = null;
     }

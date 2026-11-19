@@ -14,6 +14,7 @@ import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectStatus } from "../core/project-status.mjs";
 import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
 import { atomicWriteFile, validateOutputFilePath } from "../core/path-safety.mjs";
+import { resolveProjectDir } from "../core/project-locator.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,19 +64,19 @@ Options:
 `);
       break;
     case "validate":
-      console.log(`Usage: geloforge validate --project <path> [--json]
+      console.log(`Usage: geloforge validate [--project <path>] [--json]
 
 Options:
-  -p, --project <path>    Target project directory (or pass as positional arg)
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   --json                  Emit structured JSON output
   -h, --help              Show help
 `);
       break;
     case "context":
-      console.log(`Usage: geloforge context --project <path> (--task TASK-NNNN | --query <text>) [options]
+      console.log(`Usage: geloforge context [--project <path>] (--task TASK-NNNN | --query <text>) [options]
 
 Options:
-  -p, --project <path>    Target project directory (required)
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   -t, --task <id>         Task contract ID (e.g. TASK-0001)
   -q, --query <text>      Task description or search query
   --profile <name>        Budget profile: quick (~2000), working (~8000), deep (~16000)
@@ -91,19 +92,19 @@ Options:
 `);
       break;
     case "status":
-      console.log(`Usage: geloforge status --project <path> [--json]
+      console.log(`Usage: geloforge status [--project <path>] [--json]
 
 Options:
-  -p, --project <path>    Target project directory (or pass as positional arg)
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   --json                  Emit structured JSON output
   -h, --help              Show help
 `);
       break;
     case "handoff":
-      console.log(`Usage: geloforge handoff --project <path> [options]
+      console.log(`Usage: geloforge handoff [--project <path>] [options]
 
 Create Options:
-  -p, --project <path>         Target project directory (required)
+  -p, --project <path>         Target project directory (auto-detected from CWD if omitted)
   -t, --task <id>              Target task ID (defaults to first active task if any)
   --id <HANDOFF-NNNN>          Explicit handoff ID (auto-assigned if omitted)
   --from-role <role>           Source agent role (default: developer)
@@ -195,11 +196,9 @@ function handleValidate(args) {
     printSubHelp("validate");
     return 0;
   }
-  const target = parsed.values.project || parsed.positionals[0];
-  if (!target) {
-    throw new Error("Missing target project path (--project <path>).");
-  }
-  const result = validateProject(target);
+  const explicitTarget = parsed.values.project || parsed.positionals[0] || null;
+  const { projectDir } = resolveProjectDir({ project: explicitTarget, harnessDir: HARNESS_DIR });
+  const result = validateProject(projectDir);
   if (parsed.values.json) {
     console.log(JSON.stringify(result, null, 2));
     return result.valid ? 0 : 1;
@@ -270,8 +269,9 @@ function handleContext(args) {
     });
   }
 
+  const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
   const result = compileContext({
-    projectDir: parsed.values.project,
+    projectDir,
     taskId: parsed.values.task,
     query: parsed.values.query,
     profile: parsed.values.profile || "working",
@@ -329,11 +329,9 @@ function handleStatus(args) {
     printSubHelp("status");
     return 0;
   }
-  const target = parsed.values.project || parsed.positionals[0];
-  if (!target) {
-    throw new Error("Missing target project path (--project <path>).");
-  }
-  const status = getProjectStatus(target);
+  const explicitTarget = parsed.values.project || parsed.positionals[0] || null;
+  const { projectDir } = resolveProjectDir({ project: explicitTarget, harnessDir: HARNESS_DIR });
+  const status = getProjectStatus(projectDir);
   if (parsed.values.json) {
     console.log(JSON.stringify(status, null, 2));
     return 0;
@@ -407,9 +405,11 @@ function handleHandoff(args) {
     throw new Error(`Invalid --format "${format}". Expected "markdown", "yaml", or "json".`);
   }
 
+  const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+
   if (parsed.values.inspect) {
     const res = inspectHandoff({
-      projectDir: parsed.values.project,
+      projectDir,
       handoffPath: parsed.values.inspect,
       harnessDir: HARNESS_DIR,
     });
@@ -433,7 +433,7 @@ function handleHandoff(args) {
   }
 
   const res = createHandoff({
-    projectDir: parsed.values.project,
+    projectDir,
     taskId: parsed.values.task,
     id: parsed.values.id,
     fromRole: parsed.values["from-role"],

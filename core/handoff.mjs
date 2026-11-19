@@ -21,6 +21,7 @@ import {
 } from "./path-safety.mjs";
 import { getGitRepoInfo, getGitStatusScoped } from "./git-utils.mjs";
 import { checkRecordSchemaVersion, loadCompatibilityConfig } from "./compatibility.mjs";
+import { resolveProjectPaths } from "./project-locator.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -223,14 +224,16 @@ function loadProjectSnapshot(projectDir, harnessDir, warnings) {
     throw new Error(`Invalid brain/manifest.yaml: ${manifestRes.errors.join("; ")}`);
   }
 
-  const stateRead = readSafeProjectText(projectDir, "brain/state/current.yaml", warnings);
+  const projectPaths = resolveProjectPaths(manifest);
+
+  const stateRead = readSafeProjectText(projectDir, projectPaths.state, warnings);
   if (!stateRead) {
-    throw new Error(`Missing or unreadable brain/state/current.yaml in ${projectDir}`);
+    throw new Error(`Missing or unreadable ${projectPaths.state} in ${projectDir}`);
   }
-  const state = parseYaml(stateRead.text, "brain/state/current.yaml");
+  const state = parseYaml(stateRead.text, projectPaths.state);
   const stateRes = validateAgainstSchema(state, loadSchema(harnessDir, "project-state.schema.json"));
   if (!stateRes.valid) {
-    throw new Error(`Invalid brain/state/current.yaml: ${stateRes.errors.join("; ")}`);
+    throw new Error(`Invalid ${projectPaths.state}: ${stateRes.errors.join("; ")}`);
   }
 
   const requirements = [];
@@ -267,28 +270,28 @@ function loadProjectSnapshot(projectDir, harnessDir, warnings) {
   };
 
   const decisions = scanTypedRecords({
-    relDir: "brain/decisions",
+    relDir: projectPaths.decisions_dir,
     filenameRegex: /^ADR-\d{4}.*\.md$/i,
     parser: extractFrontmatter,
     schemaName: "adr.schema.json",
     label: "ADR",
   });
   const tasks = scanTypedRecords({
-    relDir: "tasks",
+    relDir: projectPaths.tasks_dir,
     filenameRegex: /^TASK-\d{4}.*\.ya?ml$/i,
     parser: parseYaml,
     schemaName: "task-contract.schema.json",
     label: "TASK",
   });
   const evidences = scanTypedRecords({
-    relDir: "evidence",
+    relDir: projectPaths.evidence_dir,
     filenameRegex: /^EVID-\d{4}.*\.ya?ml$/i,
     parser: parseYaml,
     schemaName: "evidence-manifest.schema.json",
     label: "EVID",
   });
   const conflicts = scanTypedRecords({
-    relDir: "brain/conflicts",
+    relDir: projectPaths.conflicts_dir,
     filenameRegex: /^CONF-\d{4}.*\.ya?ml$/i,
     parser: parseYaml,
     schemaName: "conflict-record.schema.json",
@@ -296,7 +299,7 @@ function loadProjectSnapshot(projectDir, harnessDir, warnings) {
   });
 
   const existingHandoffs = [];
-  for (const dirName of ["handoffs", "tasks"]) {
+  for (const dirName of Array.from(new Set([projectPaths.handoffs_dir, projectPaths.tasks_dir]))) {
     for (const hf of walkNonSymlinkFiles(projectDir, path.join(projectDir, dirName), (p) => /^HANDOFF-\d{4}.*\.ya?ml$/i.test(path.basename(p)), warnings)) {
       const rel = path.relative(projectDir, hf).replace(/\\/g, "/");
       const r = readSafeProjectText(projectDir, rel, warnings);
@@ -313,7 +316,7 @@ function loadProjectSnapshot(projectDir, harnessDir, warnings) {
     }
   }
 
-  return { manifest, state, requirements, decisions, tasks, evidences, conflicts, existingHandoffs };
+  return { manifest, state, projectPaths, requirements, decisions, tasks, evidences, conflicts, existingHandoffs };
 }
 
 function summarizeEvidence(ev) {
@@ -612,14 +615,15 @@ export function createHandoff(options = {}) {
 
   // Determine destination path safely (refuse symlinks, traversal, or overwrites)
   const slugPart = taskId ? taskId.toLowerCase() : deriveSlug(snap.manifest.name);
-  const defaultRel = `handoffs/${handoffId}-${slugPart}.yaml`;
+  const handoffsRelDir = snap.projectPaths.handoffs_dir;
+  const defaultRel = `${handoffsRelDir}/${handoffId}-${slugPart}.yaml`;
   let targetAbs;
   let targetRel;
   if (options.out) {
     targetAbs = validateOutputFilePath(options.out, { harnessDir, workspaceRoot });
     targetRel = path.relative(projectDir, targetAbs).replace(/\\/g, "/");
   } else {
-    const handoffsDir = path.join(projectDir, "handoffs");
+    const handoffsDir = path.join(projectDir, handoffsRelDir);
     if (fs.existsSync(handoffsDir) && fs.lstatSync(handoffsDir).isSymbolicLink()) {
       throw new Error(`Refusing symbolic link directory: ${handoffsDir}`);
     }
@@ -719,12 +723,12 @@ export function inspectHandoff(options = {}) {
   if (!schemaCheck.valid) {
     errors.push(...schemaCheck.errors);
   }
-  const canonicalTopDir = relLabel.split("/")[0];
-  if ((canonicalTopDir === "handoffs" || canonicalTopDir === "tasks") && record.is_example === true) {
+  const snap = loadProjectSnapshot(projectDir, harnessDir, warnings);
+  const canonicalHandoffPrefixes = [snap.projectPaths.handoffs_dir, snap.projectPaths.tasks_dir];
+  const inCanonicalDir = canonicalHandoffPrefixes.some((p) => relLabel === p || relLabel.startsWith(`${p}/`));
+  if (inCanonicalDir && record.is_example === true) {
     errors.push(`Example fixture (is_example: true) is forbidden in canonical handoff path ${relLabel}.`);
   }
-
-  const snap = loadProjectSnapshot(projectDir, harnessDir, warnings);
   if (record.task_id && !snap.tasks.some((t) => t.data.id === record.task_id)) {
     errors.push(`Broken reference task_id="${record.task_id}" not found in project tasks/.`);
   }
