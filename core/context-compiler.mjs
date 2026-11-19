@@ -12,8 +12,9 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseYaml, extractFrontmatter } from "./yaml-subset.mjs";
 import { validateAgainstSchema } from "./json-schema-lite.mjs";
-import { assertSafeWithinRoot, isForbiddenSecretPath } from "./path-safety.mjs";
+import { assertSafeWithinRoot, hasSecretContent, isForbiddenSecretPath } from "./path-safety.mjs";
 import { loadCompatibilityConfig, checkManifestCompatibility } from "./compatibility.mjs";
+import { buildCodebaseMap } from "./codebase-map.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,15 +36,6 @@ const STOP_WORDS = new Set([
   "other", "about", "after", "before", "between", "through", "under", "over", "using",
   "use", "used", "task", "project", "brain", "file", "files", "all", "not", "are", "but",
 ]);
-
-const SECRET_CONTENT_PATTERNS = [
-  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/,
-  /\bAKIA[0-9A-Z]{16}\b/,
-  /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
-  /\bAIza[0-9A-Za-z_-]{35}\b/,
-  /\bsk-[A-Za-z0-9_-]{20,}\b/,
-];
 
 const RECORD_SPECS = [
   { prefix: "ADR", regex: /^ADR-\d{4}.*\.md$/i, schema: "adr.schema.json", frontmatter: true },
@@ -247,12 +239,10 @@ function safeReadProjectFile(projectDir, relPath, warnings) {
   }
 
   const text = fs.readFileSync(resolved, "utf8");
-  for (const pat of SECRET_CONTENT_PATTERNS) {
-    if (pat.test(text)) {
-      const reason = `Blocked by security filter (credential-like content detected in ${normalizedRel})`;
-      warnings.push(reason);
-      return { status: "blocked", reason };
-    }
+  if (hasSecretContent(text)) {
+    const reason = `Blocked by security filter (credential-like content detected in ${normalizedRel})`;
+    warnings.push(reason);
+    return { status: "blocked", reason };
   }
 
   return {
@@ -337,6 +327,13 @@ export function compileContext(options = {}) {
     options.budget !== undefined && options.budget !== null ? Number(options.budget) : PROFILE_BUDGETS[profile];
   if (!Number.isInteger(tokenBudgetTarget) || tokenBudgetTarget < 100) {
     throw new Error(`Invalid token budget "${options.budget}". Must be an integer >= 100.`);
+  }
+  let explicitMapBudget = null;
+  if (options.mapBudget !== undefined && options.mapBudget !== null) {
+    explicitMapBudget = Number(options.mapBudget);
+    if (!Number.isInteger(explicitMapBudget) || explicitMapBudget < 100) {
+      throw new Error(`Invalid map budget "${options.mapBudget}". Must be an integer >= 100.`);
+    }
   }
 
   const referenceDate = options.referenceDate || new Date().toISOString().slice(0, 10);
@@ -869,6 +866,15 @@ export function compileContext(options = {}) {
   const explicitBudgetProvided = options.budget !== undefined && options.budget !== null;
 
   let remainingBudget = tokenBudgetTarget - actualMandatoryTokens;
+  const desiredMapBudget = includeMap
+    ? explicitMapBudget ??
+      Math.min(
+        profile === "quick" ? 450 : profile === "deep" ? 2000 : 1200,
+        Math.max(400, Math.floor(Math.max(0, remainingBudget) * 0.4))
+      )
+    : 0;
+  const mapReserve = includeMap && remainingBudget >= desiredMapBudget ? desiredMapBudget : 0;
+
   // When a quick profile overflows on mandatory records alone (without an explicit --budget override),
   // reserve a tight escalated allowance strictly for directly task-referenced records (e.g. linked ADRs/EVID).
   const autoEscalateQuickDirectCap =
@@ -881,7 +887,8 @@ export function compileContext(options = {}) {
 
   for (const cand of optionalCandidates) {
     const entryTokens = estimateTokens(renderDocFence(cand)) + 30;
-    if (remainingBudget >= entryTokens) {
+    const effectiveAvailable = cand.isDirectRef ? remainingBudget : remainingBudget - mapReserve;
+    if (effectiveAvailable >= entryTokens) {
       selectedOptional.push(cand);
       remainingBudget -= entryTokens;
     } else if (cand.isDirectRef && remainingQuickDirect >= entryTokens) {
@@ -890,7 +897,7 @@ export function compileContext(options = {}) {
     } else {
       omittedCandidates.push({
         path: cand.path,
-        reason: `Budget limit reached (${entryTokens} est. tokens needed, ${Math.max(0, remainingBudget)} remaining)`,
+        reason: `Budget limit reached (${entryTokens} est. tokens needed, ${Math.max(0, effectiveAvailable)} remaining)`,
       });
     }
   }
@@ -899,7 +906,18 @@ export function compileContext(options = {}) {
     (sum, d) => sum + estimateTokens(renderDocFence(d)),
     0
   );
-  const codebaseMapResult = null;
+  const codebaseMapResult = includeMap
+    ? buildCodebaseMap({
+        projectDir,
+        queryKeywords,
+        queryText: keywordParts.join(" "),
+        seedPaths: directRefPaths,
+        alreadyIncludedPaths: new Set([...mandatoryDocs, ...selectedOptional].map((d) => d.path)),
+        mapBudget: desiredMapBudget,
+        maxSymbolsPerFile: profile === "quick" ? 6 : profile === "deep" ? 16 : 10,
+        warnings,
+      })
+    : null;
   const codebaseMapTokens = codebaseMapResult ? codebaseMapResult.estimatedTokens : 0;
   const codebaseMapSection = codebaseMapResult ? codebaseMapResult.markdownSection : null;
 
@@ -1009,6 +1027,8 @@ export function compileContext(options = {}) {
         tokenBudgetTarget,
         excludeUnverified,
         includeMap,
+        mapBudget: codebaseMapResult ? codebaseMapResult.mapBudget : null,
+        mapSelected: codebaseMapResult ? codebaseMapResult.selectedFiles.map((f) => f.path) : [],
         sortedInputsKey,
       })
     )

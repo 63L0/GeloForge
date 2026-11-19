@@ -3,6 +3,7 @@
  * Zero external dependencies and zero hardcoded drive letters or usernames.
  */
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -252,14 +253,66 @@ export function isForbiddenSecretPath(relativePath) {
   if (segments.length === 0) {
     return false;
   }
-  if (segments.includes(".git") || segments.includes("secrets")) {
+  if (segments.includes(".git") || segments.includes("secrets") || segments.includes(".aws") || segments.includes(".ssh")) {
     return true;
   }
   const base = segments[segments.length - 1];
-  if (base === ".env" || base.startsWith(".env.")) {
+  if (
+    base === ".env" ||
+    base.startsWith(".env.") ||
+    base === ".npmrc" ||
+    base === ".pypirc" ||
+    base === ".netrc" ||
+    base === "credentials.json" ||
+    /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\..+)?$/.test(base)
+  ) {
     return true;
   }
-  return /\.(pem|key|p12|pfx|jks|keystore|mobileprovision)$/i.test(base);
+  return /\.(pem|key|p12|pfx|jks|keystore|mobileprovision|kdbx)$/i.test(base);
+}
+
+export const SECRET_CONTENT_PATTERNS = [
+  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
+  /\bAIza[0-9A-Za-z_-]{35}\b/,
+  /\bsk-[A-Za-z0-9_-]{20,}\b/,
+];
+
+export function hasSecretContent(text) {
+  if (typeof text !== "string" || text.length === 0) {
+    return false;
+  }
+  return SECRET_CONTENT_PATTERNS.some((pat) => pat.test(text));
+}
+
+export function atomicWriteFile(resolvedOutPath, content, { allowOverwrite = true, onBeforeCommit = null } = {}) {
+  const parent = path.dirname(resolvedOutPath);
+  fs.mkdirSync(parent, { recursive: true });
+  if (!allowOverwrite && fs.existsSync(resolvedOutPath)) {
+    throw new Error(`Refusing to overwrite existing file: ${resolvedOutPath}`);
+  }
+  const tempPath = path.join(parent, `.geloforge-tmp-${crypto.randomBytes(6).toString("hex")}`);
+  try {
+    fs.writeFileSync(tempPath, content, { encoding: "utf8", flag: "wx" });
+    if (typeof onBeforeCommit === "function") {
+      onBeforeCommit(tempPath);
+    }
+    if (!allowOverwrite && fs.existsSync(resolvedOutPath)) {
+      throw new Error(`Refusing to overwrite existing file: ${resolvedOutPath}`);
+    }
+    fs.renameSync(tempPath, resolvedOutPath);
+  } catch (err) {
+    try {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    } catch {
+      // Ignore cleanup failure
+    }
+    throw err;
+  }
 }
 
 export function validateOutputFilePath(rawOutPath, { harnessDir, workspaceRoot }) {

@@ -4,7 +4,6 @@
  * Commands: init, validate, context, status.
  */
 
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -13,7 +12,7 @@ import { bootstrapProject } from "./bootstrap-project.mjs";
 import { validateProject } from "../core/project-validator.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectStatus } from "../core/project-status.mjs";
-import { validateOutputFilePath } from "../core/path-safety.mjs";
+import { atomicWriteFile, validateOutputFilePath } from "../core/path-safety.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +78,9 @@ Options:
   -q, --query <text>      Task description or search query
   --profile <name>        Budget profile: quick (~2000), working (~8000), deep (~16000)
   --budget <int>          Override estimated-token budget target (>= 100)
+  --map                   Include selective deterministic codebase symbol outline map
+  --map-budget <int>      Override codebase map token budget (>= 100)
+  --exclude-unverified    Omit A5-A6, draft, and unverified records completely
   --format <type>         Output format: markdown (default) or json
   -o, --out <file>        Write output atomically to a safe file path
   --compiled-at <iso>     ISO-8601 timestamp for deterministic manifest
@@ -95,23 +97,6 @@ Options:
   -h, --help              Show help
 `);
       break;
-  }
-}
-
-function writeFileAtomically(resolvedOutPath, content) {
-  const parent = path.dirname(resolvedOutPath);
-  fs.mkdirSync(parent, { recursive: true });
-  const tempPath = path.join(parent, `.geloforge-tmp-${crypto.randomBytes(6).toString("hex")}`);
-  try {
-    fs.writeFileSync(tempPath, content, { encoding: "utf8", flag: "wx" });
-    fs.renameSync(tempPath, resolvedOutPath);
-  } catch (err) {
-    try {
-      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-    } catch {
-      // Ignore cleanup failure
-    }
-    throw err;
   }
 }
 
@@ -203,6 +188,9 @@ function handleContext(args) {
       query: { type: "string", short: "q" },
       profile: { type: "string" },
       budget: { type: "string" },
+      map: { type: "boolean", default: false },
+      "map-budget": { type: "string" },
+      "exclude-unverified": { type: "boolean", default: false },
       format: { type: "string", default: "markdown" },
       out: { type: "string", short: "o" },
       "compiled-at": { type: "string" },
@@ -229,6 +217,14 @@ function handleContext(args) {
     budgetNum = Number.parseInt(parsed.values.budget.trim(), 10);
   }
 
+  let mapBudgetNum;
+  if (parsed.values["map-budget"] !== undefined) {
+    if (!/^\d+$/.test(parsed.values["map-budget"].trim())) {
+      throw new Error(`Invalid --map-budget "${parsed.values["map-budget"]}". Must be a positive integer.`);
+    }
+    mapBudgetNum = Number.parseInt(parsed.values["map-budget"].trim(), 10);
+  }
+
   let resolvedOut = null;
   if (parsed.values.out !== undefined) {
     resolvedOut = validateOutputFilePath(parsed.values.out, {
@@ -243,6 +239,9 @@ function handleContext(args) {
     query: parsed.values.query,
     profile: parsed.values.profile || "working",
     budget: budgetNum,
+    includeMap: parsed.values.map,
+    mapBudget: mapBudgetNum,
+    excludeUnverified: parsed.values["exclude-unverified"],
     compiledAt: parsed.values["compiled-at"],
     harnessDir: HARNESS_DIR,
   });
@@ -250,7 +249,7 @@ function handleContext(args) {
   const payload = format === "json" ? `${JSON.stringify(result, null, 2)}\n` : result.markdown;
 
   if (resolvedOut) {
-    writeFileAtomically(resolvedOut, payload);
+    atomicWriteFile(resolvedOut, payload);
     if (parsed.values.json) {
       console.log(
         JSON.stringify(
