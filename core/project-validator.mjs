@@ -356,6 +356,8 @@ export function validateProject(rawProjectDir, options = {}) {
   }
 
   // 6. Markdown links, placeholder hygiene, and portability scan
+  const harnessTokenRegex =
+    /\{\{(PROJECT_NAME|PROJECT_SLUG|PROJECT_ID|PROJECT_DESCRIPTION|PROJECT_OWNER|CREATED_AT|CREATED_DATE|HARNESS_VERSION|TEMPLATE_VERSION|PROFILE_NAME|PROFILE_VERSION)\}\}/;
   const mdFiles = walkFiles(projectDir, (p) => p.endsWith(".md"));
   const linkRegex = /!?\[[^\]]*\]\(([^)]+)\)/g;
   const projectBaseResolved = path.resolve(projectDir);
@@ -363,7 +365,7 @@ export function validateProject(rawProjectDir, options = {}) {
   for (const mdFile of mdFiles) {
     const relMd = path.relative(projectDir, mdFile).replace(/\\/g, "/");
     const raw = fs.readFileSync(mdFile, "utf8");
-    if (/\{\{[A-Z0-9_]+\}\}/.test(raw)) {
+    if (harnessTokenRegex.test(raw)) {
       errors.push(`${relMd}: contains unreplaced template placeholder`);
     }
     if (/(^|[^A-Za-z0-9_])([A-Za-z]:[\\/])/.test(raw)) {
@@ -401,11 +403,11 @@ export function validateProject(rawProjectDir, options = {}) {
     }
   }
 
-  // Check YAML files for leftover placeholders too
+  // Check YAML files for leftover harness placeholders too
   const yamlFiles = walkFiles(projectDir, (p) => /\.ya?ml$/i.test(p));
   for (const yf of yamlFiles) {
     const raw = fs.readFileSync(yf, "utf8");
-    if (/\{\{[A-Z0-9_]+\}\}/.test(raw)) {
+    if (harnessTokenRegex.test(raw)) {
       const relY = path.relative(projectDir, yf).replace(/\\/g, "/");
       errors.push(`${relY}: contains unreplaced template placeholder`);
     }

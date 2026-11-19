@@ -24,7 +24,7 @@
     "approval_ref"
   ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0" },
+    "schema_version": { "type": "string", "enum": ["1.0", "1.1"] },
     "id": { "type": "string", "pattern": "^CONF-\\d{4}$" },
     "title": { "type": "string", "minLength": 3 },
     "status": { "type": "string", "enum": ["open", "under_review", "resolved", "deferred"] },

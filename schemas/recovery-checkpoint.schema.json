@@ -24,7 +24,7 @@
     "verification_evidence_ref"
   ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0" },
+    "schema_version": { "type": "string", "enum": ["1.0", "1.1"] },
     "id": { "type": "string", "pattern": "^CHKPT-\\d{4}$" },
     "project_id": { "type": "string", "pattern": "^proj-[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$" },
     "status": { "type": "string", "enum": ["created", "verified", "restored", "expired", "invalidated"] },

@@ -1,8 +1,8 @@
 # Project Profile: Automation (`{{PROFILE_NAME}}` v`{{PROFILE_VERSION}}`)
 
 - **Project:** {{PROJECT_NAME}} (`{{PROJECT_ID}}`)
-- **Second Brain Index:** [brain/INDEX.md](./INDEX.md)
-- **Constraints:** [brain/requirements/constraints.md](./requirements/constraints.md)
+- **Second Brain Index:** `brain/INDEX.md`
+- **Constraints:** `brain/requirements/constraints.md`
 
 ## Domain Conventions
 

@@ -27,7 +27,7 @@
     "tags"
   ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0" },
+    "schema_version": { "type": "string", "enum": ["1.0", "1.1"] },
     "id": { "type": "string", "pattern": "^ADR-\\d{4}$" },
     "title": { "type": "string", "minLength": 3 },
     "status": { "type": "string", "enum": ["proposed", "accepted", "deprecated", "superseded", "rejected"] },

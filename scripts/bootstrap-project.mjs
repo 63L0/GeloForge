@@ -72,7 +72,7 @@ function escapeYamlString(value) {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function renderSinglePass(rawContent, tokens, isYaml, sourceLabel) {
+export function renderSinglePass(rawContent, tokens, isYaml, sourceLabel) {
   return rawContent.replace(/\{\{([A-Z0-9_]+)\}\}/g, (_match, key) => {
     if (!Object.hasOwn(tokens, key)) {
       throw new Error(`Unsupported template placeholder "{{${key}}}" in ${sourceLabel}`);
