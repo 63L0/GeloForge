@@ -15,6 +15,9 @@ import { fileURLToPath } from "node:url";
 import { bootstrapProject } from "./bootstrap-project.mjs";
 import { compileContext, estimateTokens } from "../core/context-compiler.mjs";
 import { buildCodebaseMap } from "../core/codebase-map.mjs";
+import { compileSkillsSection, discoverSkills } from "../core/skills.mjs";
+import { lintDiscoveredSkills } from "../core/skills-lint.mjs";
+import { tokenizeKeywords } from "../core/text-utils.mjs";
 import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
 import { validateProject } from "../core/project-validator.mjs";
 
@@ -413,6 +416,7 @@ function runBenchmark() {
 
     runCodebaseMapBenchmarks(tmp);
     runHandoffBenchmark(tmp);
+    runSkillsBenchmark(tmp);
 
     console.log("\nNote: Benchmark measures deterministic file/outline/handoff metrics on synthetic repositories.");
     console.log("      Live LLM task accuracy and vendor token billing are NOT measured without real model execution.");
@@ -624,6 +628,130 @@ function runHandoffBenchmark(tmp) {
   console.log(`  - YAML size / est. tokens            : ${Buffer.byteLength(res.yaml, "utf8")} bytes (~${estimateTokens(res.yaml)} est. tokens)`);
   console.log(`  - End-to-end latency                 : ${elapsedMs.toFixed(2)} ms`);
   console.log(`  - Memory delta (heap / rss)          : ${heapDeltaMb} MB / ${rssDeltaMb} MB`);
+}
+
+function runSkillsBenchmark(tmp) {
+  console.log("\n=== GeloForge Portable Skills Progressive-Disclosure Benchmark ===");
+  const projDir = path.join(tmp, "skills-bench");
+  fs.mkdirSync(path.join(projDir, ".agents", "skills"), { recursive: true });
+  fs.mkdirSync(path.join(projDir, "proposals", "skills", "unreviewed-draft"), { recursive: true });
+
+  const relevantSkillDir = path.join(projDir, ".agents", "skills", "stripe-webhook-bugfix");
+  fs.mkdirSync(path.join(relevantSkillDir, "references"), { recursive: true });
+  fs.mkdirSync(path.join(relevantSkillDir, "templates"), { recursive: true });
+  fs.writeFileSync(
+    path.join(relevantSkillDir, "SKILL.md"),
+    `---
+name: "stripe-webhook-bugfix"
+description: "Verify webhook signatures, enforce idempotency ledgers, and capture command evidence."
+license: "MIT"
+metadata:
+  geloforge_tags: "stripe, webhook, idempotency, bugfix"
+  geloforge_triggers: "webhook, signature, retry"
+---
+
+# Stripe Webhook Bugfix
+
+## When to Use
+Use when debugging payment webhook handlers or retry idempotency regressions.
+
+## Checklist
+- Review [webhook checklist](references/webhook-checklist.md)
+- Copy [repro template](templates/repro-note.md)
+`,
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(relevantSkillDir, "references", "webhook-checklist.md"),
+    `${"# Webhook Checklist\n- Verify HMAC timestamps and replay protection.\n".repeat(40)}`,
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(relevantSkillDir, "templates", "repro-note.md"),
+    "# Repro Note\n- Event ID:\n- Signature Result:\n",
+    "utf8"
+  );
+
+  const unrelatedTopics = ["auth-oauth", "css-grid", "docker-compose", "sql-tuning", "k8s-rollout", "mobile-push", "telemetry-otel", "docs-release"];
+  for (const name of unrelatedTopics) {
+    const d = path.join(projDir, ".agents", "skills", name);
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(
+      path.join(d, "SKILL.md"),
+      `---
+name: "${name}"
+description: "Run structured workflow checks and deployment notes for ${name} subsystems."
+---
+
+# ${name}
+
+## When to Use
+Use when maintaining ${name} components.
+
+${`Detailed procedural notes for ${name} subsystem step execution.\n`.repeat(18)}
+`,
+      "utf8"
+    );
+  }
+
+  fs.writeFileSync(
+    path.join(projDir, "proposals", "skills", "unreviewed-draft", "SKILL.md"),
+    `---
+name: "unreviewed-draft"
+description: "Unreviewed draft skill matching stripe webhook testing."
+---
+
+# Draft
+## When to Use
+Never auto-trusted.
+`,
+    "utf8"
+  );
+
+  // Measure naive eager load across all discovered skill + reference markdown bytes
+  let naiveBytes = 0;
+  const countMd = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) countMd(full);
+      else if (entry.isFile() && entry.name.endsWith(".md")) naiveBytes += fs.statSync(full).size;
+    }
+  };
+  countMd(path.join(projDir, ".agents", "skills"));
+
+  const memBefore = process.memoryUsage();
+  const t0 = performance.now();
+  const disc = discoverSkills({ projectDir: projDir, globalSkillsDir: null });
+  const lint = lintDiscoveredSkills(disc, { strict: true });
+  const r1 = compileSkillsSection({
+    projectDir: projDir,
+    globalSkillsDir: null,
+    queryKeywords: tokenizeKeywords("Implement stripe webhook idempotency signature"),
+    skillsBudget: 700,
+  });
+  const elapsedMs = performance.now() - t0;
+  const memAfter = process.memoryUsage();
+  const r2 = compileSkillsSection({
+    projectDir: projDir,
+    globalSkillsDir: null,
+    queryKeywords: tokenizeKeywords("Implement stripe webhook idempotency signature"),
+    skillsBudget: 700,
+  });
+
+  const progBytes = Buffer.byteLength(r1.markdownSection, "utf8");
+  const savingsPct = Math.round(((naiveBytes - progBytes) / naiveBytes) * 100);
+  const selectedNames = r1.manifestSummary.selected_skills.map((s) => s.name);
+  const tier1RelevantHit = selectedNames.includes("stripe-webhook-bugfix") ? 1 : 0;
+  const tier1UnrelatedLeaked = selectedNames.filter((n) => n !== "stripe-webhook-bugfix").length;
+  const heapDeltaMb = ((memAfter.heapUsed - memBefore.heapUsed) / (1024 * 1024)).toFixed(2);
+  const rssDeltaMb = ((memAfter.rss - memBefore.rss) / (1024 * 1024)).toFixed(2);
+
+  console.log(`Scenario: 9 active skills (1 relevant + Tier 2 refs, 8 unrelated) + 1 quarantined draft`);
+  console.log(`  - Discovery + strict lint valid       : ${lint.passed} (${disc.activeSkills.length} active, ${r1.manifestSummary.quarantined_excluded} quarantined excluded)`);
+  console.log(`  - Tier 1 relevant recall / leakage    : ${tier1RelevantHit}/1 selected / ${tier1UnrelatedLeaked} unrelated loaded`);
+  console.log(`  - Progressive vs naive eager bytes    : ${progBytes} bytes (~${r1.estimatedTokens} est. tokens) vs ${naiveBytes} bytes (~${Math.ceil(naiveBytes / 4)} raw; ${savingsPct}% smaller)`);
+  console.log(`  - Discover+lint+select latency / det. : ${elapsedMs.toFixed(2)} ms / ${r1.markdownSection === r2.markdownSection}`);
+  console.log(`  - Memory delta (heap / rss)           : ${heapDeltaMb} MB / ${rssDeltaMb} MB`);
 }
 
 runBenchmark();
