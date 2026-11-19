@@ -507,10 +507,10 @@ function main() {
         console.error(`ERROR: Unknown command "${command}". Run "geloforge --help" for usage.`);
         process.exit(1);
     }
-    process.exit(code);
+    process.exitCode = code;
   } catch (err) {
     console.error(`ERROR: ${err.message}`);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
