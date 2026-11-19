@@ -1,5 +1,5 @@
 # Current Operational Project State
-schema_version: "1.0"
+schema_version: "1.1"
 project_id: "{{PROJECT_ID}}"
 state_revision: 0
 status: "initialized"
@@ -14,5 +14,6 @@ pending_approvals: []
 open_conflicts: []
 last_verified_evidence: null
 last_checkpoint: null
+last_completed_task: null
 known_dependencies: []
 summary: "Project Second Brain initialized from harness project-starter template; no application tasks executed yet."

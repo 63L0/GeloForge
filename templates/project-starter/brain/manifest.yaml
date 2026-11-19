@@ -1,6 +1,9 @@
 # Project Manifest
-# Template placeholders are substituted by harness/scripts/bootstrap-project.mjs
-schema_version: "1.0"
+# Template placeholders are substituted by scripts/bootstrap-project.mjs
+schema_version: "1.1"
+template_version: "{{TEMPLATE_VERSION}}"
+profile: null
+profile_version: null
 project_id: "{{PROJECT_ID}}"
 slug: "{{PROJECT_SLUG}}"
 name: "{{PROJECT_NAME}}"
@@ -28,6 +31,6 @@ paths:
   evidence_dir: "evidence"
   proposals_dir: "proposals"
 policies:
-  - "harness/policies/approval-boundaries.md"
-  - "harness/policies/memory-policy.md"
-  - "harness/policies/token-efficiency.md"
+  - "policies/approval-boundaries.md"
+  - "policies/memory-policy.md"
+  - "policies/token-efficiency.md"

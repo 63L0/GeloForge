@@ -23,7 +23,13 @@
     "policies"
   ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0" },
+    "schema_version": { "type": "string", "enum": ["1.0", "1.1"] },
+    "template_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "profile": {
+      "type": ["string", "null"],
+      "enum": ["web", "desktop", "mobile", "automation", "ai-system", null]
+    },
+    "profile_version": { "type": ["string", "null"], "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "project_id": { "type": "string", "pattern": "^proj-[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$" },
     "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$" },
     "name": { "type": "string", "minLength": 3, "maxLength": 80 },

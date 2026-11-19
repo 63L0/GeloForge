@@ -1,12 +1,12 @@
 # AGENTS.md — Project Agent Entrypoint
 
-> **Configuration Notice:** The presence of this file does **not** automatically configure Codex, Google Antigravity, or any autonomous subagent runtime. It is a concise, provider-independent entrypoint to shared project memory.
+> **Configuration Notice:** Creating this file does **not** automatically configure Codex, Google Antigravity, or any autonomous subagent runtime. It is a concise, provider-independent entrypoint to shared project memory.
 
 ## Start Here (Do Not Duplicate the Second Brain)
 
-Read the shared project Second Brain in this priority order before proposing or implementing changes:
+Read shared project memory in priority order before proposing or implementing changes:
 
-1. **Global Harness Policies (`A0`):** Read `C:\AI-Workspace\harness\policies\approval-boundaries.md`, `memory-policy.md`, and `token-efficiency.md`.
+1. **Global Harness Policies (`A0`):** Refer to `<harness-root>/policies/approval-boundaries.md`, `memory-policy.md`, and `token-efficiency.md`.
 2. **Project Navigation:** [brain/INDEX.md](./brain/INDEX.md) and [brain/manifest.yaml](./brain/manifest.yaml).
 3. **Current Operational State:** [brain/state/current.yaml](./brain/state/current.yaml) (check `active_tasks`, `blocked_tasks`, `pending_approvals`, and `open_conflicts`).
 4. **Authoritative Requirements (`A1`):** [brain/requirements/prd.md](./brain/requirements/prd.md) and [brain/requirements/constraints.md](./brain/requirements/constraints.md).

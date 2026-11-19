@@ -14,5 +14,6 @@
 | [EVID-0000-example-evidence.yaml](./EVID-0000-example-evidence.yaml) | [evidence-manifest.schema.json](../../schemas/evidence-manifest.schema.json) |
 | [APPR-0000-example-approval.yaml](./APPR-0000-example-approval.yaml) | [approval-record.schema.json](../../schemas/approval-record.schema.json) |
 | [CONF-0000-example-conflict.yaml](./CONF-0000-example-conflict.yaml) | [conflict-record.schema.json](../../schemas/conflict-record.schema.json) |
+| [INC-0000-example-incident.yaml](./INC-0000-example-incident.yaml) | [incident-record.schema.json](../../schemas/incident-record.schema.json) |
 | [CHKPT-0000-example-checkpoint.yaml](./CHKPT-0000-example-checkpoint.yaml) | [recovery-checkpoint.schema.json](../../schemas/recovery-checkpoint.schema.json) |
 | [CPACK-0000-example-context-pack.yaml](./CPACK-0000-example-context-pack.yaml) | [context-pack-manifest.schema.json](../../schemas/context-pack-manifest.schema.json) |

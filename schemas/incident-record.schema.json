@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-workspace.local/schemas/incident-record.schema.json",
+  "title": "Incident Record",
+  "description": "Optional operational/postmortem record capturing regressions, failures, or safety incidents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "status",
+    "severity",
+    "memory_layer",
+    "authority_level",
+    "detected_at",
+    "detected_by",
+    "summary",
+    "impact",
+    "root_cause",
+    "related_tasks",
+    "evidence_refs",
+    "follow_up_actions"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["1.0", "1.1"] },
+    "id": { "type": "string", "pattern": "^INC-\\d{4}$" },
+    "title": { "type": "string", "minLength": 3 },
+    "status": { "type": "string", "enum": ["open", "mitigated", "resolved", "postmortem_complete"] },
+    "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+    "memory_layer": { "type": "string", "enum": ["L2_OPERATIONAL", "L3_RESEARCH_EVIDENCE"] },
+    "authority_level": { "type": "string", "enum": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"] },
+    "detected_at": { "type": "string", "minLength": 10 },
+    "detected_by": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "impact": { "type": "string", "minLength": 1 },
+    "root_cause": { "type": ["string", "null"] },
+    "related_tasks": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^TASK-\\d{4}$" }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^EVID-\\d{4}$" }
+    },
+    "follow_up_actions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "is_example": { "type": "boolean" },
+    "example_notice": { "type": "string" }
+  }
+}

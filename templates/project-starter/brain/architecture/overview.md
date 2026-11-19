@@ -23,8 +23,8 @@ Accepted Architecture Decision Records live in [brain/decisions/](../decisions/)
 
 - `src/` — Implementation source code
 - `tests/` — Automated tests
-- `docs/` — Project documentation
+- `docs/` — Optional project documentation (created on demand)
 - `brain/` — Second Brain memory (`L1`–`L3`)
-- `tasks/` — Task lifecycle queues (`inbox`, `active`, `review`, `completed`, `blocked`)
-- `proposals/` — Pending proposals awaiting review or owner approval
-- `evidence/` — Verification evidence manifests (`EVID-NNNN`)
+- `tasks/` — Scoped task contracts and handoffs
+- `proposals/` — Optional pending proposals awaiting review or owner approval
+- `evidence/` — Optional verification evidence manifests (`EVID-NNNN`)

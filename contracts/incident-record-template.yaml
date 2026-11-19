@@ -1,0 +1,18 @@
+# Incident Record Template
+# Optional record for regressions, failures, or safety incidents (brain/incidents/INC-NNNN-<slug>.yaml).
+schema_version: "1.1"
+id: "{{INCIDENT_ID}}"
+title: "{{INCIDENT_TITLE}}"
+status: "open"
+severity: "medium"
+memory_layer: "L2_OPERATIONAL"
+authority_level: "A4"
+detected_at: "{{DETECTED_AT}}"
+detected_by: "{{DETECTED_BY}}"
+summary: "{{INCIDENT_SUMMARY}}"
+impact: "{{INCIDENT_IMPACT}}"
+root_cause: null
+related_tasks: []
+evidence_refs: []
+follow_up_actions:
+  - "{{FOLLOW_UP_ACTION_1}}"
