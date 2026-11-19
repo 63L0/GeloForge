@@ -9,6 +9,7 @@ This document maintains an honest boundary between **technically enforced capabi
 - **Second Brain Validation & Handoff Authenticity:** [project-validator.mjs](../core/project-validator.mjs) and [handoff.mjs](../core/handoff.mjs) enforce YAML/frontmatter parsing, 12 strict JSON schemas (`"additionalProperties": false`), version compatibility ([compatibility.mjs](../core/compatibility.mjs)), duplicate-ID rejection, cross-record reference integrity, symlink rejection across Second Brain directories, forged `verified_evidence` detection, and relative Markdown link checks.
 - **Deterministic Context Compilation & Selective Codebase Mapping:** [context-compiler.mjs](../core/context-compiler.mjs) and [codebase-map.mjs](../core/codebase-map.mjs) enforce mandatory `A0` policy & open `CONF-*` preservation (reporting `quick` minimum floor overruns honestly via `budget_breakdown`), `--exclude-unverified` filtering, `.gitignore`/secret/binary exclusions, bounded 2-tier repo scanning, and escaped document delimiters.
 - **Portable Agent Skills & Static Security Linting:** [skills.mjs](../core/skills.mjs) and [skills-lint.mjs](../core/skills-lint.mjs) discover `.agents/skills/` and `~/.geloforge/skills/` (`GELOFORGE_SKILLS_DIR`) on demand, enforce `agentskills.io` frontmatter & relative link checks, refuse symlinks/traversal/secrets fail-closed, quarantine `<proposalsDir>/skills/`, never auto-execute `scripts/`, and pack Tier 0/1/2 skills deterministically under `--skills-budget`.
+- **Evidence-Backed Adaptive Skills Lifecycle ([skills-lifecycle.mjs](../core/skills-lifecycle.mjs)):** Supports `skills draft`, `propose-update`, `keygen`, `sign` (Ed25519 bound to content/base/evidence digests), `promote` (requiring Ed25519 `APPR-NNNN`, `--mode pr-branch`, or explicit TTY confirmation while rejecting self-reported `--approved-by`), `history`, and authorized `rollback` from SHA-256-verified secret-free snapshots. Note: `--mode pr-branch` and in-repo `.geloforge/approvers.yaml` depend on repository branch protection/`CODEOWNERS` (or external `--public-key` pinning), and `--interactive` is a local convenience safeguard only.
 - **Project-Scoped Git State ([git-utils.mjs](../core/git-utils.mjs)):** Prevents sibling modified files in parent Git repositories from leaking into nested subproject status or handoffs, and supports unborn `HEAD` and non-Git projects cleanly.
 - **Zero-Network / Zero-Dependency Guarantees:** Static and runtime tests verify zero third-party packages and zero network module usage in `core/` and `scripts/`.
 
@@ -20,10 +21,10 @@ This document maintains an honest boundary between **technically enforced capabi
 - **Skill Selection Ranking vs. Semantic Understanding:** `context --skills` uses deterministic keyword, metadata (`geloforge_tags`/`geloforge_triggers`), and explicit `--skill` pin scoring (`deterministic:metadata-keyword-pin`) — **not** AI semantic reasoning or embedding similarity.
 
 ## 3. Not Implemented
-- Restricted Integration Controller, automated proposal/skill promotion (`APPR-*` approval gates), and skill rollback ledger (planned for v0.4 PR 3).
+- Automated promotion of non-skill `proposals/` into canonical `brain/decisions/` or `brain/requirements/`, background self-modifying skill daemons, and remote skill marketplaces.
 - On-disk compiled packet caching (`<workspace-root>/local-runtime/context-cache/`).
 - Operational Codex CLI, Gemini CLI, or multi-agent subagent runners.
-- Automated `CHKPT-NNNN` checkpoint recovery, worktree orchestration, `evaluations/`, remote skill marketplace, vector databases, RAG services, or paid API integrations.
+- Automated `CHKPT-NNNN` checkpoint recovery, worktree orchestration, `evaluations/`, vector databases, RAG services, or paid API integrations.
 - Automated npm registry publishing (`package.json` sets `"private": true` intentionally; source code is MIT-licensed via [LICENSE](../LICENSE)).
 
 ## 4. Technical Scope & Platform Limits
