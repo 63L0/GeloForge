@@ -6,7 +6,7 @@ The foundation tracks four distinct version axes rather than relying on a single
 
 | Axis | Location | Current Value | Purpose |
 | :--- | :--- | :--- | :--- |
-| **Harness Version** | [VERSION](../VERSION), [package.json](../package.json), [compatibility.json](../core/compatibility.json) | `0.4.0` | Tracks harness tooling, validator, and policy releases |
+| **Harness Version** | [VERSION](../VERSION), [package.json](../package.json), [compatibility.json](../core/compatibility.json) | `0.5.0` | Tracks harness tooling, validator, and policy releases |
 | **Template Version** | [compatibility.json](../core/compatibility.json), project `brain/manifest.yaml` | `1.0.0` | Tracks the structural layout of `templates/project-starter/` |
 | **Schema Version** | Every record's `schema_version` (`1.0`, `1.1`) | `1.1` (default) | Tracks machine-validated YAML/JSON contract structure |
 | **Profile Version** | `templates/profiles/<name>/profile.json`, project `brain/manifest.yaml` | `1.0.0` | Tracks optional domain overlay (`web`, `desktop`, etc.) |
@@ -38,4 +38,4 @@ The foundation tracks four distinct version axes rather than relying on a single
 
 - **Harness Rollback:** Because `<harness-root>` is an isolated Git repository, revert unwanted changes locally using `git revert <commit>` or check out a known commit (`git log --oneline`) without touching `projects/` or `local-runtime/`.
 - **Bootstrap Failure Recovery:** `bootstrap-project.mjs` writes to a temporary sibling `.harness-stage-*` folder, runs `validateProject()`, and atomically renames only upon success. Any error cleans up staging and leaves any pre-existing target directory untouched.
-- **Runtime Checkpoints:** Automated `CHKPT-NNNN` checkpoint recovery for live agent tasks is **NOT IMPLEMENTED** in Phase 1.
+- **Session Recovery Checkpoints (v0.5):** `geloforge checkpoint create|list|show` records schema-valid `CHKPT-NNNN` resume instructions, and `geloforge context --from-diff` helps rebuild working context. GeloForge does **not** automatically restore an AI IDE's chat session or independently verify the identity of a resumed agent. Multi-file state changes use a recovery journal on the next locked operation; this does not guarantee power-loss durability.
