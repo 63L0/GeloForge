@@ -2,9 +2,9 @@
 
 All notable changes to GeloForge are recorded in this file.
 
-## [0.4.0] — Unreleased
+## [0.4.0] — 2026-11-20
 
-This release adds safer project onboarding, portable Agent Skills interoperability, and an evidence-backed skill improvement lifecycle. The release is being prepared; the final tag and GitHub Release have **not** been published.
+This release adds safer project onboarding, portable Agent Skills interoperability, and an evidence-backed skill improvement lifecycle. GitHub source release; npm registry publication is intentionally disabled by `"private": true` in `package.json`.
 
 ### Added
 - **Existing-project onboarding and project-local CLI discovery (PR #3):** `geloforge adopt` works with existing repositories; the CLI discovers project roots from the current working directory.
