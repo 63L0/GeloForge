@@ -292,23 +292,10 @@ export function assertSafeWithinRoot(baseDir, relativeOrTargetPath) {
   let cursor = baseResolved;
   for (const seg of segments) {
     cursor = path.join(cursor, seg);
-    if (fs.existsSync(cursor)) {
-      const stat = fs.lstatSync(cursor);
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Symbolic links are not allowed inside project paths: ${relativeOrTargetPath}`);
-      }
-    } else {
-      try {
-        const brokenStat = fs.lstatSync(cursor);
-        if (brokenStat.isSymbolicLink()) {
-          throw new Error(`Symbolic links are not allowed inside project paths: ${relativeOrTargetPath}`);
-        }
-      } catch (err) {
-        if (err.code !== "ENOENT") {
-          throw err;
-        }
-      }
-      break;
+    const stat = fs.lstatSync(cursor, { throwIfNoEntry: false });
+    if (!stat) break;
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Symbolic links are not allowed inside project paths: ${relativeOrTargetPath}`);
     }
   }
   return resolved;

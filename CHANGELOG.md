@@ -8,6 +8,7 @@ All notable changes to GeloForge are recorded in this file.
 - Add `geloforge mcp init` for Cursor, VS Code, Claude Code, and Gemini CLI project setup and workflow instructions.
 - Add `geloforge verify` to run a check, record evidence, save a checkpoint, and complete a verified task.
 - Scope placeholder validation to GeloForge project records and guides so existing application templates can survive adoption.
+- Handle lockfiles removed by a concurrent process during project path validation.
 - Add a terminal replay and reproducible dogfooding run on GeloForge's own Git worktree.
 
 ## [0.5.0] — 2026-11-20
