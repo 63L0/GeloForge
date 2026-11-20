@@ -13,10 +13,21 @@ import { bootstrapProject } from "./bootstrap-project.mjs";
 import { adoptProject } from "../core/adopt-project.mjs";
 import { validateProject } from "../core/project-validator.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
-import { getProjectStatus } from "../core/project-status.mjs";
+import { getProjectStatus, getProjectRecommendations } from "../core/project-status.mjs";
 import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
-import { createTask, listTasks, getTask } from "../core/task-manager.mjs";
+import {
+  claimTaskLease,
+  completeTask,
+  createTask,
+  getTask,
+  listTaskLeases,
+  listTasks,
+  releaseTaskLease,
+  updateTask,
+} from "../core/task-manager.mjs";
 import { captureEvidence } from "../core/evidence-capture.mjs";
+import { createCheckpoint, getCheckpoint, listCheckpoints } from "../core/checkpoint.mjs";
+import { startMcpStdioServer } from "../core/mcp-server.mjs";
 import {
   discoverSkills,
   resolveProjectForSkills,
@@ -52,13 +63,16 @@ Usage:
 Commands:
   init       Initialize a new project Second Brain (supports profiles & --dry-run)
   adopt      Add GeloForge Second Brain to an existing project without overwriting files
-  task       Create, list, or inspect scoped task contracts (TASK-NNNN)
+  task       Create, update, lease, complete, list, or inspect scoped task contracts (TASK-NNNN)
   evidence   Run an explicit command (shell: false) and record EVID-NNNN manifest
   validate   Validate a project's schemas, compatibility, IDs, references, and links
   context    Compile a deterministic, trust-tiered context packet for a task or query
   skills     Discover, inspect, validate, and security-lint portable SKILL.md packages
   handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
-  status     Inspect project health, operational task state, and Git status
+  checkpoint Create, list, or inspect session recovery checkpoints (CHKPT-NNNN)
+  recommend  Show ranked Human-in-the-Loop Co-Pilot recommendations & approval inbox
+  status     Inspect project health, operational task state, leases, and Git status
+  mcp        Start zero-dependency JSON-RPC 2.0 MCP server over stdio
 
 Global Options:
   -h, --help     Show help (use "geloforge <command> --help" for command options)
@@ -115,12 +129,14 @@ Options:
 `);
       break;
     case "context":
-      console.log(`Usage: geloforge context [--project <path>] (--task TASK-NNNN | --query <text>) [options]
+      console.log(`Usage: geloforge context [--project <path>] (--task TASK-NNNN | --query <text> | --from-diff) [options]
 
 Options:
   -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   -t, --task <id>         Task contract ID (e.g. TASK-0001)
   -q, --query <text>      Task description or search query
+  --from-diff             Focus context packet on current scoped Git working-tree changes
+  --include-completed     Include completed/cancelled/superseded tasks (pruned by default)
   --profile <name>        Budget profile: quick (~4000), working (~8000), deep (~16000)
   --budget <int>          Override estimated-token budget target (>= 100)
   --map                   Include selective deterministic codebase symbol outline map
@@ -142,6 +158,50 @@ Options:
 Options:
   -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   --json                  Emit structured JSON output
+  -h, --help              Show help
+`);
+      break;
+    case "recommend":
+      console.log(`Usage: geloforge recommend [--project <path>] [--json]
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+`);
+      break;
+    case "checkpoint":
+      console.log(`Usage: geloforge checkpoint <create|list|show> [options]
+
+Subcommands:
+  create                  Capture a CHKPT-NNNN session recovery checkpoint
+  list                    List recovery checkpoints ordered newest first
+  show                    Inspect a specific checkpoint (or latest if ID omitted)
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  --summary <text>        Progress summary for resume instructions ('create')
+  --resume <text>         Explicit resume instructions override ('create')
+  --evidence <EVID-NNNN>  Link verified evidence ID ('create')
+  --created-by <name>     Creator label ('create')
+  --role <role>           Agent role fallback creator ('create')
+  --status <status>       Checkpoint status (filter for 'list', override for 'create')
+  --id <CHKPT-NNNN>       Explicit checkpoint ID ('create' or 'show')
+  --created-at <iso>      ISO-8601 timestamp override ('create')
+  --dry-run               Preview checkpoint without writing disk ('create')
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+`);
+      break;
+    case "mcp":
+      console.log(`Usage: geloforge mcp [serve] [--project <path>]
+
+Runs GeloForge's zero-dependency JSON-RPC 2.0 MCP server on stdin/stdout.
+Supports status, recommend, context, task, checkpoint, and read/draft/lint skill tools;
+privileged skill promote/rollback/keygen/sign actions remain strictly refused over MCP.
+
+Options:
+  -p, --project <path>    Default project directory when tool call omits 'project'
   -h, --help              Show help
 `);
       break;
@@ -178,39 +238,49 @@ Inspect Options:
 `);
       break;
     case "task":
-      console.log(`Usage: geloforge task <new|list|show> [options]
+      console.log(`Usage: geloforge task <new|update|done|claim|release|leases|list|show> [options]
 
 Subcommands:
-  new    Create a new schema-valid TASK-NNNN contract
-  list   List tasks under configured tasks_dir
-  show   Show details for a specific TASK-NNNN contract
+  new      Create a new schema-valid TASK-NNNN contract
+  update   Update task status/priority/role cleanly in state
+  done     Mark task completed, update state, and release active lease
+  claim    Claim a cooperative multi-IDE task/file-scope lease
+  release  Release an active task lease
+  leases   List active (and optionally expired) multi-IDE leases
+  list     List tasks under configured tasks_dir
+  show     Show details for a specific TASK-NNNN contract
 
 Common Options:
   -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
   --json                  Emit structured JSON output
   -h, --help              Show help
 
-'task new' Options:
-  --title <string>        Task title (required, >= 3 chars)
-  --objective <string>    Detailed task objective (defaults to title)
-  --id <TASK-NNNN>        Explicit task ID (auto-assigned if omitted)
+'task new' / 'task update' / 'task done' Options:
+  --title <string>        Task title (required for 'new', >= 3 chars)
+  --objective <string>    Detailed task objective ('new')
+  --id <TASK-NNNN>        Explicit task ID ('new')
+  -t, --task <TASK-NNNN>  Target task ID ('update'/'done'/'show'/'claim'/'release')
   --priority <level>      low, medium (default), high, or critical
-  --role <role>           orchestrator, researcher, software-architect, developer (default), qa-security-reviewer
+  --role <role>           orchestrator, researcher, software-architect, developer, qa-security-reviewer
   --budget <profile>      quick, working (default), or deep
-  --status <status>       inbox, ready (default), active (default with --activate), blocked, in_review
+  --status <status>       inbox, ready, active, blocked, in_review, completed, cancelled
   --activate              Add task to active_tasks in operational state
-  --criteria <text>       Acceptance criterion (repeatable)
-  --scope-in <text>       In-scope item (repeatable)
-  --scope-out <text>      Out-of-scope item (repeatable)
-  --input <relpath>       Required project input file path (repeatable)
-  --dep <TASK-NNNN>       Dependency task ID (repeatable)
-  --created-by <name>     Author label (default: manifest owner)
+  --criteria <text>       Acceptance criterion ('new', repeatable)
+  --scope-in <text>       In-scope item ('new', repeatable)
+  --scope-out <text>      Out-of-scope item ('new', repeatable)
+  --input <relpath>       Required project input file path ('new', repeatable)
+  --dep <TASK-NNNN>       Dependency task ID ('new', repeatable)
+  --created-by <name>     Author label ('new')
   --created-at <iso>      ISO-8601 timestamp override
-  --dry-run               Preview generated task without writing disk
+  --dry-run               Preview changes without writing disk
 
-'task list' / 'task show' Options:
-  --status <status>       Filter tasks in 'list'
-  -t, --task <TASK-NNNN>  Target task ID for 'show' (or pass as positional arg)
+'task claim' / 'task release' / 'task leases' Options:
+  --tool <name>           IDE / agent tool label (e.g. "codex", "antigravity")
+  --session <id>          Session identifier label
+  --scope <path-prefix>   Owned file/dir scope (repeatable; defaults to task scope_in)
+  --ttl <minutes>         Lease TTL in minutes (1-1440, default: 120)
+  --force                 Override colliding active lease or reactivate completed check
+  --include-expired       Include expired leases in 'leases' output
 `);
       break;
     case "evidence":
@@ -422,6 +492,8 @@ function handleContext(args) {
       skill: { type: "string", multiple: true },
       "skills-budget": { type: "string" },
       "exclude-unverified": { type: "boolean", default: false },
+      "from-diff": { type: "boolean", default: false },
+      "include-completed": { type: "boolean", default: false },
       format: { type: "string", default: "markdown" },
       out: { type: "string", short: "o" },
       "compiled-at": { type: "string" },
@@ -493,6 +565,8 @@ function handleContext(args) {
     pinnedSkills,
     skillsBudget: skillsBudgetNum,
     excludeUnverified: parsed.values["exclude-unverified"],
+    fromDiff: parsed.values["from-diff"],
+    includeCompleted: parsed.values["include-completed"],
     compiledAt: parsed.values["compiled-at"],
     harnessDir: HARNESS_DIR,
   });
@@ -570,11 +644,222 @@ function handleStatus(args) {
     }`
   );
   console.log(`Counts         : records=${status.counts.records} | markdown=${status.counts.markdownFiles} | errors=${status.counts.errors} | warnings=${status.counts.warnings}`);
+  if ((status.activeLeases || []).length > 0) {
+    console.log(
+      `Leases         : ${status.activeLeases.map((l) => `${l.task_id} (${l.tool || "unknown"}/${l.role || "unassigned"})`).join(", ")}`
+    );
+  }
+  if ((status.pendingApprovalsInbox || []).length > 0) {
+    console.log(
+      `Approval Inbox : ${status.pendingApprovalsInbox.length} item(s) — ${status.pendingApprovalsInbox.map((i) => `${i.kind}:${i.id}`).join(", ")}`
+    );
+  }
+  if (Array.isArray(status.recommendations) && status.recommendations.length > 0) {
+    const topRec = status.recommendations[0];
+    console.log(`Recommendation : [${topRec.priority}] ${topRec.title} -> ${topRec.command}`);
+  }
   if (Array.isArray(status.nextSteps) && status.nextSteps.length > 0) {
     console.log(`Next Step      : ${status.nextSteps[0]}`);
   }
   for (const w of status.warnings) console.log(`  - [WARN] ${w}`);
   for (const e of status.errors) console.error(`  - [ERR] ${e}`);
+  return 0;
+}
+
+function handleRecommend(args) {
+  const parsed = parseArgs({
+    args,
+    options: {
+      project: { type: "string", short: "p" },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+  if (parsed.values.help) {
+    printSubHelp("recommend");
+    return 0;
+  }
+  const explicitTarget = parsed.values.project || parsed.positionals[0] || null;
+  const { projectDir } = resolveProjectDir({ project: explicitTarget, harnessDir: HARNESS_DIR });
+  const rec = getProjectRecommendations(projectDir);
+  if (parsed.values.json) {
+    console.log(JSON.stringify(rec, null, 2));
+    return 0;
+  }
+  console.log(`Co-Pilot Recommend : ${rec.project ? `${rec.project.name} (${rec.project.id})` : rec.projectDir}`);
+  console.log(
+    `Approval Inbox     : ${rec.pendingApprovalsInbox.length} pending item(s) | Active Leases: ${rec.activeLeases.length}`
+  );
+  if (rec.pendingApprovalsInbox.length > 0) {
+    console.log("\nPending Human Approvals:");
+    for (const item of rec.pendingApprovalsInbox) {
+      console.log(`  - [${item.kind}] ${item.id} (${item.status}) — ${item.title}`);
+      console.log(`    Action: ${item.approveHint}`);
+    }
+  }
+  if (rec.recommendations.length > 0) {
+    console.log("\nRanked Next Actions:");
+    for (const r of rec.recommendations) {
+      const gate = r.requiresHumanApproval ? " [HUMAN-APPROVAL]" : "";
+      console.log(`  - [${r.priority.toUpperCase()}${gate}] ${r.title}`);
+      console.log(`    Why    : ${r.reason}`);
+      if (Array.isArray(r.options) && r.options.length > 0) {
+        console.log(`    Options: ${r.options.join(" | ")}`);
+      }
+      console.log(`    Run    : ${r.command}`);
+    }
+  } else {
+    console.log("  (no pending actions)");
+  }
+  return 0;
+}
+
+function handleCheckpoint(args) {
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+    printSubHelp("checkpoint");
+    return 0;
+  }
+  const [subcmd, ...rest] = args;
+  if (subcmd === "create") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        summary: { type: "string" },
+        resume: { type: "string" },
+        evidence: { type: "string" },
+        "created-by": { type: "string" },
+        role: { type: "string" },
+        status: { type: "string" },
+        id: { type: "string" },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: false,
+    });
+    if (parsed.values.help) {
+      printSubHelp("checkpoint");
+      return 0;
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = createCheckpoint({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      summary: parsed.values.summary,
+      resumeInstructions: parsed.values.resume,
+      evidenceRef: parsed.values.evidence,
+      createdBy: parsed.values["created-by"],
+      role: parsed.values.role,
+      status: parsed.values.status,
+      id: parsed.values.id,
+      createdAt: parsed.values["created-at"],
+      dryRun: parsed.values["dry-run"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(res.dryRun ? `DRY RUN — Checkpoint ${res.checkpointId} not written.` : `Checkpoint created: ${res.recordPath}`);
+    console.log(`ID / State Rev : ${res.checkpointId} | state_revision=${res.stateRevision} | branch=${res.record.git_branch}`);
+    console.log(`Resume         : ${res.record.resume_instructions}`);
+    return 0;
+  }
+
+  if (subcmd === "list") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        status: { type: "string" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: false,
+    });
+    if (parsed.values.help) {
+      printSubHelp("checkpoint");
+      return 0;
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = listCheckpoints({ projectDir, status: parsed.values.status, harnessDir: HARNESS_DIR });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Checkpoints (${res.count}) | latest=${res.lastCheckpointId || "none"}:`);
+    for (const c of res.checkpoints) {
+      console.log(`  - ${c.id} [${c.status}] branch=${c.git_branch} rev=${c.state_revision} — ${c.resume_instructions}`);
+    }
+    return 0;
+  }
+
+  if (subcmd === "show") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        id: { type: "string" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("checkpoint");
+      return 0;
+    }
+    const targetId = parsed.values.id || parsed.positionals[0] || null;
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = getCheckpoint({ projectDir, checkpointId: targetId, harnessDir: HARNESS_DIR });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Checkpoint : ${res.checkpointId} (${res.record.status})${res.isLastCheckpoint ? " [LATEST]" : ""}`);
+    console.log(`File       : ${res.recordPath}`);
+    console.log(`Git        : ${res.record.git_branch} @ ${res.record.git_commit} (clean=${res.record.working_tree_clean})`);
+    console.log(`Active     : ${(res.record.active_tasks || []).join(", ") || "(none)"}`);
+    console.log(`Resume     : ${res.record.resume_instructions}`);
+    return 0;
+  }
+
+  throw new Error(`Unknown checkpoint subcommand "${subcmd}". Expected: create, list, or show.`);
+}
+
+async function handleMcp(args) {
+  let effectiveArgs = args;
+  if (args.length > 0 && (args[0] === "-h" || args[0] === "--help")) {
+    printSubHelp("mcp");
+    return 0;
+  }
+  if (args.length > 0 && args[0] === "serve") {
+    effectiveArgs = args.slice(1);
+  }
+  const parsed = parseArgs({
+    args: effectiveArgs,
+    options: {
+      project: { type: "string", short: "p" },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (parsed.values.help) {
+    printSubHelp("mcp");
+    return 0;
+  }
+  let defaultProjectDir = null;
+  if (parsed.values.project) {
+    defaultProjectDir = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR }).projectDir;
+  }
+  await startMcpStdioServer({ defaultProjectDir, harnessDir: HARNESS_DIR });
   return 0;
 }
 
@@ -829,7 +1114,209 @@ function handleTask(args) {
     return 0;
   }
 
-  throw new Error(`Unknown task subcommand "${subcmd}". Expected: new, list, or show.`);
+  if (subcmd === "update" || subcmd === "done") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        task: { type: "string", short: "t" },
+        id: { type: "string" },
+        status: { type: "string" },
+        priority: { type: "string" },
+        role: { type: "string" },
+        activate: { type: "boolean", default: false },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const targetId = parsed.values.task || parsed.values.id || parsed.positionals[0];
+    if (!targetId) {
+      throw new Error(`Missing task ID for 'geloforge task ${subcmd} <TASK-NNNN>'.`);
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res =
+      subcmd === "done"
+        ? completeTask({
+            projectDir,
+            harnessDir: HARNESS_DIR,
+            taskId: targetId,
+            updatedAt: parsed.values["created-at"],
+            dryRun: parsed.values["dry-run"],
+          })
+        : updateTask({
+            projectDir,
+            harnessDir: HARNESS_DIR,
+            taskId: targetId,
+            status: parsed.values.status,
+            priority: parsed.values.priority,
+            assignedRole: parsed.values.role,
+            activate: parsed.values.activate,
+            updatedAt: parsed.values["created-at"],
+            dryRun: parsed.values["dry-run"],
+          });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(
+      res.dryRun
+        ? `DRY RUN — Task ${res.id} not updated.`
+        : `Task updated: ${res.id} (${res.previousStatus} -> ${res.status}) | state_revision=${res.stateRevision}`
+    );
+    return 0;
+  }
+
+  if (subcmd === "claim") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        task: { type: "string", short: "t" },
+        id: { type: "string" },
+        role: { type: "string" },
+        tool: { type: "string" },
+        session: { type: "string" },
+        scope: { type: "string", multiple: true },
+        ttl: { type: "string" },
+        force: { type: "boolean", default: false },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const targetId = parsed.values.task || parsed.values.id || parsed.positionals[0];
+    if (!targetId) {
+      throw new Error("Missing task ID for 'geloforge task claim <TASK-NNNN>'.");
+    }
+    let ttlMinutes;
+    if (parsed.values.ttl !== undefined) {
+      if (!/^\d+$/.test(parsed.values.ttl.trim())) {
+        throw new Error(`Invalid --ttl "${parsed.values.ttl}". Must be a positive integer.`);
+      }
+      ttlMinutes = Number.parseInt(parsed.values.ttl.trim(), 10);
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = claimTaskLease({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      taskId: targetId,
+      role: parsed.values.role,
+      tool: parsed.values.tool,
+      sessionId: parsed.values.session,
+      scopes: parsed.values.scope,
+      ttlMinutes,
+      force: parsed.values.force,
+      createdAt: parsed.values["created-at"],
+      dryRun: parsed.values["dry-run"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(res.dryRun ? `DRY RUN — Lease for ${res.lease.task_id} not written.` : `Lease claimed: ${res.lease.task_id} (${res.leasesRelPath})`);
+    console.log(`Tool / Role : ${res.lease.tool} / ${res.lease.role} | expires=${res.lease.expires_at}`);
+    console.log(`Scopes      : ${(res.lease.claimed_scope || []).join(", ") || "(none)"}`);
+    return 0;
+  }
+
+  if (subcmd === "release") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        task: { type: "string", short: "t" },
+        id: { type: "string" },
+        "created-at": { type: "string" },
+        "dry-run": { type: "boolean", default: false },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const targetId = parsed.values.task || parsed.values.id || parsed.positionals[0];
+    if (!targetId) {
+      throw new Error("Missing task ID for 'geloforge task release <TASK-NNNN>'.");
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = releaseTaskLease({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      taskId: targetId,
+      nowIso: parsed.values["created-at"],
+      dryRun: parsed.values["dry-run"],
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(
+      res.dryRun
+        ? `DRY RUN — Release check for ${res.taskId}.`
+        : res.released
+          ? `Lease released: ${res.taskId}`
+          : `No active lease found for ${res.taskId}`
+    );
+    return 0;
+  }
+
+  if (subcmd === "leases") {
+    const parsed = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string", short: "p" },
+        "include-expired": { type: "boolean", default: false },
+        "created-at": { type: "string" },
+        json: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+      strict: true,
+      allowPositionals: false,
+    });
+    if (parsed.values.help) {
+      printSubHelp("task");
+      return 0;
+    }
+    const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+    const res = listTaskLeases({
+      projectDir,
+      includeExpired: parsed.values["include-expired"],
+      nowIso: parsed.values["created-at"],
+      harnessDir: HARNESS_DIR,
+    });
+    if (parsed.values.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+    console.log(`Task Leases (${res.activeLeases.length} active, ${res.expiredLeases.length} expired):`);
+    for (const l of res.leases) {
+      console.log(
+        `  - ${l.task_id} [${l.tool}/${l.role}] expires=${l.expires_at} scopes=[${(l.claimed_scope || []).join(", ")}]`
+      );
+    }
+    return 0;
+  }
+
+  throw new Error(`Unknown task subcommand "${subcmd}". Expected: new, update, done, claim, release, leases, list, or show.`);
 }
 
 function handleEvidence(args) {
@@ -1626,8 +2113,17 @@ async function main() {
       case "handoff":
         code = handleHandoff(rest);
         break;
+      case "checkpoint":
+        code = handleCheckpoint(rest);
+        break;
+      case "recommend":
+        code = handleRecommend(rest);
+        break;
       case "status":
         code = handleStatus(rest);
+        break;
+      case "mcp":
+        code = await handleMcp(rest);
         break;
       default:
         console.error(`ERROR: Unknown command "${command}". Run "geloforge --help" for usage.`);

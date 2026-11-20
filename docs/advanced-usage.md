@@ -194,3 +194,51 @@ npm run benchmark
 - **Security & Limitations:** See [SECURITY.md](../SECURITY.md), [CONTRIBUTING.md](../CONTRIBUTING.md), and [docs/known-limitations.md](../docs/known-limitations.md).
 - **Third-Party Research Attribution:** Architectural patterns in v0.3 and v0.4 were informed by public open-source tools documented in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) and [docs/research/upstream-patterns-v0.3.md](../docs/research/upstream-patterns-v0.3.md) (NousResearch Hermes Agent `[MIT]`, `agentskills.io`, GitHub Spec Kit `[MIT]`, BMad Method `[MIT]`, OpenHands `[MIT]`, and Aider `[Apache-2.0]` concepts re-implemented cleanly in original zero-dependency Node.js without copying external source files).
 - **License:** Released under the [MIT License](../LICENSE) (`Copyright (c) 2026 63L0`). Note: `"private": true` in [package.json](../package.json) prevents accidental npm registry publishing while keeping this repository open-source under MIT.
+
+## v0.5 Human-in-the-Loop Co-Pilot, Anti-Context-Rot & Multi-IDE Coordination
+
+GeloForge v0.5 adds practical Co-Pilot coordination and short-session workflows without changing Second Brain determinism or security boundaries:
+
+### 1. Human-in-the-Loop Approval Inbox & Recommendations
+```bash
+node scripts/geloforge.mjs recommend
+node scripts/geloforge.mjs recommend --json
+```
+- Scans pending skill drafts/updates (`proposals/skills/.proposals/*.yaml`), pending `APPR-*.yaml` records, proposed `ADR-*.md` frontmatter, open `CONF-*` conflicts, and overlapping multi-IDE leases.
+- Ranks recommended next actions with explicit trade-off options while preserving human authorization gates.
+
+### 2. Task Completion, Reactivation & Multi-IDE Cooperative Leases
+```bash
+# Mark a task completed (updates state.last_completed_task and releases its lease)
+node scripts/geloforge.mjs task done --task TASK-0001
+
+# Update/reactivate a task cleanly
+node scripts/geloforge.mjs task update --task TASK-0001 --status active --activate
+
+# Claim a cooperative lease across IDEs/tools (blocks overlapping scopes unless --force)
+node scripts/geloforge.mjs task claim --task TASK-0002 --tool gemini-ide --role developer --scope "src/auth" --ttl 120
+node scripts/geloforge.mjs task leases
+node scripts/geloforge.mjs task release --task TASK-0002
+```
+Active peer leases are automatically surfaced inside compiled `context` packets as an operational collision guard.
+
+### 3. Anti-Context-Rot Context Compilation & Checkpoints
+```bash
+# Focus context on current Git diff changes (completed tasks pruned automatically)
+node scripts/geloforge.mjs context --from-diff --map --profile quick
+
+# Include historical completed tasks only when explicitly needed
+node scripts/geloforge.mjs context --query "billing" --include-completed
+
+# Save/inspect a schema-valid CHKPT-NNNN session checkpoint before rotating sessions
+node scripts/geloforge.mjs checkpoint create --summary "Core auth verified; ready for QA review"
+node scripts/geloforge.mjs checkpoint list
+node scripts/geloforge.mjs checkpoint show CHKPT-0001
+```
+See [schemas/recovery-checkpoint.schema.json](../schemas/recovery-checkpoint.schema.json) for checkpoint fields and [SECURITY.md](../SECURITY.md) for boundaries.
+
+### 4. Zero-Dependency MCP Server (`geloforge mcp`)
+```bash
+node scripts/geloforge.mjs mcp --project /path/to/your/project
+```
+Exposes `geloforge_status`, `geloforge_recommend`, `geloforge_context`, `geloforge_task`, `geloforge_checkpoint`, and read/lint/draft `geloforge_skills` tools over JSON-RPC 2.0 stdin/stdout (supporting both newline-delimited JSON and `Content-Length:` LSP framing). Privileged skill actions (`promote`, `rollback`, `keygen`, `sign`) are strictly refused over MCP so human authorization stays under local CLI / Git control.
