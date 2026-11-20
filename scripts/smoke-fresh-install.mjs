@@ -1,21 +1,28 @@
 #!/usr/bin/env node
 /**
- * Fresh-checkout smoke test for the local GeloForge CLI.
- * Runs against disposable projects outside the repository: no paid APIs or remote calls.
+ * Smoke test the source CLI or the installed npm tarball in disposable projects.
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = path.join(ROOT, "scripts", "geloforge.mjs");
+const { values: options } = parseArgs({
+  options: {
+    packed: { type: "boolean", default: false },
+    "pack-destination": { type: "string" },
+  },
+});
 
-function cli(args, cwd = ROOT) {
-  const result = spawnSync(process.execPath, [CLI, ...args], {
+function runNode(args, cwd, input) {
+  const result = spawnSync(process.execPath, args, {
     cwd,
+    input,
     encoding: "utf8",
     windowsHide: true,
     timeout: 60_000,
@@ -24,41 +31,59 @@ function cli(args, cwd = ROOT) {
   assert.equal(
     result.status,
     0,
-    "CLI failed: geloforge " + args.join(" ") +
+    "Command failed: " + args.join(" ") +
       "\nstdout:\n" + result.stdout + "\nstderr:\n" + result.stderr
   );
   return result.stdout.trim();
 }
 
-function cliJson(args, cwd = ROOT) {
-  const output = cli([...args, "--json"], cwd);
-  try {
-    return JSON.parse(output);
-  } catch {
-    throw new Error("CLI did not return valid JSON: " + output.slice(0, 700));
-  }
-}
-
 const expected = fs.readFileSync(path.join(ROOT, "VERSION"), "utf8").trim();
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const compat = JSON.parse(fs.readFileSync(path.join(ROOT, "core", "compatibility.json"), "utf8"));
-assert.equal(expected, "0.5.0", "Release smoke only covers v0.5.0 candidate");
 assert.equal(pkg.version, expected);
 assert.equal(compat.harness_version, expected);
-assert.equal(pkg.private, true, "GitHub source release must remain private to npm");
 assert.deepEqual(Object.keys(pkg.dependencies || {}), [], "GeloForge must have no runtime packages");
 
-assert.equal(cli(["--version"]), expected);
-assert.match(cli(["--help"]), /checkpoint|recommend|mcp/);
-
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "geloforge-v050-smoke-"));
+const scratch = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "geloforge smoke-"));
 try {
-  // Greenfield project: real Git-enabled scaffolding and the new v0.5 lifecycle.
-  const newProject = path.join(scratch, "new-automation");
-  const init = cliJson(["init", "--name", "Smoke Automation", "--profile", "automation",
-    "--dest", newProject, "--git"]);
+  let cliPrefix = [CLI];
+  if (options.packed) {
+    const npm = process.env.npm_execpath;
+    assert.ok(npm, "Run the package smoke with npm run smoke:package");
+    const packDir = path.resolve(options["pack-destination"] ?? scratch);
+    const cache = path.join(scratch, "npm-cache");
+    fs.mkdirSync(packDir, { recursive: true });
+    const [pack] = JSON.parse(runNode([
+      npm, "pack", "--json", "--offline", "--ignore-scripts", "--cache", cache,
+      "--pack-destination", packDir,
+    ], ROOT));
+    cliPrefix = [
+      npm, "exec", "--yes", "--offline", "--ignore-scripts", "--cache", cache,
+      "--package", path.join(packDir, pack.filename), "--", "geloforge",
+    ];
+    console.log(`Packed ${pack.filename} (${pack.entryCount} files, ${pack.size} bytes)`);
+  }
+
+  const cli = (args, cwd = scratch, input) => runNode([...cliPrefix, ...args], cwd, input);
+  const cliJson = (args, cwd) => JSON.parse(cli([...args, "--json"], cwd));
+
+  assert.equal(cli(["--version"]), expected);
+  assert.match(cli(["--help"]), /^\s+mcp\s+/m);
+
+  // Greenfield project: a packaged init defaults to the user's working directory.
+  const newProject = options.packed
+    ? path.join(scratch, "projects", "smoke-automation")
+    : path.join(scratch, "new-automation");
+  const initArgs = ["init", "--name", "Smoke Automation", "--profile", "automation", "--git"];
+  if (!options.packed) initArgs.push("--dest", newProject);
+  const init = cliJson(initArgs);
   assert.equal(init.projectId, "proj-smoke-automation");
+  assert.equal(init.destDir, newProject);
   assert.equal(fs.existsSync(path.join(newProject, "brain", "manifest.yaml")), true);
+  const gitignore = fs.readFileSync(path.join(newProject, ".gitignore"), "utf8");
+  assert.match(gitignore, /^\.env$/m);
+  assert.match(gitignore, /^artifacts\/$/m);
+  assert.equal(fs.existsSync(path.join(newProject, "gitignore.template")), false);
 
   const status = cliJson(["status", "--project", newProject]);
   assert.equal(status.valid, true);
@@ -96,25 +121,39 @@ try {
   assert.equal(finalValidation.valid, true,
     "Generated project with task/evidence/checkpoint must remain schema-valid");
 
-  // Brownfield project: dry-run must leave existing code untouched.
+  const mcpRequests = [
+    { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "geloforge_status", arguments: {} } },
+  ];
+  const [mcpInit, mcpStatus] = cli(
+    ["mcp", "--project", ".", "--read-only"], newProject,
+    mcpRequests.map((request) => JSON.stringify(request)).join("\n") + "\n"
+  ).split(/\r?\n/).map((line) => JSON.parse(line));
+  assert.equal(mcpInit.result.serverInfo.name, "geloforge-mcp");
+  assert.equal(mcpInit.result.serverInfo.version, expected);
+  assert.equal(mcpStatus.result.isError, false);
+  assert.equal(JSON.parse(mcpStatus.result.content[0].text).project.id, init.projectId);
+
+  // Brownfield project: exercise adopt from CWD and preserve existing files.
   const existing = path.join(scratch, "existing-application");
   fs.mkdirSync(existing);
   const original = "console.log('original customer code');\n";
   fs.writeFileSync(path.join(existing, "app.js"), original, "utf8");
   fs.writeFileSync(path.join(existing, "README.md"), "# Existing application\n", "utf8");
 
-  const preview = cliJson(["adopt", "--dest", existing, "--profile", "automation", "--dry-run"]);
+  const preview = cliJson(["adopt", "--profile", "automation", "--dry-run"], existing);
   assert.equal(preview.dryRun, true);
   assert.equal(fs.existsSync(path.join(existing, "brain")), false);
 
-  cliJson(["adopt", "--dest", existing, "--profile", "automation"]);
+  cliJson(["adopt", "--profile", "automation"], existing);
   assert.equal(fs.readFileSync(path.join(existing, "app.js"), "utf8"), original);
   assert.equal(fs.readFileSync(path.join(existing, "README.md"), "utf8"),
     "# Existing application\n");
-  assert.equal(cliJson(["validate", "--project", existing]).valid, true);
+  assert.equal(cliJson(["validate"], existing).valid, true);
 
-  console.log("PASS: v" + expected +
-    " fresh-checkout smoke (CLI, init, task, context, evidence, done, checkpoint, adopt, validate)");
+  console.log(`PASS: v${expected} ${options.packed ? "npm tarball" : "source"} smoke ` +
+    "(CLI, init, task, context, evidence, done, checkpoint, adopt, validate, MCP)");
 } finally {
   fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 3 });
 }

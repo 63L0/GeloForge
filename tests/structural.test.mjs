@@ -100,7 +100,7 @@ test("workspace and harness structural boundaries are clean", () => {
 test("project-starter template keeps minimal 4 empty .gitkeep folders and required files", () => {
   const starterDir = path.join(HARNESS_DIR, "templates", "project-starter");
   const expectedFiles = [
-    ".gitignore",
+    "gitignore.template",
     "AGENTS.md",
     "GEMINI.md",
     "README.md",

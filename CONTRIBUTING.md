@@ -18,6 +18,7 @@
    ```bash
    npm test
    npm run benchmark
+   npm run smoke:package
    git status
    ```
 
@@ -25,6 +26,8 @@
 5. Be ready to adjust the PR after CI and maintainer feedback.
 
 [See the open pull requests](https://github.com/63L0/GeloForge/pulls) · [Project security policy](./SECURITY.md)
+
+See the [npm release guide](./docs/npm-release.md) for packaging and publishing.
 
 ## Engineering principles
 

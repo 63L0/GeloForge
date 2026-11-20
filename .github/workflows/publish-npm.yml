@@ -1,0 +1,86 @@
+name: Publish GeloForge to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example 0.6.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: geloforge-npm-publish
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: github.repository == '63L0/GeloForge' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Verify tagged release and successful main CI
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const version = process.env.RELEASE_VERSION;
+          if (!/^\d+\.\d+\.\d+$/.test(version) || pkg.version !== version || pkg.name !== 'geloforge' || pkg.private === true) {
+            throw new Error('Prepare a public geloforge package with the requested release version first.');
+          }
+          NODE
+          if [[ "$(git rev-parse "refs/tags/v${RELEASE_VERSION}^{commit}")" != "$GITHUB_SHA" ]]; then
+            echo "::error::The release tag must point to this main commit."
+            exit 1
+          fi
+          if [[ "$(gh run list --workflow ci.yml --branch main --event push --commit "$GITHUB_SHA" --limit 1 --json conclusion --jq '.[0].conclusion')" != success ]]; then
+            echo "::error::Successful main push CI is required for the release commit."
+            exit 1
+          fi
+
+      - name: Pack and smoke-test the release tarball
+        run: npm run smoke:package -- --pack-destination "$RUNNER_TEMP/geloforge-package"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: geloforge-npm-package
+          path: ${{ runner.temp }}/geloforge-package/*.tgz
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: geloforge-npm-package
+
+      - name: Publish the tested tarball via npm trusted publishing
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: npm publish "./geloforge-${RELEASE_VERSION}.tgz" --access public --ignore-scripts

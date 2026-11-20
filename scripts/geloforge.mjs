@@ -9,7 +9,7 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
-import { bootstrapProject } from "./bootstrap-project.mjs";
+import { bootstrapProject, DEFAULT_INIT_LOCATION } from "./bootstrap-project.mjs";
 import { adoptProject } from "../core/adopt-project.mjs";
 import { validateProject } from "../core/project-validator.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
@@ -88,7 +88,7 @@ function printSubHelp(cmd) {
 Options:
   --name <string>         Project display name (required, 3-80 chars)
   --slug <string>         Lowercase ASCII slug (optional)
-  --dest <path>           Target directory (default: <workspace-root>/projects/<slug>)
+  --dest <path>           Target directory (default: ${DEFAULT_INIT_LOCATION})
   --owner <string>        Project owner name
   --description <string>  Short project description
   --profile <name>        Optional overlay: web, desktop, mobile, automation, ai-system
@@ -2176,7 +2176,10 @@ async function main() {
   }
 }
 
-const isDirectRun = Boolean(process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename));
+// npm links the executable through node_modules/.bin on POSIX.
+const entryPath = process.argv[1];
+const isDirectRun = entryPath && fs.existsSync(entryPath) &&
+  fs.realpathSync(entryPath) === fs.realpathSync(__filename);
 if (isDirectRun) {
   await main();
 }
