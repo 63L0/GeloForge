@@ -93,7 +93,7 @@ When you're done, use `geloforge handoff` to record what changed, what was verif
 | **Reviewed skill improvements** | Draft improvements from evidence, require explicit authorization, track versions, and roll back. |
 | **Co-Pilot & checkpoints** | Get ranked next steps, human approval reminders, and resumable session notes. |
 | **Cooperative multi-IDE work** | Claim tasks and scopes, see peer collision warnings, and avoid accidental overlapping work. |
-| **Local MCP interface** | Connect compatible clients explicitly, with project-scoped tools and a read-only mode. |
+| **Local MCP interface** | Run `geloforge mcp init` to set up Cursor, VS Code, Claude Code, or Gemini CLI with project-scoped tools. |
 
 **Compatible workflow:** Codex, Claude Code, Gemini CLI, Antigravity, or any assistant that can read text you provide. GeloForge does not automatically operate or connect to those tools.
 

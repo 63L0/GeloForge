@@ -28,6 +28,7 @@ import {
 import { captureEvidence } from "../core/evidence-capture.mjs";
 import { createCheckpoint, getCheckpoint, listCheckpoints } from "../core/checkpoint.mjs";
 import { startMcpStdioServer } from "../core/mcp-server.mjs";
+import { initMcpClients } from "../core/mcp-init.mjs";
 import {
   discoverSkills,
   resolveProjectForSkills,
@@ -72,7 +73,7 @@ Commands:
   checkpoint Create, list, or inspect session recovery checkpoints (CHKPT-NNNN)
   recommend  Show ranked Human-in-the-Loop Co-Pilot recommendations & approval inbox
   status     Inspect project health, operational task state, leases, and Git status
-  mcp        Start zero-dependency JSON-RPC 2.0 MCP server over stdio
+  mcp        Start the stdio MCP server or configure MCP clients with mcp init
 
 Global Options:
   -h, --help     Show help (use "geloforge <command> --help" for command options)
@@ -195,6 +196,7 @@ Options:
       break;
     case "mcp":
       console.log(`Usage: geloforge mcp [serve] [--project <path>] [--read-only]
+       geloforge mcp init [--project <path>] [--client <name>] [--read-only] [--dry-run] [--json]
 
 Runs GeloForge's zero-dependency JSON-RPC 2.0 MCP server on stdin/stdout.
 Pins operations to the configured/current project root (when present).
@@ -207,6 +209,11 @@ Options:
   -p, --project <path>    Trusted project root directory
   --read-only             Refuse all state-mutating MCP actions
   -h, --help              Show help
+
+Init options:
+  --client <name>         cursor, vscode, claude, or gemini (repeatable, defaults to all four)
+  --dry-run               Preview project configuration and rule updates
+  --json                  Emit the list of planned or written files
 `);
       break;
     case "handoff":
@@ -839,7 +846,38 @@ function handleCheckpoint(args) {
   throw new Error(`Unknown checkpoint subcommand "${subcmd}". Expected: create, list, or show.`);
 }
 
+function handleMcpInit(args) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      project: { type: "string", short: "p" },
+      client: { type: "string", multiple: true },
+      "read-only": { type: "boolean" },
+      "dry-run": { type: "boolean" },
+      json: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  if (values.help) {
+    printSubHelp("mcp");
+    return 0;
+  }
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const result = initMcpClients({
+    projectDir, harnessDir: HARNESS_DIR, clients: values.client,
+    readOnly: values["read-only"], dryRun: values["dry-run"],
+  });
+  if (values.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(result.dryRun ? `MCP setup preview for ${projectDir}` : `MCP setup for ${projectDir}`);
+    for (const file of result.files) console.log(`  ${file.action.padEnd(10)} ${file.path}`);
+  }
+  return 0;
+}
+
 async function handleMcp(args) {
+  if (args[0] === "init") return handleMcpInit(args.slice(1));
   let effectiveArgs = args;
   if (args.length > 0 && (args[0] === "-h" || args[0] === "--help")) {
     printSubHelp("mcp");

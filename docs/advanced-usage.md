@@ -239,6 +239,17 @@ node scripts/geloforge.mjs checkpoint show CHKPT-0001
 See [schemas/recovery-checkpoint.schema.json](../schemas/recovery-checkpoint.schema.json) for checkpoint fields and [SECURITY.md](../SECURITY.md) for boundaries.
 
 ### 4. Zero-Dependency MCP Server (`geloforge mcp`)
+
+From an adopted project, run `geloforge mcp init --dry-run` to preview setup, then run `geloforge mcp init` to configure the four project clients. Repeat `--client <name>` to select specific clients. Add `--read-only` to set up read-only servers and guidance.
+
+| Client | MCP config | Project instructions |
+| --- | --- | --- |
+| `cursor` | `.cursor/mcp.json` | `.cursor/rules/geloforge.mdc` |
+| `vscode` | `.vscode/mcp.json` | `.github/instructions/geloforge.instructions.md` |
+| `claude` | `.mcp.json` | `.claude/rules/geloforge.md` |
+| `gemini` | `.gemini/settings.json` | `GEMINI.md` or the configured project context file |
+
+The setup keeps other server entries and settings, adds a GeloForge rule for each client, and pins the server to the project root. Reload the client and accept its project trust or MCP prompt if shown. Rerun setup after moving a checkout or changing the CLI installation path.
 ```bash
 # Default project-pinned server (supports read + disclosed state-mutating tools)
 node scripts/geloforge.mjs mcp --project /path/to/your/project

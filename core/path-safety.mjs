@@ -379,7 +379,7 @@ export function redactSecretContent(text) {
   return out;
 }
 
-export function atomicWriteFile(resolvedOutPath, content, { allowOverwrite = true, onBeforeCommit = null } = {}) {
+export function atomicWriteFile(resolvedOutPath, content, { allowOverwrite = true, onBeforeCommit = null, mode } = {}) {
   const parent = path.dirname(resolvedOutPath);
   fs.mkdirSync(parent, { recursive: true });
   if (!allowOverwrite && fs.existsSync(resolvedOutPath)) {
@@ -387,7 +387,7 @@ export function atomicWriteFile(resolvedOutPath, content, { allowOverwrite = tru
   }
   const tempPath = path.join(parent, `.geloforge-tmp-${crypto.randomBytes(6).toString("hex")}`);
   try {
-    fs.writeFileSync(tempPath, content, { encoding: "utf8", flag: "wx" });
+    fs.writeFileSync(tempPath, content, { encoding: "utf8", flag: "wx", mode });
     if (typeof onBeforeCommit === "function") {
       onBeforeCommit(tempPath);
     }
