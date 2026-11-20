@@ -2,9 +2,9 @@
 
 All notable changes to GeloForge are recorded in this file.
 
-## [0.5.0] — Unreleased (release candidate)
+## [0.5.0] — 2026-11-20
 
-GeloForge v0.5 focuses on practical, human-supervised AI coding sessions and cooperative work across IDEs. This version is prepared in source, but its GitHub tag and Release are **not published** until separately authorized. The last published release remains v0.4.0.
+GeloForge v0.5 focuses on practical, human-supervised AI coding sessions and cooperative work across IDEs. This is a GitHub source release; npm publication remains disabled by `private: true`. Release publication is gated on successful CI for the exact current `main` commit.
 
 ### Added
 - **Human-in-the-Loop Co-Pilot & approval inbox (PR #10):** `geloforge recommend` and richer `status` output suggest next actions and surface pending skills, approvals, architecture proposals, conflicts, and peer lease warnings. Recommendations do not execute automatically.
