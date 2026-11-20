@@ -2,6 +2,35 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.5.0] — Unreleased (release candidate)
+
+GeloForge v0.5 focuses on practical, human-supervised AI coding sessions and cooperative work across IDEs. This version is prepared in source, but its GitHub tag and Release are **not published** until separately authorized. The last published release remains v0.4.0.
+
+### Added
+- **Human-in-the-Loop Co-Pilot & approval inbox (PR #10):** `geloforge recommend` and richer `status` output suggest next actions and surface pending skills, approvals, architecture proposals, conflicts, and peer lease warnings. Recommendations do not execute automatically.
+- **Task lifecycle:** `geloforge task update|done` keeps operational state in sync, removes completed tasks from active context by default, and distinguishes `completed` from genuinely `verified`. `--require-evidence` and explicit `--evidence` allow verified completion gates.
+- **Context diet & session recovery:** `geloforge context --from-diff` prioritizes scoped Git changes; `--include-completed` restores omitted historical tasks when needed. `geloforge checkpoint create|list|show` stores resume instructions without attempting to restore a model's private chat state.
+- **Multi-IDE cooperative coordination:** `geloforge task claim|release|leases` records task ownership and claimed file scopes with bounded lease durations, and highlights overlapping work.
+- **Zero-dependency MCP stdio interface:** Six project-scoped MCP tools expose status, recommendations, context, scoped task/checkpoint operations, and safe skill inspection/proposals. `geloforge mcp --read-only` blocks all mutations. Signing, promotion, rollback, and key generation remain disallowed over MCP.
+
+### Reliability and security
+- Added cross-process local project locking and bounded stale-lock reclamation that does not steal a live-PID lock merely due to elapsed TTL.
+- Added rollback on handled write errors and a replayable pre-image transaction journal for interrupted CLI mutations, recovered on the next project-lock acquisition.
+- Added fail-closed trusted MCP project roots, protocol input/frame size limits, and cooperative session-owner checks.
+- Added adversarial two-process lease races, competing stale-lock reclaim tests, fault injection, interrupted-process recovery tests, and MCP isolation/framing tests.
+
+### Compatibility and limitations
+- Node.js 20 or newer; MIT licensed; no third-party runtime dependencies or paid API requirements. `package.json` remains `"private": true` (GitHub source release only, no npm registry publication).
+- Existing project schema versions `1.0` and `1.1` remain supported; no schema-major migration is required.
+- File-scope leases are **cooperative**, not OS-level edit locks; they cannot stop an IDE or terminal from directly editing overlapping files. The session/tool labels are self-declared, not cryptographically authenticated.
+- Recovery journals run when the next project-lock operation begins, not immediately after a crash; sudden power loss/kernel panic durability is not guaranteed without fsync-based storage semantics.
+- MCP tools must be explicitly configured in a supported client. The repository does not run autonomous multi-agent orchestration or IDE coordination daemons.
+
+### Verification before release
+- PR #10 was reviewed and merged after six successful GitHub Actions PR jobs on its final feature head. The agent reported 77 passing local tests and eight benchmark scenarios on that head.
+- The v0.5.0 release-preparation PR adds independent **fresh-checkout CLI installation and smoke testing** to the same six-job CI matrix. Final results and the exact final `main` commit must be checked before tagging or publishing.
+- The completed one-time v0.4.0 publication workflow is retired, preventing redundant v0.4 publishing attempts after the version update.
+
 ## [0.4.0] — 2026-11-20
 
 This release adds safer project onboarding, portable Agent Skills interoperability, and an evidence-backed skill improvement lifecycle. GitHub source release; npm registry publication is intentionally disabled by `"private": true` in `package.json`.
