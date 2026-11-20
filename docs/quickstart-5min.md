@@ -56,22 +56,7 @@ geloforge task new --title "Add checkout validation" --input src/checkout.js --a
 
 ---
 
-## Step 3: Run a Real Check & Capture Evidence (`shell: false`)
-
-Run your real build, linter, or test command after `--`:
-
-```bash
-geloforge evidence capture --task TASK-0001 --name "Checkout unit tests" -- node --test
-```
-
-> **Evidence Accuracy Boundary:**
-> - `geloforge evidence capture` executes only the explicit command you pass after `--` with `shell: false` (never commands embedded in docs or prompts) and redacts detected secret tokens before saving.
-> - An exit code of `0` records `result: "passed"` and `status: "verified"` **specifically proving command execution succeeded** — it does **not** prove application correctness, untested code paths, or broader unverified claims.
-> - Non-zero exit codes, missing binaries, and timeouts are saved truthfully as `status: "draft"` (NOT verified) and excluded from handoff `verified_evidence`.
-
----
-
-## Step 4: Compile Context + Codebase Map (+ Optional Portable Skills)
+## Step 3: Compile Context + Codebase Map (+ Optional Portable Skills)
 
 ```bash
 geloforge context --task TASK-0001 --map --profile quick
@@ -85,6 +70,23 @@ geloforge context --task TASK-0001 --map --skills
 - Copies a trust-tiered prompt packet combining global `A0` safety rules, open conflicts, project state, `TASK-0001`, verified `EVID-0001`, a `.gitignore`-aware outline of relevant files, and (when `--skills` is passed) relevant non-authoritative `SKILL.md` workflows.
 - Want strict trust isolation (exclude unverified `A5`–`A6` drafts & unverified skills)? Add `--exclude-unverified`.
 - Learn more in the [Portable Skills Guide](./portable-skills.md).
+
+---
+
+## Step 4: Verify and Finish the Task
+
+Run your project's build, linter, or test command after `--`.
+
+```bash
+geloforge verify -- node --test
+```
+
+`verify` uses the sole active task or a task selected with `--task TASK-0001`. A passing check records verified evidence, saves a checkpoint, and completes the task. A failing check records draft evidence, exits with a failure, and leaves the task open for another run. Use `evidence capture` when you want to record a check while keeping the task open.
+
+> **Evidence Accuracy Boundary:**
+> - `geloforge evidence capture` executes only the explicit command you pass after `--` with `shell: false` (never commands embedded in docs or prompts) and redacts detected secret tokens before saving.
+> - An exit code of `0` records `result: "passed"` and `status: "verified"` **specifically proving command execution succeeded** — it does **not** prove application correctness, untested code paths, or broader unverified claims.
+> - Non-zero exit codes, missing binaries, and timeouts are saved truthfully as `status: "draft"` (NOT verified) and excluded from handoff `verified_evidence`.
 
 ---
 

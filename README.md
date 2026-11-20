@@ -69,14 +69,14 @@ Here's a typical workflow after adopting a project:
 # 1. Give the next coding session a clear task.
 geloforge task new --title "Fix login validation" --activate
 
-# 2. Run a real check and record what actually happened.
-geloforge evidence capture --task TASK-0001 --name "Tests" -- npm test
-
-# 3. Build a focused packet with relevant files and reusable skills.
+# 2. Build a focused packet with relevant files and reusable skills.
 geloforge context --task TASK-0001 --map --skills
+
+# 3. Run your check, save a checkpoint, and complete the task if it passes.
+geloforge verify -- node --test
 ```
 
-Replace `npm test` with your project's real test command. A successful command verifies *that command ran successfully*; it doesn't prove every part of the application is correct.
+Replace `node --test` with your project's test command. To record a check while keeping a task open, run `geloforge evidence capture --task TASK-0001 -- node --test`.
 
 When you're done, use `geloforge handoff` to record what changed, what was verified, and what the next developer or assistant should do. [See the handoff examples →](./docs/advanced-usage.md)
 
