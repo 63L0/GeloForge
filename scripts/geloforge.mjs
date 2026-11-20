@@ -249,7 +249,7 @@ Discovery & Static Checks:
 Adaptive Skills Lifecycle (Evidence-Backed & Human-Authorized):
   draft           Draft a quarantined skill in proposals/skills/ from verified EVID/HANDOFF records
   propose-update  Propose an isolated update to an existing trusted skill with diff preview
-  keygen          Generate an Ed25519 approver keypair (public key in repo, private key external)
+  keygen          Generate an Ed25519 approver keypair (public key in repo, optional --pub-out external pin, private key external)
   sign            Sign an APPR-NNNN approval bound to content SHA-256, base SHA-256, & evidence
   promote         Promote a validated quarantined proposal after genuine authorization
   history         Inspect append-only revision ledger and snapshot integrity for a skill
@@ -1071,6 +1071,7 @@ async function handleSkillsLifecycle(subcmd, rest) {
         project: { type: "string", short: "p" },
         approver: { type: "string" },
         out: { type: "string", short: "o" },
+        "pub-out": { type: "string" },
         "created-at": { type: "string" },
         json: { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
@@ -1089,6 +1090,7 @@ async function handleSkillsLifecycle(subcmd, rest) {
       workspaceRoot: WORKSPACE_ROOT,
       approverId: parsed.values.approver,
       privateKeyOut: parsed.values.out,
+      publicKeyOut: parsed.values["pub-out"],
       createdAt: parsed.values["created-at"],
     });
     if (parsed.values.json) {
@@ -1098,6 +1100,7 @@ async function handleSkillsLifecycle(subcmd, rest) {
     console.log(`Ed25519 Approver Registered : ${res.approverId} (${res.keyFingerprint})`);
     console.log(`Public Registry (repo)      : ${res.registryPath}`);
     console.log(`Private Key (external 0600) : ${res.privateKeyPath}`);
+    if (res.publicKeyPath) console.log(`Public Key (external pin)   : ${res.publicKeyPath}`);
     return 0;
   }
 
@@ -1179,6 +1182,12 @@ async function handleSkillsLifecycle(subcmd, rest) {
       return 0;
     }
     const proposalName = parsed.values.name || parsed.positionals[0];
+    if (parsed.values.interactive && parsed.values.mode) {
+      throw new Error("Cannot combine --interactive with --mode; choose one authorization mode.");
+    }
+    if (parsed.values.approval && (parsed.values.mode || parsed.values.interactive)) {
+      throw new Error("Cannot combine --approval with --mode or --interactive; choose one authorization mode.");
+    }
     const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
     const authMode = parsed.values.interactive ? "interactive" : parsed.values.mode;
 
@@ -1225,6 +1234,7 @@ async function handleSkillsLifecycle(subcmd, rest) {
     }
     console.log(res.dryRun ? `DRY RUN — Promotion check passed for "${res.skillName}"` : `Promoted Skill (${res.action}) : ${res.activeRel} (${res.revision})`);
     console.log(`Authorization Tier : ${res.authorizationTier || "preview"}${res.approvalId ? ` (${res.approvalId})` : ""}`);
+    if (res.keyTrustSource) console.log(`Key Trust Source   : ${res.keyTrustSource}`);
     console.log(`Digest / History   : ${res.candidateDigest}${res.historyRel ? ` | ${res.historyRel}` : ""}`);
     if (res.prBranch) console.log(`PR Review Branch   : ${res.prBranch} (${res.prCommitSha}) — push & require PR approval before merging`);
     if (res.authorizationWarning) console.log(`  - [NOTICE] ${res.authorizationWarning}`);
@@ -1295,6 +1305,12 @@ async function handleSkillsLifecycle(subcmd, rest) {
     }
     const skillName = parsed.values.name || parsed.positionals[0];
     const targetRevision = parsed.values.revision || parsed.positionals[1];
+    if (parsed.values.interactive && parsed.values.mode) {
+      throw new Error("Cannot combine --interactive with --mode; choose one authorization mode.");
+    }
+    if (parsed.values.approval && (parsed.values.mode || parsed.values.interactive)) {
+      throw new Error("Cannot combine --approval with --mode or --interactive; choose one authorization mode.");
+    }
     const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
     const authMode = parsed.values.interactive ? "interactive" : parsed.values.mode;
 
@@ -1347,6 +1363,7 @@ async function handleSkillsLifecycle(subcmd, rest) {
         : `Rolled Back Skill : ${res.activeRel} -> ${res.restoredFromRevision} (recorded as ${res.newRevision})`
     );
     console.log(`Authorization Tier : ${res.authorizationTier || "preview"}${res.approvalId ? ` (${res.approvalId})` : ""}`);
+    if (res.keyTrustSource) console.log(`Key Trust Source   : ${res.keyTrustSource}`);
     console.log(`Restored SHA-256   : ${res.restoredDigest}`);
     if (res.prBranch) console.log(`PR Review Branch   : ${res.prBranch} (${res.prCommitSha}) — push & require PR approval before merging`);
     if (res.authorizationWarning) console.log(`  - [NOTICE] ${res.authorizationWarning}`);

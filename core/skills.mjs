@@ -27,6 +27,7 @@ import { estimateTokens, sanitizeFenceContent, tokenizeKeywords } from "./text-u
 import { STATIC_LINT_DISCLAIMER, lintSkill } from "./skills-lint.mjs";
 
 export const MAX_SKILL_BYTES = 128 * 1024;
+export const MAX_SKILL_TEXT_RESOURCE_BYTES = 512 * 1024;
 export const SKILL_NAME_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 export const RANKING_METHOD = "deterministic:metadata-keyword-pin";
 
@@ -41,7 +42,23 @@ const STANDARD_FRONTMATTER_KEYS = new Set([
 const SUPPORT_DIR_KEYS = new Set(["references", "templates", "assets", "scripts"]);
 const SCAFFOLDING_FILENAMES = new Set(["readme.md", "changelog.md", "installation.md", "install.md"]);
 const IGNORED_OS_JUNK_FILES = new Set([".ds_store", "thumbs.db", "desktop.ini"]);
-const MAX_INSPECT_RESOURCE_BYTES = 64 * 1024;
+
+/**
+ * Checks whether an oversized file (> MAX_SKILL_TEXT_RESOURCE_BYTES) appears to be text (no NUL bytes in prefix).
+ */
+export function isOversizedTextFile(absPath) {
+  let fd;
+  try {
+    fd = fs.openSync(absPath, "r");
+    const peek = Buffer.allocUnsafe(8192);
+    const bytesRead = fs.readSync(fd, peek, 0, 8192, 0);
+    return !peek.subarray(0, bytesRead).includes(0);
+  } finally {
+    if (fd !== undefined) {
+      fs.closeSync(fd);
+    }
+  }
+}
 
 function isOsManagedDarwinSymlink(cursorPath) {
   return process.platform === "darwin" && (cursorPath === "/tmp" || cursorPath === "/var" || cursorPath === "/etc");
@@ -532,14 +549,22 @@ export function inspectSkillPackage({ skillDir, folderName, source, trustTier, d
       continue;
     }
 
+    if (rel === "SKILL.md") {
+      continue;
+    }
+
     const parts = rel.split("/");
     const topSeg = parts[0];
     const baseLower = path.basename(rel).toLowerCase();
 
-    if (parts.length === 1 && rel !== "SKILL.md") {
+    if (IGNORED_OS_JUNK_FILES.has(baseLower)) {
+      continue;
+    }
+
+    if (parts.length === 1) {
       if (SCAFFOLDING_FILENAMES.has(baseLower)) {
         scaffoldingFiles.push(rel);
-      } else if (!IGNORED_OS_JUNK_FILES.has(baseLower)) {
+      } else {
         addWarning(
           warnings,
           "QUAL-STRAY-ROOT-FILE",
@@ -548,33 +573,55 @@ export function inspectSkillPackage({ skillDir, folderName, source, trustTier, d
           "Organize non-SKILL.md resources into standard Agent Skills subdirectories."
         );
       }
+    } else if (SUPPORT_DIR_KEYS.has(topSeg)) {
+      resources[topSeg].push(rel);
+    } else {
+      addWarning(
+        warnings,
+        "QUAL-UNEXPECTED-SUBDIR",
+        `Unexpected subdirectory file (${rel}); move supporting files into references/, templates/, assets/, or scripts/.`,
+        `${displayPath}/${rel}`,
+        "Place supporting files inside references/, templates/, assets/, or scripts/."
+      );
+    }
+
+    if (fileInfo.size > MAX_SKILL_TEXT_RESOURCE_BYTES) {
+      try {
+        if (isOversizedTextFile(fileInfo.absPath)) {
+          blocked = true;
+          addError(
+            errors,
+            "VAL-RESOURCE-TOO-LARGE",
+            `Text resource exceeds maximum safe scannable size (${MAX_SKILL_TEXT_RESOURCE_BYTES} bytes): ${displayPath}/${rel}.`,
+            `${displayPath}/${rel}`,
+            "Reduce supporting text file size below 512 KB."
+          );
+        }
+      } catch {
+        // Ignore unreadable optional resource during static scan
+      }
       continue;
     }
 
-    if (parts.length >= 2 && SUPPORT_DIR_KEYS.has(topSeg)) {
-      resources[topSeg].push(rel);
-      if (fileInfo.size <= MAX_INSPECT_RESOURCE_BYTES && /\.(md|txt|ya?ml|json|sh|bash|mjs|js|ps1|py)$/i.test(rel)) {
-        try {
-          const buf = fs.readFileSync(fileInfo.absPath);
-          if (!buf.includes(0)) {
-            const text = buf.toString("utf8");
-            if (hasSecretContent(text)) {
-              hasSecrets = true;
-              blocked = true;
-              addError(
-                errors,
-                "SEC-SECRET-CONTENT",
-                `Embedded credential or private-key literal detected in ${displayPath}/${rel}.`,
-                `${displayPath}/${rel}`,
-                "Remove hardcoded secrets from skill supporting files."
-              );
-            }
-            inspectableTexts.push({ relPath: rel, text });
-          }
-        } catch {
-          // Ignore unreadable optional resource during static scan
+    try {
+      const buf = fs.readFileSync(fileInfo.absPath);
+      if (!buf.includes(0)) {
+        const text = buf.toString("utf8");
+        if (hasSecretContent(text)) {
+          hasSecrets = true;
+          blocked = true;
+          addError(
+            errors,
+            "SEC-SECRET-CONTENT",
+            `Embedded credential or private-key literal detected in ${displayPath}/${rel}.`,
+            `${displayPath}/${rel}`,
+            "Remove hardcoded secrets from skill supporting files."
+          );
         }
+        inspectableTexts.push({ relPath: rel, text });
       }
+    } catch {
+      // Ignore unreadable optional resource during static scan
     }
   }
 
@@ -1372,8 +1419,13 @@ export function computeSkillPackageDigest(rawSkillDir) {
     if (isForbiddenSecretPath(f.relPath)) {
       throw new Error(`Forbidden secret or credential file inside skill package: ${f.relPath}`);
     }
+    if (f.size > MAX_SKILL_TEXT_RESOURCE_BYTES && isOversizedTextFile(f.absPath)) {
+      throw new Error(
+        `Text resource exceeds maximum safe scannable size (${MAX_SKILL_TEXT_RESOURCE_BYTES} bytes): ${f.relPath}`
+      );
+    }
     const buf = fs.readFileSync(f.absPath);
-    if (!buf.includes(0) && buf.length <= MAX_SKILL_BYTES) {
+    if (!buf.includes(0)) {
       const text = buf.toString("utf8");
       if (hasSecretContent(text)) {
         throw new Error(`Embedded credential or private-key literal detected in skill file: ${f.relPath}`);

@@ -36,9 +36,11 @@ import { loadProjectManifestAndState, scanAndAllocateRecordId } from "./project-
 import { validateCreatedAt } from "./template-utils.mjs";
 import {
   MAX_SKILL_BYTES,
+  MAX_SKILL_TEXT_RESOURCE_BYTES,
   SKILL_NAME_REGEX,
   computeSkillPackageDigest,
   inspectSkillPackage,
+  isOversizedTextFile,
   parseSkillMarkdown,
 } from "./skills.mjs";
 import { lintSkill } from "./skills-lint.mjs";
@@ -89,15 +91,18 @@ function assertSafeAncestorChain(absTarget, stopAtRoot, label) {
   }
 }
 
-function validatePrivateKeyOutPath(rawPath, { projectDir, harnessDir, workspaceRoot }) {
+function validateExternalKeyOutPath(
+  rawPath,
+  { projectDir, harnessDir, workspaceRoot, label = "--out", allowInsideProject = false }
+) {
   if (typeof rawPath !== "string" || rawPath.trim().length === 0) {
-    throw new Error("Missing required --out <file> path for Ed25519 private key.");
+    throw new Error(`Missing required ${label} <file> path for Ed25519 key.`);
   }
   if (CONTROL_CHAR_REGEX.test(rawPath)) {
     throw new Error("Key output path contains illegal control characters.");
   }
   if (/^(\\\\|\/\/)/.test(rawPath)) {
-    throw new Error(`Refusing UNC/network path for private key: "${rawPath}".`);
+    throw new Error(`Refusing UNC/network path for key output: "${rawPath}".`);
   }
   if (/(^|[\\/])\.\.([\\/]|$)/.test(rawPath)) {
     throw new Error(`Refusing path traversal ".." in key path: "${rawPath}".`);
@@ -108,7 +113,10 @@ function validatePrivateKeyOutPath(rawPath, { projectDir, harnessDir, workspaceR
   if (WINDOWS_RESERVED_NAME_REGEX.test(baseName)) {
     throw new Error(`Key filename "${baseName}" conflicts with reserved Windows device name.`);
   }
-  const protectedDirs = [path.resolve(projectDir), path.resolve(harnessDir)];
+  const protectedDirs = [path.resolve(harnessDir)];
+  if (!allowInsideProject) {
+    protectedDirs.unshift(path.resolve(projectDir));
+  }
   if (workspaceRoot && fs.existsSync(path.join(workspaceRoot, "worktrees"))) {
     protectedDirs.push(path.resolve(workspaceRoot, "worktrees"));
   }
@@ -117,7 +125,7 @@ function validatePrivateKeyOutPath(rawPath, { projectDir, harnessDir, workspaceR
   }
   for (const dir of protectedDirs) {
     if (isSameOrInside(resolved, dir)) {
-      throw new Error(`Refusing to write private signing key inside repository or protected directory: ${dir}`);
+      throw new Error(`Refusing to write key inside repository or protected directory: ${dir}`);
     }
   }
 
@@ -131,10 +139,10 @@ function validatePrivateKeyOutPath(rawPath, { projectDir, harnessDir, workspaceR
     try {
       const st = fs.lstatSync(cursor);
       if (st.isSymbolicLink() && !isDarwinSys) {
-        throw new Error(`Refusing symbolic link/junction in private key path: ${cursor}`);
+        throw new Error(`Refusing symbolic link/junction in key path: ${cursor}`);
       }
       if (cursor === resolved) {
-        throw new Error(`Refusing to overwrite existing private key file: ${resolved}`);
+        throw new Error(`Refusing to overwrite existing key file: ${resolved}`);
       }
     } catch (err) {
       if (err.code !== "ENOENT") {
@@ -240,8 +248,9 @@ function findRecordYamlById(projectDir, relDir, prefix, rawId) {
   return matches[0];
 }
 
-function copyTreeSafe(srcDir, destDir) {
+function copyTreeSafe(srcDir, destDir, rootSrc = srcDir) {
   const srcResolved = path.resolve(srcDir);
+  const rootResolved = path.resolve(rootSrc);
   const srcStat = fs.lstatSync(srcResolved);
   if (srcStat.isSymbolicLink() || !srcStat.isDirectory()) {
     throw new Error(`Refusing symbolic link or non-directory source tree: ${srcDir}`);
@@ -252,21 +261,29 @@ function copyTreeSafe(srcDir, destDir) {
     if (entry.name === ".git" || entry.name === "node_modules") continue;
     const srcEntry = path.join(srcResolved, entry.name);
     const destEntry = path.join(destDir, entry.name);
+    const relFromRoot = path.relative(rootResolved, srcEntry).replace(/\\/g, "/");
     const st = fs.lstatSync(srcEntry);
     if (st.isSymbolicLink()) {
       throw new Error(`Blocked symbolic link/junction during copy: ${srcEntry}`);
     }
+    if (isForbiddenSecretPath(relFromRoot)) {
+      throw new Error(`Blocked forbidden secret path during copy: ${relFromRoot}`);
+    }
     if (st.isDirectory()) {
-      copyTreeSafe(srcEntry, destEntry);
+      copyTreeSafe(srcEntry, destEntry, rootResolved);
     } else if (st.isFile()) {
-      if (isForbiddenSecretPath(path.relative(srcResolved, srcEntry))) {
-        throw new Error(`Blocked forbidden secret file during copy: ${entry.name}`);
+      if (st.size > MAX_SKILL_TEXT_RESOURCE_BYTES && isOversizedTextFile(srcEntry)) {
+        throw new Error(
+          `Text resource exceeds maximum safe scannable size (${MAX_SKILL_TEXT_RESOURCE_BYTES} bytes) during copy: ${relFromRoot}`
+        );
       }
       const buf = fs.readFileSync(srcEntry);
-      if (!buf.includes(0) && buf.length <= MAX_SKILL_BYTES && hasSecretContent(buf.toString("utf8"))) {
+      if (!buf.includes(0) && hasSecretContent(buf.toString("utf8"))) {
         throw new Error(`Blocked secret literal in file during copy: ${entry.name}`);
       }
       fs.writeFileSync(destEntry, buf, { flag: "wx" });
+    } else {
+      throw new Error(`Blocked unsupported special file during copy: ${srcEntry}`);
     }
   }
 }
@@ -294,27 +311,34 @@ function renameSyncRetry(fromPath, toPath) {
 }
 
 /**
- * Atomically promotes a validated staging folder over `targetDir` with backup rollback.
+ * Stages an atomic directory replacement over `targetDir` with explicit commit/rollback handles.
+ * Uses lstatSync (not existsSync) so broken symlinks at `targetDir` fail closed immediately.
  */
-function atomicReplaceDirectory(stageDir, targetDir) {
+function stageAtomicSwap(stageDir, targetDir) {
   const parent = path.dirname(targetDir);
   fs.mkdirSync(parent, { recursive: true });
   const backupDir = path.join(parent, `.geloforge-backup-${crypto.randomBytes(6).toString("hex")}`);
   let hadExisting = false;
+  let targetStat = null;
 
   try {
-    if (fs.existsSync(targetDir)) {
-      const st = fs.lstatSync(targetDir);
-      if (st.isSymbolicLink()) {
-        throw new Error(`Refusing symbolic link at active destination: ${targetDir}`);
-      }
-      hadExisting = true;
+    targetStat = fs.lstatSync(targetDir);
+    hadExisting = true;
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+
+  if (targetStat && (targetStat.isSymbolicLink() || !targetStat.isDirectory())) {
+    throw new Error(`Refusing symbolic link or non-directory at active destination: ${targetDir}`);
+  }
+
+  try {
+    if (hadExisting) {
       renameSyncRetry(targetDir, backupDir);
     }
     renameSyncRetry(stageDir, targetDir);
-    if (hadExisting) {
-      removeDirSafe(backupDir);
-    }
   } catch (err) {
     if (hadExisting && !fs.existsSync(targetDir) && fs.existsSync(backupDir)) {
       try {
@@ -326,6 +350,27 @@ function atomicReplaceDirectory(stageDir, targetDir) {
     removeDirSafe(stageDir);
     throw err;
   }
+
+  return {
+    commit() {
+      if (hadExisting) {
+        removeDirSafe(backupDir);
+      }
+    },
+    rollback() {
+      try {
+        if (fs.existsSync(targetDir)) {
+          removeDirSafe(targetDir);
+        }
+        if (hadExisting && fs.existsSync(backupDir)) {
+          renameSyncRetry(backupDir, targetDir);
+        }
+      } catch {
+        // Best-effort restore
+      }
+      removeDirSafe(stageDir);
+    },
+  };
 }
 
 function verifySingleEvidenceRecord(loadedEvid, projectDir, schemasDir) {
@@ -643,7 +688,8 @@ function ensureProposalSlotAvailable(projectDir, proposalDir, metaRel, metaAbs) 
   let allowMetaOverwrite = false;
   if (fs.existsSync(metaAbs)) {
     const existing = readSafeYamlWithinProject(projectDir, metaRel);
-    if (existing?.data?.status === "promoted" && !fs.existsSync(proposalDir)) {
+    const st = existing?.data?.status;
+    if ((st === "promoted" || st === "pending_pr_review") && !fs.existsSync(proposalDir)) {
       allowMetaOverwrite = true;
     } else {
       throw new Error(
@@ -810,52 +856,84 @@ export function draftSkillFromExperience(options = {}) {
 }
 
 /**
- * Deterministic line-based unified diff helper with zero external dependencies.
+ * Deterministic line-based unified diff helper with zero external dependencies
+ * and bounded DP memory allocation.
  */
 export function computeUnifiedDiff(oldText, newText, oldLabel = "a/SKILL.md", newLabel = "b/SKILL.md") {
   const a = oldText.replace(/\r\n/g, "\n").split("\n");
   const b = newText.replace(/\r\n/g, "\n").split("\n");
-  const m = a.length;
-  const n = b.length;
-
-  // Bounded DP LCS matrix (skills are capped at 128 KB / typically <= 500 lines)
-  const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
-  for (let i = m - 1; i >= 0; i -= 1) {
-    for (let j = n - 1; j >= 0; j -= 1) {
-      if (a[i] === b[j]) dp[i][j] = dp[i + 1][j + 1] + 1;
-      else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) {
+    start += 1;
+  }
+  let endA = a.length - 1;
+  let endB = b.length - 1;
+  while (endA >= start && endB >= start && a[endA] === b[endB]) {
+    endA -= 1;
+    endB -= 1;
   }
 
+  const aMid = a.slice(start, endA + 1);
+  const bMid = b.slice(start, endB + 1);
+  const m = aMid.length;
+  const n = bMid.length;
+
   const lines = [`--- ${oldLabel}`, `+++ ${newLabel}`];
-  let i = 0;
-  let j = 0;
+  for (let k = 0; k < start; k += 1) {
+    lines.push(` ${a[k]}`);
+  }
+
   let added = 0;
   let removed = 0;
-  while (i < m && j < n) {
-    if (a[i] === b[j]) {
-      lines.push(` ${a[i]}`);
-      i += 1;
-      j += 1;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      lines.push(`-${a[i]}`);
+  if (m * n > 1_000_000) {
+    for (const line of aMid) {
+      lines.push(`-${line}`);
+      removed += 1;
+    }
+    for (const line of bMid) {
+      lines.push(`+${line}`);
+      added += 1;
+    }
+  } else {
+    const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+    for (let i = m - 1; i >= 0; i -= 1) {
+      for (let j = n - 1; j >= 0; j -= 1) {
+        if (aMid[i] === bMid[j]) dp[i][j] = dp[i + 1][j + 1] + 1;
+        else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+
+    let i = 0;
+    let j = 0;
+    while (i < m && j < n) {
+      if (aMid[i] === bMid[j]) {
+        lines.push(` ${aMid[i]}`);
+        i += 1;
+        j += 1;
+      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+        lines.push(`-${aMid[i]}`);
+        removed += 1;
+        i += 1;
+      } else {
+        lines.push(`+${bMid[j]}`);
+        added += 1;
+        j += 1;
+      }
+    }
+    while (i < m) {
+      lines.push(`-${aMid[i]}`);
       removed += 1;
       i += 1;
-    } else {
-      lines.push(`+${b[j]}`);
+    }
+    while (j < n) {
+      lines.push(`+${bMid[j]}`);
       added += 1;
       j += 1;
     }
   }
-  while (i < m) {
-    lines.push(`-${a[i]}`);
-    removed += 1;
-    i += 1;
-  }
-  while (j < n) {
-    lines.push(`+${b[j]}`);
-    added += 1;
-    j += 1;
+
+  for (let k = endA + 1; k < a.length; k += 1) {
+    lines.push(` ${a[k]}`);
   }
 
   return {
@@ -926,15 +1004,13 @@ export function proposeSkillUpdate(options = {}) {
 
   let candidateSkillMd = "";
   if (options.patchFile) {
-    const rawPatchPath = String(options.patchFile).trim();
-    if (CONTROL_CHAR_REGEX.test(rawPatchPath) || /^(\\\\|\/\/)/.test(rawPatchPath) || /(^|[\\/])\.\.([\\/]|$)/.test(rawPatchPath)) {
-      throw new Error(`Unsafe --patch-file path: "${rawPatchPath}".`);
+    const patchAbs = validateExternalFileReadPath(options.patchFile, projectDir, "--patch-file", {
+      forbidInsideRepo: false,
+    });
+    if (isForbiddenSecretPath(path.basename(patchAbs))) {
+      throw new Error(`Blocked forbidden secret filename for --patch-file: ${path.basename(patchAbs)}`);
     }
-    const patchAbs = path.resolve(rawPatchPath);
     const pStat = fs.lstatSync(patchAbs);
-    if (pStat.isSymbolicLink() || !pStat.isFile()) {
-      throw new Error(`Refusing symbolic link or non-regular --patch-file: ${patchAbs}`);
-    }
     if (pStat.size > MAX_SKILL_BYTES) {
       throw new Error(`--patch-file exceeds max skill size (${MAX_SKILL_BYTES} bytes).`);
     }
@@ -942,7 +1018,7 @@ export function proposeSkillUpdate(options = {}) {
     if (hasSecretContent(candidateSkillMd)) {
       throw new Error("Blocked --patch-file containing credential-like pattern.");
     }
-    const parsedCand = parseSkillMarkdown(candidateSkillMd, rawPatchPath);
+    const parsedCand = parseSkillMarkdown(candidateSkillMd, options.patchFile);
     if (parsedCand.frontmatter?.name !== skillName) {
       throw new Error(`Candidate SKILL.md frontmatter name "${parsedCand.frontmatter?.name}" must equal "${skillName}".`);
     }
@@ -1067,13 +1143,51 @@ function loadApproversRegistry(projectDir) {
   if (!loaded || !loaded.data) {
     return { relPath, approvers: [] };
   }
-  const approvers = Array.isArray(loaded.data.approvers) ? loaded.data.approvers : [];
+  if (typeof loaded.data !== "object" || Array.isArray(loaded.data) || !Array.isArray(loaded.data.approvers)) {
+    throw new Error(`${relPath}: invalid approvers registry format (expected mapping with "approvers" list).`);
+  }
+  const seenIds = new Set();
+  const approvers = [];
+  for (const entry of loaded.data.approvers) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${relPath}: approver entry must be a YAML object.`);
+    }
+    if (typeof entry.approver_id !== "string" || entry.approver_id.trim().length === 0) {
+      throw new Error(`${relPath}: approver entry missing valid "approver_id".`);
+    }
+    if (seenIds.has(entry.approver_id)) {
+      throw new Error(`${relPath}: duplicate approver_id "${entry.approver_id}" in approvers registry.`);
+    }
+    seenIds.add(entry.approver_id);
+    if (entry.algorithm !== "ed25519") {
+      throw new Error(`${relPath}: unsupported algorithm "${entry.algorithm}" for approver "${entry.approver_id}".`);
+    }
+    if (typeof entry.public_key_pem !== "string" || !entry.public_key_pem.includes("BEGIN PUBLIC KEY")) {
+      throw new Error(`${relPath}: invalid public_key_pem for approver "${entry.approver_id}".`);
+    }
+    let pubObj;
+    try {
+      pubObj = crypto.createPublicKey(entry.public_key_pem);
+    } catch {
+      throw new Error(`${relPath}: unparseable public_key_pem for approver "${entry.approver_id}".`);
+    }
+    if (pubObj.asymmetricKeyType !== "ed25519") {
+      throw new Error(`${relPath}: public key for approver "${entry.approver_id}" must be Ed25519.`);
+    }
+    const canonicalPubPem = pubObj.export({ type: "spki", format: "pem" });
+    const canonicalFp = `ed25519:${sha256Hex(canonicalPubPem).slice(0, 16)}`;
+    const rawFp = `ed25519:${sha256Hex(entry.public_key_pem).slice(0, 16)}`;
+    if (entry.key_fingerprint !== canonicalFp && entry.key_fingerprint !== rawFp) {
+      throw new Error(`${relPath}: key_fingerprint mismatch for approver "${entry.approver_id}".`);
+    }
+    approvers.push(entry);
+  }
   return { relPath, approvers };
 }
 
 /**
  * Generates an Ed25519 keypair, storing ONLY the public key in `.geloforge/approvers.yaml`
- * and writing the private key outside project/harness trees (`mode 0o600`, no overwrite).
+ * (plus optional pinned external `--pub-out`) and writing the private key outside project/harness trees (`mode 0o600`, no overwrite).
  */
 export function generateApproverKeypair(options = {}) {
   const harnessDir = path.resolve(options.harnessDir || DEFAULT_HARNESS_DIR);
@@ -1086,11 +1200,26 @@ export function generateApproverKeypair(options = {}) {
   }
 
   const workspaceRoot = options.workspaceRoot ? path.resolve(options.workspaceRoot) : path.resolve(harnessDir, "..");
-  const privOutAbs = validatePrivateKeyOutPath(options.privateKeyOut, {
+  const privOutAbs = validateExternalKeyOutPath(options.privateKeyOut, {
     projectDir,
     harnessDir,
     workspaceRoot,
+    label: "--out",
+    allowInsideProject: false,
   });
+  let pubOutAbs = null;
+  if (options.publicKeyOut) {
+    pubOutAbs = validateExternalKeyOutPath(options.publicKeyOut, {
+      projectDir,
+      harnessDir,
+      workspaceRoot,
+      label: "--pub-out",
+      allowInsideProject: true,
+    });
+    if (pubOutAbs === privOutAbs) {
+      throw new Error("--pub-out and --out must point to separate files.");
+    }
+  }
 
   const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
   const publicKeyPem = publicKey.export({ type: "spki", format: "pem" });
@@ -1104,6 +1233,10 @@ export function generateApproverKeypair(options = {}) {
 
   fs.mkdirSync(path.dirname(privOutAbs), { recursive: true });
   fs.writeFileSync(privOutAbs, privateKeyPem, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  if (pubOutAbs) {
+    fs.mkdirSync(path.dirname(pubOutAbs), { recursive: true });
+    fs.writeFileSync(pubOutAbs, publicKeyPem, { encoding: "utf8", mode: 0o644, flag: "wx" });
+  }
 
   const regAbs = assertSafeWithinRoot(projectDir, registry.relPath);
   assertSafeAncestorChain(regAbs, projectDir, registry.relPath);
@@ -1130,6 +1263,7 @@ export function generateApproverKeypair(options = {}) {
     publicKeyPem,
     registryPath: registry.relPath,
     privateKeyPath: privOutAbs,
+    publicKeyPath: pubOutAbs,
     createdAt,
   };
 }
@@ -1163,12 +1297,51 @@ function buildApprovalSigningPayload({
   });
 }
 
+function validateSkillHistoryLedger(data, skillName, histRel) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error(`${histRel}: history ledger must be a YAML object.`);
+  }
+  if (data.skill_name !== skillName) {
+    throw new Error(`${histRel}: history skill_name "${data.skill_name}" mismatches "${skillName}".`);
+  }
+  if (!Array.isArray(data.revisions)) {
+    throw new Error(`${histRel}: history ledger missing "revisions" list.`);
+  }
+  const seenRevs = new Set();
+  for (const entry of data.revisions) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${histRel}: invalid revision entry.`);
+    }
+    if (typeof entry.revision !== "string" || !REVISION_REGEX.test(entry.revision)) {
+      throw new Error(`${histRel}: invalid revision ID "${entry.revision}".`);
+    }
+    if (seenRevs.has(entry.revision)) {
+      throw new Error(`${histRel}: duplicate revision ID "${entry.revision}" in history ledger.`);
+    }
+    seenRevs.add(entry.revision);
+    if (typeof entry.package_sha256 !== "string" || !SHA256_PREFIX_REGEX.test(entry.package_sha256)) {
+      throw new Error(`${histRel}: invalid package_sha256 for ${entry.revision}.`);
+    }
+    const expectedSnapRel = `.geloforge/skill-history/${skillName}/snapshots/${entry.revision}`;
+    const normSnap =
+      typeof entry.snapshot_path === "string"
+        ? entry.snapshot_path.replace(/\\/g, "/").replace(/^\.\//, "")
+        : "";
+    if (normSnap !== expectedSnapRel) {
+      throw new Error(
+        `${histRel}: forged or out-of-confinement snapshot_path "${entry.snapshot_path}" for ${entry.revision} (expected "${expectedSnapRel}").`
+      );
+    }
+  }
+}
+
 function readSkillHistoryData(projectDir, skillName) {
   const histRel = `.geloforge/skill-history/${skillName}/history.yaml`;
   const loaded = readSafeYamlWithinProject(projectDir, histRel);
   if (!loaded || !loaded.data) {
     return { histRel, exists: false, data: { schema_version: "1.0", skill_name: skillName, revisions: [] } };
   }
+  validateSkillHistoryLedger(loaded.data, skillName, histRel);
   return { histRel, exists: true, data: loaded.data };
 }
 
@@ -1511,6 +1684,45 @@ export function signSkillApproval(options = {}) {
   };
 }
 
+function assertValidIsoTimestamp(value, fieldLabel) {
+  if (typeof value !== "string" || value.trim().length < 10) {
+    throw new Error(`Invalid or missing ISO-8601 timestamp for ${fieldLabel}: "${value}".`);
+  }
+  const parsed = Date.parse(value.trim());
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid ISO-8601 timestamp for ${fieldLabel}: "${value}".`);
+  }
+  return parsed;
+}
+
+function findConsumedApprovalInHistory(projectDir, approvalId) {
+  const histRootRel = ".geloforge/skill-history";
+  const histRootAbs = assertSafeWithinRoot(projectDir, histRootRel);
+  if (!assertSafeDirNonSymlink(histRootAbs, histRootRel)) {
+    return null;
+  }
+  const entries = fs.readdirSync(histRootAbs, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    const childAbs = path.join(histRootAbs, entry.name);
+    const st = fs.lstatSync(childAbs);
+    if (st.isSymbolicLink()) {
+      throw new Error(`Refusing symbolic link/junction inside ${histRootRel}/${entry.name}`);
+    }
+    if (!st.isDirectory()) continue;
+    const histRel = `${histRootRel}/${entry.name}/history.yaml`;
+    const histAbs = assertSafeWithinRoot(projectDir, histRel);
+    if (!fs.existsSync(histAbs)) continue;
+    const loaded = readSafeYamlWithinProject(projectDir, histRel);
+    const revisions = Array.isArray(loaded?.data?.revisions) ? loaded.data.revisions : [];
+    for (const rev of revisions) {
+      if (typeof rev?.approval_ref === "string" && rev.approval_ref.toUpperCase() === approvalId) {
+        return { skillName: entry.name, revision: rev.revision, histRel };
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Verifies a cryptographic Ed25519 APPR-NNNN approval record fail-closed.
  */
@@ -1522,6 +1734,7 @@ export function verifySignedSkillApproval({
   approvalId,
   expectedAction,
   skillName,
+  expectedProposalId = null,
   targetRevision = null,
   expectedContentSha256,
   expectedBaseSha256 = null,
@@ -1541,8 +1754,21 @@ export function verifySignedSkillApproval({
   if (appr.status !== "approved") {
     throw new Error(`${loadedAppr.relPath}: approval status is "${appr.status}", expected "approved".`);
   }
-  if (appr.expires_at && Date.parse(appr.expires_at) < Date.parse(nowIso)) {
-    throw new Error(`${loadedAppr.relPath}: approval expired at ${appr.expires_at}.`);
+
+  const consumed = findConsumedApprovalInHistory(projectDir, loadedAppr.data.id);
+  if (consumed) {
+    throw new Error(
+      `Approval replay refused (${loadedAppr.relPath}): ${loadedAppr.data.id} was already consumed by skill "${consumed.skillName}" (${consumed.revision} in ${consumed.histRel}). Sign a fresh approval.`
+    );
+  }
+
+  assertValidIsoTimestamp(appr.decided_at, `${loadedAppr.relPath}: decided_at`);
+  const nowMs = assertValidIsoTimestamp(nowIso, "nowIso");
+  if (appr.expires_at !== null && appr.expires_at !== undefined) {
+    const expiresMs = assertValidIsoTimestamp(appr.expires_at, `${loadedAppr.relPath}: expires_at`);
+    if (expiresMs < nowMs) {
+      throw new Error(`${loadedAppr.relPath}: approval expired at ${appr.expires_at}.`);
+    }
   }
 
   const sa = appr.skill_authorization;
@@ -1554,9 +1780,19 @@ export function verifySignedSkillApproval({
   if (sa.signature_algorithm !== "ed25519" || !sa.signature_base64 || !sa.approver_id || !sa.key_fingerprint) {
     throw new Error(`${loadedAppr.relPath}: incomplete Ed25519 signature metadata.`);
   }
+  if (appr.decided_by !== sa.approver_id) {
+    throw new Error(
+      `${loadedAppr.relPath}: decided_by "${appr.decided_by}" mismatches skill_authorization.approver_id "${sa.approver_id}".`
+    );
+  }
   if (sa.action !== expectedAction || sa.skill_name !== skillName) {
     throw new Error(
       `${loadedAppr.relPath}: bound to action="${sa.action}" skill="${sa.skill_name}", expected action="${expectedAction}" skill="${skillName}".`
+    );
+  }
+  if (expectedProposalId !== null && sa.proposal_id !== expectedProposalId) {
+    throw new Error(
+      `${loadedAppr.relPath}: bound proposal_id "${sa.proposal_id}" mismatches "${expectedProposalId}".`
     );
   }
   if ((sa.target_revision || null) !== (targetRevision || null)) {
@@ -1578,11 +1814,33 @@ export function verifySignedSkillApproval({
     throw new Error(`Approval evidence binding mismatch (${loadedAppr.relPath}): source evidence changed after signing.`);
   }
 
+  if (typeof sa.signature_base64 !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(sa.signature_base64)) {
+    throw new Error(`Cryptographic Ed25519 signature verification failed for ${loadedAppr.relPath}: malformed base64 encoding.`);
+  }
+  const sigBuf = Buffer.from(sa.signature_base64, "base64");
+  if (sigBuf.length !== 64) {
+    throw new Error(
+      `Cryptographic Ed25519 signature verification failed for ${loadedAppr.relPath}: invalid signature byte length (${sigBuf.length}, expected 64).`
+    );
+  }
+
   let trustedPubPem;
   let trustedFingerprint;
+  let keyTrustSource;
+  let inRepoRegistryDirty = false;
   if (publicKeyPath) {
+    keyTrustSource = "external_pinned_public_key";
     const pubAbs = validateExternalFileReadPath(publicKeyPath, projectDir, "--public-key", { forbidInsideRepo: false });
-    const pubObj = crypto.createPublicKey(fs.readFileSync(pubAbs, "utf8"));
+    const rawPubPem = fs.readFileSync(pubAbs, "utf8");
+    if (hasSecretContent(rawPubPem)) {
+      throw new Error("--public-key file must contain only an SPKI public key, never private key material.");
+    }
+    let pubObj;
+    try {
+      pubObj = crypto.createPublicKey(rawPubPem);
+    } catch {
+      throw new Error(`Unparseable --public-key PEM file: ${pubAbs}`);
+    }
     if (pubObj.asymmetricKeyType !== "ed25519") {
       throw new Error(`Pinned --public-key must be Ed25519 (got ${pubObj.asymmetricKeyType}).`);
     }
@@ -1592,15 +1850,34 @@ export function verifySignedSkillApproval({
       throw new Error(`Pinned --public-key fingerprint (${trustedFingerprint}) mismatches approval (${sa.key_fingerprint}).`);
     }
   } else {
+    keyTrustSource = "in_repo_registry";
     const registry = loadApproversRegistry(projectDir);
     const regEntry = registry.approvers.find((a) => a.approver_id === sa.approver_id);
     if (!regEntry) {
       throw new Error(`Approver "${sa.approver_id}" not found in ${registry.relPath}.`);
     }
-    trustedPubPem = regEntry.public_key_pem;
+    let regPubObj;
+    try {
+      regPubObj = crypto.createPublicKey(regEntry.public_key_pem);
+    } catch {
+      throw new Error(`Unparseable public key for approver "${sa.approver_id}" in ${registry.relPath}.`);
+    }
+    if (regPubObj.asymmetricKeyType !== "ed25519") {
+      throw new Error(`Registered key for approver "${sa.approver_id}" must be Ed25519.`);
+    }
+    trustedPubPem = regPubObj.export({ type: "spki", format: "pem" });
     trustedFingerprint = `ed25519:${sha256Hex(trustedPubPem).slice(0, 16)}`;
-    if (regEntry.key_fingerprint !== sa.key_fingerprint || trustedFingerprint !== sa.key_fingerprint) {
+    const rawFp = `ed25519:${sha256Hex(regEntry.public_key_pem).slice(0, 16)}`;
+    if (
+      regEntry.key_fingerprint !== sa.key_fingerprint ||
+      (trustedFingerprint !== sa.key_fingerprint && rawFp !== sa.key_fingerprint)
+    ) {
       throw new Error(`Public key fingerprint mismatch for approver "${sa.approver_id}".`);
+    }
+    const gitInfo = getGitRepoInfo(projectDir);
+    if (gitInfo.available) {
+      const gs = getGitStatusScoped(projectDir);
+      inRepoRegistryDirty = gs.changedFiles.includes(registry.relPath);
     }
   }
 
@@ -1617,12 +1894,17 @@ export function verifySignedSkillApproval({
     decidedAt: appr.decided_at,
     expiresAt: appr.expires_at,
   });
-  const ok = crypto.verify(
-    null,
-    Buffer.from(payloadStr, "utf8"),
-    crypto.createPublicKey(trustedPubPem),
-    Buffer.from(sa.signature_base64, "base64")
-  );
+  let ok = false;
+  try {
+    ok = crypto.verify(
+      null,
+      Buffer.from(payloadStr, "utf8"),
+      crypto.createPublicKey(trustedPubPem),
+      sigBuf
+    );
+  } catch {
+    ok = false;
+  }
   if (!ok) {
     throw new Error(`Cryptographic Ed25519 signature verification failed for ${loadedAppr.relPath}.`);
   }
@@ -1633,7 +1915,38 @@ export function verifySignedSkillApproval({
     tier: "cryptographic_ed25519",
     approverId: sa.approver_id,
     keyFingerprint: sa.key_fingerprint,
+    keyTrustSource,
+    inRepoRegistryDirty,
   };
+}
+
+function stageSnapshotAtomic(srcDir, targetSnapAbs, expectedDigest, revLabel) {
+  let exists = false;
+  try {
+    fs.lstatSync(targetSnapAbs);
+    exists = true;
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      throw err;
+    }
+  }
+  if (exists) {
+    throw new Error(`Snapshot target already exists (refusing overwrite): ${targetSnapAbs}`);
+  }
+  const snapParent = path.dirname(targetSnapAbs);
+  fs.mkdirSync(snapParent, { recursive: true });
+  const tempSnap = path.join(snapParent, `.geloforge-snap-tmp-${crypto.randomBytes(6).toString("hex")}`);
+  try {
+    copyTreeSafe(srcDir, tempSnap);
+    const writtenDigest = computeSkillPackageDigest(tempSnap).digest;
+    if (writtenDigest !== expectedDigest) {
+      throw new Error(`Snapshot verification failed after copy for ${revLabel}.`);
+    }
+    renameSyncRetry(tempSnap, targetSnapAbs);
+  } catch (err) {
+    removeDirSafe(tempSnap);
+    throw err;
+  }
 }
 
 function recordHistoryRevision({
@@ -1657,74 +1970,97 @@ function recordHistoryRevision({
   assertSafeDirNonSymlink(histBaseAbs, histBaseRel);
 
   const histInfo = readSkillHistoryData(projectDir, skillName);
+  const histAbs = assertSafeWithinRoot(projectDir, histInfo.histRel);
+  const previousHistoryRaw = histInfo.exists ? fs.readFileSync(histAbs, "utf8") : null;
   const revisions = [...(histInfo.data.revisions || [])];
+  const createdSnapshotDirs = [];
 
-  // If upgrading a manually added active skill with no history yet, capture rev-0000 baseline first
-  if (revisions.length === 0 && action === "promote_update" && baseSha256) {
-    const activeAbs = assertSafeWithinRoot(projectDir, `.agents/skills/${skillName}`);
-    const snap0Rel = `${histBaseRel}/snapshots/rev-0000`;
-    const snap0Abs = assertSafeWithinRoot(projectDir, snap0Rel);
-    if (!fs.existsSync(snap0Abs)) {
-      copyTreeSafe(activeAbs, snap0Abs);
+  try {
+    // If upgrading a manually added active skill with no history yet, capture rev-0000 baseline first
+    if (revisions.length === 0 && action === "promote_update" && baseSha256) {
+      const activeAbs = assertSafeWithinRoot(projectDir, `.agents/skills/${skillName}`);
+      const snap0Rel = `${histBaseRel}/snapshots/rev-0000`;
+      const snap0Abs = assertSafeWithinRoot(projectDir, snap0Rel);
+      stageSnapshotAtomic(activeAbs, snap0Abs, baseSha256, "rev-0000");
+      createdSnapshotDirs.push(snap0Abs);
+      revisions.push({
+        revision: "rev-0000",
+        action: "baseline_snapshot",
+        package_sha256: baseSha256,
+        base_sha256: null,
+        snapshot_path: snap0Rel,
+        approval_ref: null,
+        authorization_tier: "preexisting_baseline",
+        approver_id: null,
+        evidence_digests: [],
+        restored_from_revision: null,
+        reason: "Captured preexisting .agents/skills baseline before first adaptive update.",
+        recorded_at: createdAt,
+      });
     }
-    revisions.push({
-      revision: "rev-0000",
-      action: "baseline_snapshot",
-      package_sha256: baseSha256,
-      base_sha256: null,
-      snapshot_path: snap0Rel,
-      approval_ref: null,
-      authorization_tier: "preexisting_baseline",
-      approver_id: null,
-      evidence_digests: [],
-      restored_from_revision: null,
-      reason: "Captured preexisting .agents/skills baseline before first adaptive update.",
+
+    const nextNum =
+      revisions.reduce((max, r) => {
+        const m = /^rev-(\d{4})$/.exec(r.revision || "");
+        return m ? Math.max(max, Number.parseInt(m[1], 10)) : max;
+      }, 0) + 1;
+    const revId = `rev-${String(nextNum).padStart(4, "0")}`;
+    const snapRel = `${histBaseRel}/snapshots/${revId}`;
+    const snapAbs = assertSafeWithinRoot(projectDir, snapRel);
+
+    stageSnapshotAtomic(sourceDirToSnapshot, snapAbs, packageSha256, revId);
+    createdSnapshotDirs.push(snapAbs);
+
+    const entry = {
+      revision: revId,
+      action,
+      package_sha256: packageSha256,
+      base_sha256: baseSha256 || null,
+      snapshot_path: snapRel,
+      approval_ref: approvalId || null,
+      authorization_tier: authorizationTier,
+      approver_id: approverId || null,
+      evidence_digests: [...(evidenceDigests || [])],
+      restored_from_revision: restoredFromRevision,
+      reason,
       recorded_at: createdAt,
+    };
+    revisions.push(entry);
+
+    const ledger = {
+      schema_version: "1.0",
+      skill_name: skillName,
+      revisions,
+    };
+    atomicWriteFile(histAbs, serializeYaml(ledger, { headerComment: "Append-only GeloForge skill revision ledger" }), {
+      allowOverwrite: true,
     });
+
+    return {
+      revision: revId,
+      snapshotRel: snapRel,
+      snapshotAbs: snapAbs,
+      historyRel: histInfo.histRel,
+      historyAbs: histAbs,
+      previousHistoryRaw,
+      createdSnapshotDirs,
+      entry,
+    };
+  } catch (err) {
+    try {
+      if (previousHistoryRaw !== null) {
+        atomicWriteFile(histAbs, previousHistoryRaw, { allowOverwrite: true });
+      } else if (fs.existsSync(histAbs)) {
+        fs.rmSync(histAbs, { force: true });
+      }
+    } catch {
+      // Best-effort restore
+    }
+    for (const sDir of createdSnapshotDirs) {
+      removeDirSafe(sDir);
+    }
+    throw err;
   }
-
-  const nextNum =
-    revisions.reduce((max, r) => {
-      const m = /^rev-(\d{4})$/.exec(r.revision || "");
-      return m ? Math.max(max, Number.parseInt(m[1], 10)) : max;
-    }, 0) + 1;
-  const revId = `rev-${String(nextNum).padStart(4, "0")}`;
-  const snapRel = `${histBaseRel}/snapshots/${revId}`;
-  const snapAbs = assertSafeWithinRoot(projectDir, snapRel);
-
-  copyTreeSafe(sourceDirToSnapshot, snapAbs);
-  const writtenDigest = computeSkillPackageDigest(snapAbs).digest;
-  if (writtenDigest !== packageSha256) {
-    removeDirSafe(snapAbs);
-    throw new Error(`Snapshot verification failed after copy for ${revId}.`);
-  }
-
-  const entry = {
-    revision: revId,
-    action,
-    package_sha256: packageSha256,
-    base_sha256: baseSha256 || null,
-    snapshot_path: snapRel,
-    approval_ref: approvalId || null,
-    authorization_tier: authorizationTier,
-    approver_id: approverId || null,
-    evidence_digests: [...(evidenceDigests || [])],
-    restored_from_revision: restoredFromRevision,
-    reason,
-    recorded_at: createdAt,
-  };
-  revisions.push(entry);
-
-  const ledger = {
-    schema_version: "1.0",
-    skill_name: skillName,
-    revisions,
-  };
-  atomicWriteFile(assertSafeWithinRoot(projectDir, histInfo.histRel), serializeYaml(ledger, { headerComment: "Append-only GeloForge skill revision ledger" }), {
-    allowOverwrite: true,
-  });
-
-  return { revision: revId, snapshotRel: snapRel, historyRel: histInfo.histRel, entry };
 }
 
 function assertAuthorizedOperation({
@@ -1734,6 +2070,7 @@ function assertAuthorizedOperation({
   manifest,
   expectedAction,
   skillName,
+  expectedProposalId = null,
   targetRevision = null,
   contentSha256,
   baseSha256,
@@ -1754,6 +2091,12 @@ function assertAuthorizedOperation({
       `Security refusal: self-reported --approved-by "${approvedBy}" cannot authorize "${expectedAction}". Use --approval <APPR-NNNN> (Ed25519), --mode pr-branch, or explicit --interactive TTY confirmation.`
     );
   }
+  if (approvalId && mode) {
+    throw new Error("Cannot combine --approval with --mode or --interactive; specify exactly one authorization mode.");
+  }
+  if (publicKeyPath && !approvalId) {
+    throw new Error("--public-key requires --approval <APPR-NNNN>.");
+  }
 
   const chosenMode = approvalId ? "approval" : mode || null;
   if (!chosenMode || !ALLOWED_AUTHORIZATION_MODES.has(chosenMode)) {
@@ -1771,6 +2114,7 @@ function assertAuthorizedOperation({
       approvalId,
       expectedAction,
       skillName,
+      expectedProposalId,
       targetRevision,
       expectedContentSha256: contentSha256,
       expectedBaseSha256: baseSha256,
@@ -1784,6 +2128,8 @@ function assertAuthorizedOperation({
       approvalRelPath: verified.relPath,
       approverId: verified.approverId,
       keyFingerprint: verified.keyFingerprint,
+      keyTrustSource: verified.keyTrustSource,
+      inRepoRegistryDirty: verified.inRepoRegistryDirty,
       prBranch: null,
     };
   }
@@ -1845,6 +2191,8 @@ function assertAuthorizedOperation({
       approvalRelPath: appr.relPath,
       approverId: "local-interactive-tty",
       keyFingerprint: null,
+      keyTrustSource: null,
+      inRepoRegistryDirty: false,
       prBranch: null,
     };
   }
@@ -1891,6 +2239,8 @@ function assertAuthorizedOperation({
     approvalRelPath: null,
     approverId: null,
     keyFingerprint: null,
+    keyTrustSource: null,
+    inRepoRegistryDirty: false,
     prBranch: targetBranch,
   };
 }
@@ -1908,8 +2258,8 @@ function isTrackedInGitHead(projectDir, relPath) {
 }
 
 /**
- * Shared atomic staging, history ledger update, swap, and optional PR-branch commit helper
- * used by both skill promotion and rollback.
+ * Shared transactional staging, history ledger update, atomic swap, proposal retirement,
+ * and optional PR-branch commit helper with full failure rollback.
  */
 function applyAuthorizedSkillPackageChange({
   projectDir,
@@ -1926,7 +2276,7 @@ function applyAuthorizedSkillPackageChange({
   restoredFromRevision = null,
   reason,
   targetRecords,
-  afterSwapHook = null,
+  proposalMetaUpdate = null,
   extraStagePaths = [],
 }) {
   const activeRel = `.agents/skills/${skillName}`;
@@ -1935,23 +2285,83 @@ function applyAuthorizedSkillPackageChange({
   fs.mkdirSync(skillsParentAbs, { recursive: true });
   assertSafeDirNonSymlink(skillsParentAbs, ".agents/skills");
 
-  // For --mode pr-branch, switch to dedicated PR branch BEFORE mutating working tree files on main
-  if (auth.tier === "git_pr_review_pending") {
-    execFileSync("git", ["-C", projectDir, "checkout", "-b", auth.prBranch], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  }
-
   const stageDir = path.join(skillsParentAbs, `.geloforge-stage-${crypto.randomBytes(6).toString("hex")}`);
-  let revInfo;
+  let checkedOutPrBranch = false;
+  let origHeadRef = null;
+  let pendingAppr = null;
+  let revInfo = null;
+  let swapHandle = null;
+  let proposalBackupDir = null;
+  let origMetaRaw = null;
+  let metaAbs = null;
+  let prDetails = null;
+
   try {
+    if (auth.tier === "git_pr_review_pending") {
+      const curBranch = execFileSync("git", ["-C", projectDir, "rev-parse", "--abbrev-ref", "HEAD"], {
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      origHeadRef =
+        curBranch === "HEAD"
+          ? execFileSync("git", ["-C", projectDir, "rev-parse", "HEAD"], {
+              encoding: "utf8",
+              windowsHide: true,
+              stdio: ["ignore", "pipe", "pipe"],
+            }).trim()
+          : curBranch;
+
+      execFileSync("git", ["-C", projectDir, "checkout", "-b", auth.prBranch], {
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      checkedOutPrBranch = true;
+
+      pendingAppr = createApprovalRecordFile({
+        projectDir,
+        schemasDir,
+        projectPaths,
+        title: `PR Review Pending ${action} ${skillName}`.slice(0, 80),
+        status: "pending",
+        boundaryCategory: action === "rollback" ? "destructive_action" : "security_boundary",
+        requestedBy: "geloforge-cli",
+        decidedBy: null,
+        timestamp,
+        expiresAt: null,
+        targetRecords,
+        rationale: reason,
+        riskAssessment:
+          "STAGED ON REVIEW BRANCH ONLY: Requires repository branch protection and an independent human PR approval before merging to main. Without protected-branch enforcement, Git PR review is advisory only.",
+        conditions: [
+          `Must be merged to protected main after human review on branch ${auth.prBranch}.`,
+          `Verify ${expectedDigest} matches reviewed .agents/skills/${skillName}.`,
+        ],
+        skillAuthorization: {
+          action,
+          skill_name: skillName,
+          proposal_id: action === "rollback" ? null : `PROP-${skillName}`,
+          target_revision: restoredFromRevision,
+          content_sha256: expectedDigest,
+          base_sha256: baseSha256,
+          evidence_digests: evidenceDigests,
+          authorization_tier: "git_pr_review_pending",
+          approver_id: null,
+          key_fingerprint: null,
+          signature_algorithm: null,
+          signature_base64: null,
+        },
+        slugHint: `pr-${action}-${skillName}`,
+      });
+    }
+
     copyTreeSafe(sourcePackageDir, stageDir);
     if (computeSkillPackageDigest(stageDir).digest !== expectedDigest) {
       throw new Error(`Staged package digest mismatch; aborting ${action}.`);
     }
 
+    const effectiveApprovalId = pendingAppr ? pendingAppr.id : auth.approvalId;
     revInfo = recordHistoryRevision({
       projectDir,
       skillName,
@@ -1959,7 +2369,7 @@ function applyAuthorizedSkillPackageChange({
       sourceDirToSnapshot: stageDir,
       packageSha256: expectedDigest,
       baseSha256,
-      approvalId: auth.approvalId || "pending-pr-review",
+      approvalId: effectiveApprovalId,
       authorizationTier: auth.tier,
       approverId: auth.approverId,
       evidenceDigests,
@@ -1968,86 +2378,137 @@ function applyAuthorizedSkillPackageChange({
       reason,
     });
 
-    atomicReplaceDirectory(stageDir, activeAbs);
-    if (typeof afterSwapHook === "function") {
-      afterSwapHook(revInfo);
+    swapHandle = stageAtomicSwap(stageDir, activeAbs);
+
+    if (proposalMetaUpdate) {
+      metaAbs = assertSafeWithinRoot(projectDir, proposalMetaUpdate.metaRel);
+      origMetaRaw = fs.existsSync(metaAbs) ? fs.readFileSync(metaAbs, "utf8") : null;
+      const updatedMeta = {
+        ...proposalMetaUpdate.meta,
+        status: auth.tier === "git_pr_review_pending" ? "pending_pr_review" : "promoted",
+        promoted_at: timestamp,
+        promoted_revision: revInfo.revision,
+        authorization_tier: auth.tier,
+        approval_ref: effectiveApprovalId,
+      };
+      atomicWriteFile(metaAbs, serializeYaml(updatedMeta), { allowOverwrite: true });
+      const propParent = path.dirname(proposalMetaUpdate.proposalDir);
+      proposalBackupDir = path.join(propParent, `.geloforge-prop-backup-${crypto.randomBytes(6).toString("hex")}`);
+      renameSyncRetry(proposalMetaUpdate.proposalDir, proposalBackupDir);
+    }
+
+    if (auth.tier === "git_pr_review_pending") {
+      const startBranch = getGitRepoInfo(projectDir).branch || auth.prBranch;
+      const snapRels = (revInfo.createdSnapshotDirs || []).map((abs) => path.relative(projectDir, abs).replace(/\\/g, "/"));
+      const stageList = Array.from(
+        new Set([activeRel, revInfo.historyRel, ...snapRels, ...extraStagePaths, pendingAppr.relPath])
+      ).filter((rel) => fs.existsSync(assertSafeWithinRoot(projectDir, rel)) || isTrackedInGitHead(projectDir, rel));
+
+      execFileSync("git", ["-C", projectDir, "add", "--all", "--", ...stageList], {
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      execFileSync(
+        "git",
+        ["-C", projectDir, "commit", "-m", `skills(${skillName}): ${action} (${expectedDigest.slice(0, 19)})`],
+        { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }
+      );
+      const commitSha = execFileSync("git", ["-C", projectDir, "rev-parse", "HEAD"], {
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      prDetails = {
+        approvalId: pendingAppr.id,
+        approvalRelPath: pendingAppr.relPath,
+        branch: startBranch,
+        commitSha,
+      };
+    }
+
+    swapHandle.commit();
+    if (proposalBackupDir) {
+      removeDirSafe(proposalBackupDir);
     }
   } catch (err) {
+    try {
+      if (swapHandle) swapHandle.rollback();
+    } catch {
+      // Best-effort restore
+    }
+    try {
+      if (proposalBackupDir && fs.existsSync(proposalBackupDir) && proposalMetaUpdate && !fs.existsSync(proposalMetaUpdate.proposalDir)) {
+        renameSyncRetry(proposalBackupDir, proposalMetaUpdate.proposalDir);
+      }
+    } catch {
+      // Best-effort restore
+    }
+    try {
+      if (metaAbs) {
+        if (origMetaRaw !== null) {
+          atomicWriteFile(metaAbs, origMetaRaw, { allowOverwrite: true });
+        } else if (fs.existsSync(metaAbs)) {
+          fs.rmSync(metaAbs, { force: true });
+        }
+      }
+    } catch {
+      // Best-effort restore
+    }
+    try {
+      if (revInfo) {
+        if (revInfo.previousHistoryRaw !== null) {
+          atomicWriteFile(revInfo.historyAbs, revInfo.previousHistoryRaw, { allowOverwrite: true });
+        } else if (fs.existsSync(revInfo.historyAbs)) {
+          fs.rmSync(revInfo.historyAbs, { force: true });
+        }
+        for (const sDir of revInfo.createdSnapshotDirs || []) {
+          removeDirSafe(sDir);
+        }
+      }
+    } catch {
+      // Best-effort restore
+    }
+    try {
+      if (pendingAppr && fs.existsSync(pendingAppr.absPath)) {
+        fs.rmSync(pendingAppr.absPath, { force: true });
+      }
+    } catch {
+      // Best-effort restore
+    }
     removeDirSafe(stageDir);
+    if (checkedOutPrBranch && origHeadRef) {
+      try {
+        execFileSync("git", ["-C", projectDir, "reset", "--mixed"], {
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        execFileSync("git", ["-C", projectDir, "checkout", origHeadRef], {
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        execFileSync("git", ["-C", projectDir, "branch", "-D", auth.prBranch], {
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch {
+        // Best-effort Git branch cleanup
+      }
+    }
     throw err;
   }
 
-  let prDetails = null;
-  if (auth.tier === "git_pr_review_pending") {
-    const startBranch = getGitRepoInfo(projectDir).branch || auth.prBranch;
-    const appr = createApprovalRecordFile({
-      projectDir,
-      schemasDir,
-      projectPaths,
-      title: `PR Review Pending ${action} ${skillName}`.slice(0, 80),
-      status: "pending",
-      boundaryCategory: action === "rollback" ? "destructive_action" : "security_boundary",
-      requestedBy: "geloforge-cli",
-      decidedBy: null,
-      timestamp,
-      expiresAt: null,
-      targetRecords,
-      rationale: reason,
-      riskAssessment:
-        "STAGED ON REVIEW BRANCH ONLY: Requires repository branch protection and an independent human PR approval before merging to main. Without protected-branch enforcement, Git PR review is advisory only.",
-      conditions: [
-        `Must be merged to protected main after human review on branch ${auth.prBranch}.`,
-        `Verify ${expectedDigest} matches reviewed .agents/skills/${skillName}.`,
-      ],
-      skillAuthorization: {
-        action,
-        skill_name: skillName,
-        proposal_id: action === "rollback" ? null : `PROP-${skillName}`,
-        target_revision: restoredFromRevision,
-        content_sha256: expectedDigest,
-        base_sha256: baseSha256,
-        evidence_digests: evidenceDigests,
-        authorization_tier: "git_pr_review_pending",
-        approver_id: null,
-        key_fingerprint: null,
-        signature_algorithm: null,
-        signature_base64: null,
-      },
-      slugHint: `pr-${action}-${skillName}`,
-    });
-
-    const stageList = Array.from(
-      new Set([activeRel, revInfo.historyRel, revInfo.snapshotRel, ...extraStagePaths, appr.relPath])
-    ).filter((rel) => fs.existsSync(assertSafeWithinRoot(projectDir, rel)) || isTrackedInGitHead(projectDir, rel));
-    execFileSync("git", ["-C", projectDir, "add", "--all", "--", ...stageList], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    execFileSync(
-      "git",
-      ["-C", projectDir, "commit", "-m", `skills(${skillName}): ${action} (${expectedDigest.slice(0, 19)})`],
-      { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }
-    );
-    const commitSha = execFileSync("git", ["-C", projectDir, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-    prDetails = {
-      approvalId: appr.id,
-      approvalRelPath: appr.relPath,
-      branch: startBranch,
-      commitSha,
-    };
+  let authorizationWarning = null;
+  if (auth.tier === "local_interactive_tty") {
+    authorizationWarning =
+      "Authorized via local TTY confirmation (weaker than independent Ed25519 signature or protected-branch PR review).";
+  } else if (auth.tier === "git_pr_review_pending") {
+    authorizationWarning = `Committed on branch "${prDetails.branch}" ONLY (not pushed). Security depends on Git branch protection & required human PR reviews before merging.`;
+  } else if (auth.tier === "cryptographic_ed25519" && auth.keyTrustSource === "in_repo_registry") {
+    authorizationWarning =
+      `Verified against mutable in-repo .geloforge/approvers.yaml${auth.inRepoRegistryDirty ? " (uncommitted in Git)" : ""}. ` +
+      "Local processes/agents with workspace write access can run keygen or edit this file; pin external --public-key <file> or enforce protected-branch PR reviews + CODEOWNERS for independent human authorization.";
   }
-
-  const authorizationWarning =
-    auth.tier === "local_interactive_tty"
-      ? "Authorized via local TTY confirmation (weaker than independent Ed25519 signature or protected-branch PR review)."
-      : auth.tier === "git_pr_review_pending"
-        ? `Committed on branch "${prDetails.branch}" ONLY (not pushed). Security depends on Git branch protection & required human PR reviews before merging.`
-        : null;
 
   return {
     activeRel,
@@ -2089,6 +2550,7 @@ export function promoteSkillProposal(options = {}) {
     manifest,
     expectedAction: gate.action,
     skillName,
+    expectedProposalId: gate.meta.proposal_id,
     targetRevision: null,
     contentSha256: gate.candidateDigest,
     baseSha256: gate.currentBaseSha,
@@ -2122,19 +2584,10 @@ export function promoteSkillProposal(options = {}) {
     reason: gate.meta.reason,
     targetRecords: [activeRel, ...gate.bundle.evidenceList.map((e) => e.relPath)],
     extraStagePaths: [gate.metaRel, gate.proposalRel],
-    afterSwapHook: (revInfo) => {
-      const updatedMeta = {
-        ...gate.meta,
-        status: "promoted",
-        promoted_at: timestamp,
-        promoted_revision: revInfo.revision,
-        authorization_tier: auth.tier,
-        approval_ref: auth.approvalId || "pending-pr-review",
-      };
-      atomicWriteFile(assertSafeWithinRoot(projectDir, gate.metaRel), serializeYaml(updatedMeta), {
-        allowOverwrite: true,
-      });
-      removeDirSafe(gate.proposalDir);
+    proposalMetaUpdate: {
+      metaRel: gate.metaRel,
+      meta: gate.meta,
+      proposalDir: gate.proposalDir,
     },
   });
 
@@ -2148,6 +2601,7 @@ export function promoteSkillProposal(options = {}) {
     historyRel: applied.revInfo.historyRel,
     candidateDigest: gate.candidateDigest,
     authorizationTier: auth.tier,
+    keyTrustSource: auth.keyTrustSource || null,
     approvalId: applied.prDetails ? applied.prDetails.approvalId : auth.approvalId,
     approvalRelPath: applied.prDetails ? applied.prDetails.approvalRelPath : auth.approvalRelPath,
     prBranch: applied.prDetails ? applied.prDetails.branch : null,
@@ -2284,6 +2738,7 @@ export function rollbackSkill(options = {}) {
     historyRel: applied.revInfo.historyRel,
     snapshotRel: applied.revInfo.snapshotRel,
     authorizationTier: auth.tier,
+    keyTrustSource: auth.keyTrustSource || null,
     approvalId: applied.prDetails ? applied.prDetails.approvalId : auth.approvalId,
     approvalRelPath: applied.prDetails ? applied.prDetails.approvalRelPath : auth.approvalRelPath,
     prBranch: applied.prDetails ? applied.prDetails.branch : null,

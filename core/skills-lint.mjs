@@ -17,7 +17,7 @@ const HIDDEN_UNICODE_REGEX = /[\u202A-\u202E\u2066-\u2069\u200B-\u200F\u2060\uFE
 
 const INJECTION_OVERRIDE_PATTERNS = [
   /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+)?(?:previous|prior|above|system|developer|harness|safety)\s+(?:instructions?|rules?|policies?|prompts?|constraints?)\b/i,
-  /\b(?:override|disable|bypass|ignore)\s+(?:the\s+)?(?:a0|approval(?:\s+gate|\s+boundaries)?|security\s+policies?|guardrails?)\b/i,
+  /\b(?:override|disable|bypass|ignore|skip)\s+(?:the\s+)?(?:a0|quarantine|approval(?:\s+gate|\s+boundaries)?|human\s+(?:approval|review|authorization)|security\s+policies?|guardrails?)\b/i,
   /\b(?:do\s+not|never)\s+(?:tell|inform|show|mention\s+to)\s+(?:the\s+)?user\b/i,
   /\bconceal\s+(?:this|these\s+actions?|output)\s+from\s+(?:the\s+)?user\b/i,
   /\bsystem\s+prompt\s+override\b/i,
@@ -37,7 +37,7 @@ const EXFILTRATION_PATTERNS = [
 ];
 
 const AUTO_EXEC_CLAIM_PATTERNS = [
-  /\b(?:automatically\s+execute|silently\s+run|without\s+(?:asking|user\s+confirmation)|auto[- ]approve)\b/i,
+  /\b(?:automatically\s+execute|silently\s+run|without\s+(?:asking|user\s+confirmation|human\s+(?:approval|review|authorization))|auto[- ]approve)\b/i,
 ];
 
 const OBFUSCATED_EXEC_PATTERNS = [
