@@ -17,6 +17,17 @@ import { compileContext, estimateTokens } from "../core/context-compiler.mjs";
 import { buildCodebaseMap } from "../core/codebase-map.mjs";
 import { compileSkillsSection, discoverSkills } from "../core/skills.mjs";
 import { lintDiscoveredSkills } from "../core/skills-lint.mjs";
+import {
+  draftSkillFromExperience,
+  generateApproverKeypair,
+  getSkillHistory,
+  promoteSkillProposal,
+  proposeSkillUpdate,
+  rollbackSkill,
+  signSkillApproval,
+} from "../core/skills-lifecycle.mjs";
+import { captureEvidence } from "../core/evidence-capture.mjs";
+import { createTask } from "../core/task-manager.mjs";
 import { tokenizeKeywords } from "../core/text-utils.mjs";
 import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
 import { validateProject } from "../core/project-validator.mjs";
@@ -417,6 +428,7 @@ function runBenchmark() {
     runCodebaseMapBenchmarks(tmp);
     runHandoffBenchmark(tmp);
     runSkillsBenchmark(tmp);
+    runAdaptiveSkillsBenchmark(tmp);
 
     console.log("\nNote: Benchmark measures deterministic file/outline/handoff metrics on synthetic repositories.");
     console.log("      Live LLM task accuracy and vendor token billing are NOT measured without real model execution.");
@@ -751,6 +763,115 @@ Never auto-trusted.
   console.log(`  - Tier 1 relevant recall / leakage    : ${tier1RelevantHit}/1 selected / ${tier1UnrelatedLeaked} unrelated loaded`);
   console.log(`  - Progressive vs naive eager bytes    : ${progBytes} bytes (~${r1.estimatedTokens} est. tokens) vs ${naiveBytes} bytes (~${Math.ceil(naiveBytes / 4)} raw; ${savingsPct}% smaller)`);
   console.log(`  - Discover+lint+select latency / det. : ${elapsedMs.toFixed(2)} ms / ${r1.markdownSection === r2.markdownSection}`);
+  console.log(`  - Memory delta (heap / rss)           : ${heapDeltaMb} MB / ${rssDeltaMb} MB`);
+}
+
+function runAdaptiveSkillsBenchmark(tmp) {
+  console.log("\n=== GeloForge Adaptive Skills Lifecycle Benchmark ===");
+  const projDir = path.join(tmp, "adaptive-bench");
+  bootstrapProject({ name: "Adaptive Bench App", dest: projDir, git: false });
+  const t = createTask({ projectDir: projDir, title: "Smoke verification benchmark", activate: true, harnessDir: HARNESS_DIR });
+  const ev = captureEvidence({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    taskId: t.id,
+    name: "Smoke test",
+    commandArgv: [process.execPath, "-e", "process.exit(0)"],
+  });
+
+  const memBefore = process.memoryUsage();
+  const t0 = performance.now();
+  draftSkillFromExperience({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    evidenceIds: [ev.id],
+    skillName: "bench-verify",
+    createdAt: "2026-11-20T00:00:00Z",
+  });
+  const keyPath = path.join(tmp, "bench-owner.pem");
+  generateApproverKeypair({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    workspaceRoot: path.resolve(HARNESS_DIR, ".."),
+    approverId: "bench-owner",
+    privateKeyOut: keyPath,
+    createdAt: "2026-11-20T00:00:00Z",
+  });
+  const sig1 = signSkillApproval({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    action: "promote",
+    skillName: "bench-verify",
+    approverId: "bench-owner",
+    privateKeyPath: keyPath,
+    decidedAt: "2026-11-20T00:01:00Z",
+  });
+  const prom1 = promoteSkillProposal({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    proposalName: "bench-verify",
+    approvalId: sig1.approvalId,
+    createdAt: "2026-11-20T00:02:00Z",
+  });
+  const v1Raw = fs.readFileSync(path.join(projDir, ".agents", "skills", "bench-verify", "SKILL.md"));
+
+  proposeSkillUpdate({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    skillName: "bench-verify",
+    evidenceIds: [ev.id],
+    reason: "Add bounded retry check",
+    appendNote: "Verify bounded retries explicitly.",
+    createdAt: "2026-11-20T00:03:00Z",
+  });
+  const sig2 = signSkillApproval({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    action: "promote",
+    skillName: "bench-verify",
+    approverId: "bench-owner",
+    privateKeyPath: keyPath,
+    decidedAt: "2026-11-20T00:04:00Z",
+  });
+  promoteSkillProposal({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    proposalName: "bench-verify",
+    approvalId: sig2.approvalId,
+    createdAt: "2026-11-20T00:05:00Z",
+  });
+
+  const sigRb = signSkillApproval({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    action: "rollback",
+    skillName: "bench-verify",
+    targetRevision: "rev-0001",
+    approverId: "bench-owner",
+    privateKeyPath: keyPath,
+    decidedAt: "2026-11-20T00:06:00Z",
+  });
+  rollbackSkill({
+    projectDir: projDir,
+    harnessDir: HARNESS_DIR,
+    skillName: "bench-verify",
+    targetRevision: "rev-0001",
+    approvalId: sigRb.approvalId,
+    createdAt: "2026-11-20T00:07:00Z",
+  });
+  const elapsedMs = performance.now() - t0;
+  const memAfter = process.memoryUsage();
+
+  const restoredRaw = fs.readFileSync(path.join(projDir, ".agents", "skills", "bench-verify", "SKILL.md"));
+  const hist = getSkillHistory({ projectDir: projDir, skillName: "bench-verify", harnessDir: HARNESS_DIR });
+  const byteIdenticalRollback = Buffer.compare(v1Raw, restoredRaw) === 0;
+  const heapDeltaMb = ((memAfter.heapUsed - memBefore.heapUsed) / (1024 * 1024)).toFixed(2);
+  const rssDeltaMb = ((memAfter.rss - memBefore.rss) / (1024 * 1024)).toFixed(2);
+
+  console.log(`Scenario: draft -> Ed25519 sign/promote v1 -> propose-update -> promote v2 -> history -> signed rollback`);
+  console.log(`  - Revision count / snapshots valid    : ${hist.revisions.length} / ${hist.revisions.every((r) => r.snapshotValid)} (latest=${hist.revisions[hist.revisions.length - 1].revision})`);
+  console.log(`  - Byte-identical rollback restore     : ${byteIdenticalRollback} (${prom1.candidateDigest.slice(0, 19)})`);
+  console.log(`  - Full Ed25519 lifecycle latency      : ${elapsedMs.toFixed(2)} ms`);
   console.log(`  - Memory delta (heap / rss)           : ${heapDeltaMb} MB / ${rssDeltaMb} MB`);
 }
 

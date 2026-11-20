@@ -211,3 +211,76 @@ Keep project skills committed in `.agents/skills/` as pure Markdown + relative r
 2. **Fail-closed filesystem & secret checks:** Symlinks and NTFS junctions (roots, skill dirs, internal files, link targets), `..` path traversal, `file://`/absolute links, binary files, `.env*`/`*.pem`/`credentials.json`/SSH key files, and embedded credential literals are blocked and redacted.
 3. **Mandatory `A0` policy preservation:** Skills run as non-authoritative `A5` guidance inside `<<<GELOFORGE_DOC>>>` fences and can never remove or weaken `policies/approval-boundaries.md` or `policies/memory-policy.md`.
 4. **Static scanner limits (Important):** `geloforge skills lint` flags known patterns (`ignore previous instructions`, `override A0`, `curl ... | sh`, encoded execution, hidden bidi/zero-width Unicode, exfiltration commands, `auto-approve` claims). **A clean lint run does NOT prove a skill is harmless and does NOT stop semantic prompt injection.** Always review external skills before trusting them.
+
+---
+
+## 8. Evidence-Backed Adaptive Skills Lifecycle
+
+GeloForge supports converting verified engineering work into reusable skills under strict quarantine and human authorization gates:
+
+`Verified Experience (EVID/HANDOFF) -> Quarantined Draft/Update -> Strict Validation & Lint -> Human Authorization -> Atomic Promotion -> Content-Addressed History & Rollback`
+
+### Separating Facts, Suggestions, and Approved Guidance
+
+- **Verified Observations:** Commands, exit results, summaries, environment fields, and limitations copied strictly from audited `EVID-*` / `HANDOFF-*` records whose SHA-256 artifact hashes and checks pass and which have zero open `CONF-*` contradictions.
+- **Agent / Draft Suggestions:** Proposed procedural steps or update notes generated in `proposals/skills/` — passing source evidence **does not** prove generalized guidance works elsewhere.
+- **Approved Guidance:** Candidate packages promoted into `.agents/skills/<name>/` only after passing strict lint **and** one of three genuine authorization gates. Self-reported flags such as `--approved-by "Owner"` are **always refused**.
+
+### Authorization Tiers & Honest Limitations
+
+| Mechanism | Flag / Flow | Authorization Tier | Security Guarantees & Limitations |
+| :--- | :--- | :--- | :--- |
+| **Cryptographic Ed25519 Signature (Recommended)** | `keygen --out ... [--pub-out ext.pub]` -> `sign` -> `promote --approval APPR-NNNN [--public-key ext.pub]` | `cryptographic_ed25519` | Single-use Ed25519 signature binding `content_sha256`, active `base_sha256`, `proposal_id`/`target_revision`, source `evidence_digests`, `decided_at`, and `expires_at` (private keys cannot be stored in repo). **Limitation (Cryptographic vs. Human Authority):** Valid signatures alone do **not** stop an AI agent that has shell/write access to your machine from running `keygen`, editing `.geloforge/approvers.yaml`, and self-signing unless the human signing key stays inaccessible to the agent AND you verify with `--public-key <ext.pub>` (or protect `.geloforge/approvers.yaml` via branch protection + `CODEOWNERS`). Without `--public-key`, CLI emits `[NOTICE]`. |
+| **Protected-Branch PR Review (Recommended for Teams)** | `promote --mode pr-branch [--branch <name>]` | `git_pr_review_pending` | Commits promoted skill, snapshot, `pending_pr_review` proposal metadata, and `pending` `APPR-NNNN` onto an isolated local branch (never auto-pushed). **Limitation:** Preparing a PR branch is **not** completed human approval; security holds **only** when Git hosting branch protection + `CODEOWNERS` enforce independent human PR approval before merging to `main`. |
+| **Local Interactive Confirmation** | `promote --interactive` (real TTY only) | `local_interactive_tty` | Convenience safeguard requiring exact confirmation phrase `promote <name> <sha8>` on an interactive terminal; non-TTY sessions fail closed. **Explicitly weaker:** no cryptographic proof or independent second-person review. |
+
+> **Team Repository Setup Note (`CODEOWNERS` + Branch Protection):** `--mode pr-branch` does not push or configure GitHub settings. For team enforcement, configure protected-branch PR reviews requiring at least 1 code-owner approval and add a `.github/CODEOWNERS` file covering:
+> ```text
+> /.agents/skills/        @your-team-maintainers
+> /.geloforge/            @your-team-maintainers
+> ```
+
+### Observed Lifecycle Workflow Example
+
+```text
+$ geloforge skills draft --from-evidence EVID-0001 --name smoke-verify
+Skill draft created (QUARANTINED): proposals/skills/smoke-verify/SKILL.md
+Candidate SHA : sha256:887e527ce2920110d675283be7c06a87565e6e6fe3f02f4b30994c658bf338f9
+Provenance    : EVID-0001@sha256:65dcdc2c252cee7418074c1ff74138a3bc170bd81da0fb33bd4d6752aef98578
+
+$ geloforge skills keygen --approver maintainer --out ../keys/maintainer.pem --pub-out ../keys/maintainer.pub.pem
+Ed25519 Approver Registered : maintainer (ed25519:7b19f0023a5284ab)
+Public Registry (repo)      : .geloforge/approvers.yaml
+Private Key (external 0600) : ../keys/maintainer.pem
+Public Key (external pin)   : ../keys/maintainer.pub.pem
+
+$ geloforge skills sign --action promote --skill smoke-verify --approver maintainer --key ../keys/maintainer.pem
+Signed Approval Created : APPR-0001 -> proposals/APPR-0001-promote-new-smoke-verify.yaml
+Bound Operation         : promote_new smoke-verify
+Bound Content SHA-256   : sha256:887e527ce2920110d675283be7c06a87565e6e6fe3f02f4b30994c658bf338f9
+Approver / Key          : maintainer (ed25519:7b19f0023a5284ab)
+
+$ geloforge skills promote smoke-verify --approval APPR-0001 --public-key ../keys/maintainer.pub.pem
+Promoted Skill (promote_new) : .agents/skills/smoke-verify (rev-0001)
+Authorization Tier : cryptographic_ed25519 (APPR-0001)
+Key Trust Source   : external_pinned_public_key
+Digest / History   : sha256:887e527ce2920110d675283be7c06a87565e6e6fe3f02f4b30994c658bf338f9 | .geloforge/skill-history/smoke-verify/history.yaml
+
+$ geloforge skills propose-update smoke-verify --from-evidence EVID-0001 --reason "Add timeout guardrail note" --append-note "Prefer explicit --timeout limits."
+Update proposal staged (QUARANTINED): proposals/skills/smoke-verify/SKILL.md
+Base / Cand   : sha256:887e527ce292 -> sha256:0232e9299425 (+13/-0 lines in SKILL.md)
+Provenance    : EVID-0001@sha256:65dcdc2c252cee7418074c1ff74138a3bc170bd81da0fb33bd4d6752aef98578
+
+$ geloforge skills history smoke-verify
+Skill History : smoke-verify | active=true | drift=false
+Current SHA   : sha256:0232e9299425b8ba29498141717709953962f19e53bc680931e77d69b0e44ed4
+  - rev-0001 [promote_new] tier=cryptographic_ed25519 appr=APPR-0001 sha=sha256:887e527ce292 snapOk=true
+  - rev-0002 [promote_update] tier=cryptographic_ed25519 appr=APPR-0002 sha=sha256:0232e9299425 snapOk=true
+
+$ geloforge skills rollback smoke-verify rev-0001 --approval APPR-0003
+Rolled Back Skill : .agents/skills/smoke-verify -> rev-0001 (recorded as rev-0003)
+Authorization Tier : cryptographic_ed25519 (APPR-0003)
+Restored SHA-256   : sha256:887e527ce2920110d675283be7c06a87565e6e6fe3f02f4b30994c658bf338f9
+```
+
+- **Revision History & Authorized Rollback:** Each promoted revision captures a secret-free snapshot and SHA-256 tree digest strictly confined inside `.geloforge/skill-history/<name>/snapshots/rev-NNNN`. Pre-existing active skills automatically snapshot `rev-0000` (`baseline_snapshot`) before their first update. Rollback re-verifies snapshot confinement, duplicate-revision absence, snapshot tree SHA-256, secret absence, and strict lint, requires the same explicit single-use authorization gate (never bypassing approval), and rolls back partial ledger/branch mutations on failure.
