@@ -2,7 +2,7 @@
 
 **Build with AI coding assistants without losing context, decisions, or verification truth.**
 
-**Version:** `0.3.0` | **License:** [MIT](./LICENSE)
+**Version:** `0.4.0` | **License:** [MIT](./LICENSE)
 
 GeloForge is a zero-dependency, provider-neutral toolkit for organizing projects, managing project memory, compiling bounded prompt context, mapping source symbols, and handing off verified work across coding sessions or different AI assistants.
 

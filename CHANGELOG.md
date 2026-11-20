@@ -2,6 +2,29 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.4.0] — Unreleased
+
+This release adds safer project onboarding, portable Agent Skills interoperability, and an evidence-backed skill improvement lifecycle. The release is being prepared; the final tag and GitHub Release have **not** been published.
+
+### Added
+- **Existing-project onboarding and project-local CLI discovery (PR #3):** `geloforge adopt` works with existing repositories; the CLI discovers project roots from the current working directory.
+- **Tasks and reproducible evidence (PR #3):** `geloforge task new|list|show` and `geloforge evidence capture` record explicit command results and verified outcomes without executing through a shell.
+- **Portable Agent Skills foundation (PR #4):** Discover local/global `SKILL.md` skills with standard frontmatter, strict validation, static linting, quarantine for proposals, and `geloforge skills list|show|validate|lint`.
+- **Progressive skill disclosure (PR #4):** Optional `geloforge context --skills`, explicit skill selection, deterministic relevance ranking, bounded context loading, and lazy supporting-resource pointers.
+- **Evidence-backed adaptive skill lifecycle (PR #5):** Quarantined drafts from verified evidence/handoffs, proposed skill updates, signed approval records, review-branch preparation, trust-aware promotion, SHA-256 package/history records, and authorized rollback.
+- **Maintainer security ownership guidance (PR #6):** `.github/CODEOWNERS` and `docs/maintainer-security.md` describe review routing and protected-branch setup for solo maintainers and teams.
+
+### Security
+- Added signed approval validation, one-time approval consumption, content/evidence digest binding, invalid timestamp rejection, secret/resource scans, snapshot confinement, and transactional recovery on failed promotion or rollback.
+- Added adversarial regression tests for approval replay, key substitution under pinned-key verification, evidence tampering, symlink/junction attacks, poisoned snapshots, and partial failures.
+- **Trust boundary:** Signed approvals do not establish an independent human decision if an agent can access the signing key, replace the trusted public-key registry, or directly edit the skill files. Use external public-key pinning with independent private-key custody, or genuinely enforced protected-branch reviews. Local `--interactive` is a weaker convenience control.
+- **Static lint is not a sandbox** and does not guarantee protection against semantic prompt injection. Skills' scripts are never automatically executed.
+
+### Compatibility and verification
+- Preserves Node.js >=20, MIT licensing, zero third-party runtime dependencies, and legacy schema version 1.0/1.1 compatibility.
+- Adaptive skills PR #5 was reported locally at 64/64 tests passing, with all six GitHub Actions matrix checks verified on its final PR head. **Re-run tests, benchmarks, and release-branch CI before tagging**.
+- Known limitation: `quick` context budget may exceed its target in constrained scenarios; synthetic context-size benchmarks do not measure LLM accuracy or cost.
+
 ## [0.3.0] — 2026-11-19
 
 ### Added
