@@ -230,9 +230,15 @@ GeloForge supports converting verified engineering work into reusable skills und
 
 | Mechanism | Flag / Flow | Authorization Tier | Security Guarantees & Limitations |
 | :--- | :--- | :--- | :--- |
-| **Cryptographic Ed25519 Signature (Recommended)** | `keygen` -> `sign` -> `promote --approval APPR-NNNN [--public-key ext.pem]` | `cryptographic_ed25519` | Binds exact candidate `content_sha256`, active `base_sha256`, source `evidence_digests`, and `expires_at` to an Ed25519 private key stored outside the repository. **Limitation:** If public keys live only in `.geloforge/approvers.yaml`, protect that file via Git branch protection/`CODEOWNERS` or pin an external `--public-key <file>`. |
-| **Protected-Branch PR Review (Recommended for Teams)** | `promote --mode pr-branch [--branch <name>]` | `git_pr_review_pending` | Commits promoted skill, snapshot, and pending `APPR-NNNN` onto an isolated local branch (never auto-pushed). **Limitation:** Security holds **only** when GitHub/Git hosting branch protection enforces independent human PR approval before merging to `main`. |
+| **Cryptographic Ed25519 Signature (Recommended)** | `keygen --out ... [--pub-out ext.pub]` -> `sign` -> `promote --approval APPR-NNNN [--public-key ext.pub]` | `cryptographic_ed25519` | Single-use Ed25519 signature binding `content_sha256`, active `base_sha256`, `proposal_id`/`target_revision`, source `evidence_digests`, `decided_at`, and `expires_at` (private keys cannot be stored in repo). **Limitation (Cryptographic vs. Human Authority):** Valid signatures alone do **not** stop an AI agent that has shell/write access to your machine from running `keygen`, editing `.geloforge/approvers.yaml`, and self-signing unless the human signing key stays inaccessible to the agent AND you verify with `--public-key <ext.pub>` (or protect `.geloforge/approvers.yaml` via branch protection + `CODEOWNERS`). Without `--public-key`, CLI emits `[NOTICE]`. |
+| **Protected-Branch PR Review (Recommended for Teams)** | `promote --mode pr-branch [--branch <name>]` | `git_pr_review_pending` | Commits promoted skill, snapshot, `pending_pr_review` proposal metadata, and `pending` `APPR-NNNN` onto an isolated local branch (never auto-pushed). **Limitation:** Preparing a PR branch is **not** completed human approval; security holds **only** when Git hosting branch protection + `CODEOWNERS` enforce independent human PR approval before merging to `main`. |
 | **Local Interactive Confirmation** | `promote --interactive` (real TTY only) | `local_interactive_tty` | Convenience safeguard requiring exact confirmation phrase `promote <name> <sha8>` on an interactive terminal; non-TTY sessions fail closed. **Explicitly weaker:** no cryptographic proof or independent second-person review. |
+
+> **Team Repository Setup Note (`CODEOWNERS` + Branch Protection):** `--mode pr-branch` does not push or configure GitHub settings. For team enforcement, configure protected-branch PR reviews requiring at least 1 code-owner approval and add a `.github/CODEOWNERS` file covering:
+> ```text
+> /.agents/skills/        @your-team-maintainers
+> /.geloforge/            @your-team-maintainers
+> ```
 
 ### Observed Lifecycle Workflow Example
 
@@ -242,10 +248,11 @@ Skill draft created (QUARANTINED): proposals/skills/smoke-verify/SKILL.md
 Candidate SHA : sha256:887e527ce2920110d675283be7c06a87565e6e6fe3f02f4b30994c658bf338f9
 Provenance    : EVID-0001@sha256:65dcdc2c252cee7418074c1ff74138a3bc170bd81da0fb33bd4d6752aef98578
 
-$ geloforge skills keygen --approver maintainer --out ../keys/maintainer.pem
+$ geloforge skills keygen --approver maintainer --out ../keys/maintainer.pem --pub-out ../keys/maintainer.pub.pem
 Ed25519 Approver Registered : maintainer (ed25519:7b19f0023a5284ab)
 Public Registry (repo)      : .geloforge/approvers.yaml
 Private Key (external 0600) : ../keys/maintainer.pem
+Public Key (external pin)   : ../keys/maintainer.pub.pem
 
 $ geloforge skills sign --action promote --skill smoke-verify --approver maintainer --key ../keys/maintainer.pem
 Signed Approval Created : APPR-0001 -> proposals/APPR-0001-promote-new-smoke-verify.yaml
@@ -253,9 +260,10 @@ Bound Operation         : promote_new smoke-verify
 Bound Content SHA-256   : sha256:887e527ce2920110d675283be7c06a87565e6e6fe3f02f4b30994c658bf338f9
 Approver / Key          : maintainer (ed25519:7b19f0023a5284ab)
 
-$ geloforge skills promote smoke-verify --approval APPR-0001
+$ geloforge skills promote smoke-verify --approval APPR-0001 --public-key ../keys/maintainer.pub.pem
 Promoted Skill (promote_new) : .agents/skills/smoke-verify (rev-0001)
 Authorization Tier : cryptographic_ed25519 (APPR-0001)
+Key Trust Source   : external_pinned_public_key
 Digest / History   : sha256:887e527ce2920110d675283be7c06a87565e6e6fe3f02f4b30994c658bf338f9 | .geloforge/skill-history/smoke-verify/history.yaml
 
 $ geloforge skills propose-update smoke-verify --from-evidence EVID-0001 --reason "Add timeout guardrail note" --append-note "Prefer explicit --timeout limits."
@@ -275,4 +283,4 @@ Authorization Tier : cryptographic_ed25519 (APPR-0003)
 Restored SHA-256   : sha256:887e527ce2920110d675283be7c06a87565e6e6fe3f02f4b30994c658bf338f9
 ```
 
-- **Revision History & Authorized Rollback:** Each promoted revision captures a secret-free snapshot and SHA-256 tree digest inside `.geloforge/skill-history/<name>/`. Pre-existing active skills automatically snapshot `rev-0000` (`baseline_snapshot`) before their first update. Rollback re-verifies snapshot integrity and requires the same explicit authorization gate so rollback cannot bypass approval.
+- **Revision History & Authorized Rollback:** Each promoted revision captures a secret-free snapshot and SHA-256 tree digest strictly confined inside `.geloforge/skill-history/<name>/snapshots/rev-NNNN`. Pre-existing active skills automatically snapshot `rev-0000` (`baseline_snapshot`) before their first update. Rollback re-verifies snapshot confinement, duplicate-revision absence, snapshot tree SHA-256, secret absence, and strict lint, requires the same explicit single-use authorization gate (never bypassing approval), and rolls back partial ledger/branch mutations on failure.
