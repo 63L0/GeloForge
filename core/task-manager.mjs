@@ -283,6 +283,407 @@ export function listTasks({ projectDir, status = null, harnessDir = DEFAULT_HARN
 }
 
 /**
+ * Checks whether two file-scope strings/globs overlap (exact, parent/child, or wildcard).
+ */
+export function scopesOverlap(scopeA, scopeB) {
+  const norm = (raw) =>
+    String(raw || "")
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/^\.\//, "")
+      .replace(/\/\*\*$/, "")
+      .replace(/\/\*$/, "")
+      .replace(/\/+$/, "");
+  const a = norm(scopeA);
+  const b = norm(scopeB);
+  if (a === "" || a === "*" || a === "." || b === "" || b === "*" || b === ".") {
+    return true;
+  }
+  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
+function readLeasesFile(projectDir) {
+  const leasesRelPath = ".geloforge/task-leases.yaml";
+  const leasesAbs = assertSafeWithinRoot(projectDir, leasesRelPath);
+  if (!fs.existsSync(leasesAbs)) {
+    return { leasesRelPath, leasesAbs, exists: false, leases: [] };
+  }
+  const st = fs.lstatSync(leasesAbs);
+  if (st.isSymbolicLink() || !st.isFile()) {
+    throw new Error(`Refusing symbolic link or non-regular lease registry: ${leasesRelPath}`);
+  }
+  const raw = fs.readFileSync(leasesAbs, "utf8");
+  if (hasSecretContent(raw)) {
+    throw new Error(`Blocked credential-like pattern in ${leasesRelPath}.`);
+  }
+  const parsed = parseYaml(raw, leasesRelPath);
+  const leases = Array.isArray(parsed?.leases) ? parsed.leases : [];
+  return { leasesRelPath, leasesAbs, exists: true, leases };
+}
+
+/**
+ * Lists active and expired cooperative task/scope leases under `.geloforge/task-leases.yaml`.
+ */
+export function listTaskLeases({
+  projectDir,
+  nowIso = new Date().toISOString(),
+  includeExpired = false,
+  harnessDir = DEFAULT_HARNESS_DIR,
+} = {}) {
+  const loaded = loadProjectManifestAndState(projectDir, harnessDir);
+  const nowMs = Date.parse(validateCreatedAt(nowIso));
+  const { leasesRelPath, leases } = readLeasesFile(loaded.projectDir);
+
+  const activeLeases = [];
+  const expiredLeases = [];
+  for (const entry of leases) {
+    if (!entry || typeof entry !== "object" || typeof entry.task_id !== "string") continue;
+    const expMs = Date.parse(String(entry.expires_at || ""));
+    if (Number.isFinite(expMs) && expMs > nowMs) {
+      activeLeases.push(entry);
+    } else {
+      expiredLeases.push(entry);
+    }
+  }
+  activeLeases.sort((a, b) => a.task_id.localeCompare(b.task_id));
+  expiredLeases.sort((a, b) => a.task_id.localeCompare(b.task_id));
+
+  return {
+    projectDir: loaded.projectDir,
+    leasesRelPath,
+    activeLeases,
+    expiredLeases,
+    leases: includeExpired ? [...activeLeases, ...expiredLeases] : activeLeases,
+  };
+}
+
+/**
+ * Releases a cooperative lease for `taskId` from `.geloforge/task-leases.yaml` (and prunes expired leases).
+ */
+export function releaseTaskLease({
+  projectDir,
+  taskId,
+  nowIso = new Date().toISOString(),
+  dryRun = false,
+  harnessDir = DEFAULT_HARNESS_DIR,
+} = {}) {
+  if (typeof taskId !== "string" || !/^TASK-\d{4}$/i.test(taskId.trim())) {
+    throw new Error(`Invalid task ID "${taskId}". Expected TASK-NNNN.`);
+  }
+  const cleanId = taskId.trim().toUpperCase();
+  const loaded = loadProjectManifestAndState(projectDir, harnessDir);
+  const nowMs = Date.parse(validateCreatedAt(nowIso));
+  const { leasesRelPath, leasesAbs, exists, leases } = readLeasesFile(loaded.projectDir);
+
+  if (!exists) {
+    return {
+      dryRun: Boolean(dryRun),
+      released: false,
+      taskId: cleanId,
+      leasesRelPath,
+      activeLeases: [],
+    };
+  }
+
+  let removed = false;
+  const remaining = [];
+  for (const entry of leases) {
+    if (!entry || typeof entry !== "object") continue;
+    if (entry.task_id === cleanId) {
+      removed = true;
+      continue;
+    }
+    const expMs = Date.parse(String(entry.expires_at || ""));
+    if (Number.isFinite(expMs) && expMs > nowMs) {
+      remaining.push(entry);
+    }
+  }
+
+  if (!dryRun) {
+    const payload = {
+      schema_version: "1.0",
+      updated_at: validateCreatedAt(nowIso),
+      leases: remaining,
+    };
+    atomicWriteFile(leasesAbs, serializeYaml(payload, { headerComment: "Cooperative multi-IDE task & scope leases (advisory collision avoidance)" }), {
+      allowOverwrite: true,
+    });
+  }
+
+  return {
+    dryRun: Boolean(dryRun),
+    released: removed,
+    taskId: cleanId,
+    leasesRelPath,
+    activeLeases: remaining,
+  };
+}
+
+/**
+ * Claims a cooperative task & file-scope lease for an AI/IDE session, blocking colliding tasks or overlapping scopes unless `--force`.
+ */
+export function claimTaskLease({
+  projectDir,
+  taskId,
+  role = null,
+  tool = "local-agent",
+  scopes = [],
+  sessionId = null,
+  ttlMinutes = 120,
+  force = false,
+  createdAt,
+  dryRun = false,
+  harnessDir = DEFAULT_HARNESS_DIR,
+} = {}) {
+  if (typeof taskId !== "string" || !/^TASK-\d{4}$/i.test(taskId.trim())) {
+    throw new Error(`Invalid task ID "${taskId}". Expected TASK-NNNN.`);
+  }
+  const taskInfo = getTask({ projectDir, taskId, harnessDir });
+  const loaded = loadProjectManifestAndState(projectDir, harnessDir);
+
+  if (!force && (taskInfo.record.status === "completed" || taskInfo.record.status === "cancelled")) {
+    throw new Error(
+      `Cannot claim ${taskInfo.id} because its status is "${taskInfo.record.status}". Reactivate it or pass --force.`
+    );
+  }
+
+  const effectiveRole = (role ? String(role) : taskInfo.record.assigned_role).trim();
+  if (!ALLOWED_ROLES.has(effectiveRole)) {
+    throw new Error(`Invalid --role "${effectiveRole}". Expected one of: ${Array.from(ALLOWED_ROLES).join(", ")}`);
+  }
+
+  const cleanTool = validateScalarText("--tool", String(tool || "local-agent"));
+  if (hasSecretContent(cleanTool)) {
+    throw new Error("Refusing credential-like content in --tool.");
+  }
+
+  const ttl = ttlMinutes === undefined || ttlMinutes === null ? 120 : Number(ttlMinutes);
+  if (!Number.isInteger(ttl) || ttl < 1 || ttl > 1440) {
+    throw new Error(`Invalid --ttl "${ttlMinutes}". Expected integer minutes between 1 and 1440.`);
+  }
+
+  const nowIso = validateCreatedAt(createdAt);
+  const nowMs = Date.parse(nowIso);
+  const expiresAt = new Date(nowMs + ttl * 60 * 1000).toISOString();
+
+  const rawScopes = Array.isArray(scopes) ? scopes : scopes ? [scopes] : [];
+  const claimedScope = rawScopes.length > 0 ? normalizeTextList(rawScopes, "--scope") : [...(taskInfo.record.scope_in || [])];
+
+  const cleanSession = sessionId ? validateScalarText("--session", sessionId) : `sess-${taskInfo.id.toLowerCase()}-${deriveSlug(cleanTool) || "agent"}`;
+  if (hasSecretContent(cleanSession)) {
+    throw new Error("Refusing credential-like content in --session.");
+  }
+
+  const leaseState = listTaskLeases({ projectDir: loaded.projectDir, nowIso, harnessDir });
+  for (const other of leaseState.activeLeases) {
+    if (other.task_id === taskInfo.id) {
+      if (!force) {
+        throw new Error(
+          `Task lease collision: ${taskInfo.id} is already claimed by tool "${other.tool}" (role "${other.role}") until ${other.expires_at}. Run "geloforge task release ${taskInfo.id}" or pass --force.`
+        );
+      }
+      continue;
+    }
+    if (!force) {
+      for (const s1 of claimedScope) {
+        for (const s2 of other.claimed_scope || []) {
+          if (scopesOverlap(s1, s2)) {
+            throw new Error(
+              `File-scope collision: scope "${s1}" on ${taskInfo.id} overlaps with active peer lease on ${other.task_id} (tool "${other.tool}", role "${other.role}", scope "${s2}"). Coordinate scopes or pass --force.`
+            );
+          }
+        }
+      }
+    }
+  }
+
+  const newLease = {
+    task_id: taskInfo.id,
+    title: taskInfo.record.title,
+    role: effectiveRole,
+    tool: cleanTool,
+    session_id: cleanSession,
+    claimed_scope: claimedScope,
+    claimed_at: nowIso,
+    expires_at: expiresAt,
+  };
+
+  const nextLeases = [...leaseState.activeLeases.filter((l) => l.task_id !== taskInfo.id), newLease].sort((a, b) =>
+    a.task_id.localeCompare(b.task_id)
+  );
+  const leasesAbs = assertSafeWithinRoot(loaded.projectDir, leaseState.leasesRelPath);
+
+  if (!dryRun) {
+    atomicWriteFile(
+      leasesAbs,
+      serializeYaml(
+        {
+          schema_version: "1.0",
+          updated_at: nowIso,
+          leases: nextLeases,
+        },
+        { headerComment: "Cooperative multi-IDE task & scope leases (advisory collision avoidance)" }
+      ),
+      { allowOverwrite: true }
+    );
+    updateTask({
+      projectDir: loaded.projectDir,
+      taskId: taskInfo.id,
+      status: "active",
+      assignedRole: effectiveRole,
+      activate: true,
+      updatedAt: nowIso,
+      harnessDir,
+    });
+  }
+
+  return {
+    dryRun: Boolean(dryRun),
+    projectDir: loaded.projectDir,
+    leasesRelPath: leaseState.leasesRelPath,
+    lease: newLease,
+    activeLeases: nextLeases,
+  };
+}
+
+/**
+ * Updates an existing TASK-NNNN contract status/priority/role and synchronizes brain/state/current.yaml cleanly.
+ */
+export function updateTask(options = {}) {
+  const harnessDir = path.resolve(options.harnessDir || DEFAULT_HARNESS_DIR);
+  const taskInfo = getTask({ projectDir: options.projectDir, taskId: options.taskId, harnessDir });
+  const loaded = loadProjectManifestAndState(options.projectDir, harnessDir);
+  const { projectDir, schemasDir, state, stateSchema, stateFilePath } = loaded;
+
+  const tStat = fs.lstatSync(taskInfo.filePath);
+  if (tStat.isSymbolicLink() || !tStat.isFile()) {
+    throw new Error(`Refusing symbolic link or non-regular task file: ${taskInfo.relPath}`);
+  }
+
+  const activate = Boolean(options.activate);
+  const nextStatus = options.status
+    ? String(options.status).trim().toLowerCase()
+    : activate
+      ? "active"
+      : taskInfo.record.status;
+  if (!ALLOWED_TASK_STATUSES.has(nextStatus)) {
+    throw new Error(
+      `Invalid task status "${nextStatus}". Expected one of: ${Array.from(ALLOWED_TASK_STATUSES).join(", ")}`
+    );
+  }
+  if (activate && (nextStatus === "completed" || nextStatus === "cancelled")) {
+    throw new Error(`Cannot --activate a task with terminal status "${nextStatus}".`);
+  }
+
+  const nextPriority = options.priority
+    ? String(options.priority).trim().toLowerCase()
+    : taskInfo.record.priority;
+  if (!ALLOWED_PRIORITIES.has(nextPriority)) {
+    throw new Error(`Invalid --priority "${nextPriority}". Expected: low, medium, high, critical.`);
+  }
+
+  const nextRole = options.assignedRole
+    ? String(options.assignedRole).trim()
+    : taskInfo.record.assigned_role;
+  if (!ALLOWED_ROLES.has(nextRole)) {
+    throw new Error(`Invalid --role "${nextRole}". Expected one of: ${Array.from(ALLOWED_ROLES).join(", ")}`);
+  }
+
+  const timestamp = validateCreatedAt(options.updatedAt);
+  const updatedRecord = {
+    ...taskInfo.record,
+    status: nextStatus,
+    priority: nextPriority,
+    assigned_role: nextRole,
+    updated_at: timestamp,
+  };
+
+  const taskSchema = JSON.parse(fs.readFileSync(path.join(schemasDir, "task-contract.schema.json"), "utf8"));
+  const schemaCheck = validateAgainstSchema(updatedRecord, taskSchema);
+  if (!schemaCheck.valid) {
+    throw new Error(`Updated task failed schema validation: ${schemaCheck.errors.join("; ")}`);
+  }
+
+  let activeTasks = Array.isArray(state.active_tasks) ? [...state.active_tasks] : [];
+  let blockedTasks = Array.isArray(state.blocked_tasks) ? [...state.blocked_tasks] : [];
+  let lastCompletedTask = state.last_completed_task ?? null;
+
+  if (nextStatus === "completed") {
+    activeTasks = activeTasks.filter((t) => t !== taskInfo.id);
+    blockedTasks = blockedTasks.filter((t) => t !== taskInfo.id);
+    lastCompletedTask = taskInfo.id;
+  } else if (nextStatus === "cancelled") {
+    activeTasks = activeTasks.filter((t) => t !== taskInfo.id);
+    blockedTasks = blockedTasks.filter((t) => t !== taskInfo.id);
+  } else if (nextStatus === "blocked") {
+    activeTasks = activeTasks.filter((t) => t !== taskInfo.id);
+    if (!blockedTasks.includes(taskInfo.id)) blockedTasks.push(taskInfo.id);
+  } else if (nextStatus === "active" || activate) {
+    if (!activeTasks.includes(taskInfo.id)) activeTasks.push(taskInfo.id);
+    blockedTasks = blockedTasks.filter((t) => t !== taskInfo.id);
+    if (lastCompletedTask === taskInfo.id) {
+      lastCompletedTask = null;
+    }
+  } else {
+    activeTasks = activeTasks.filter((t) => t !== taskInfo.id);
+    blockedTasks = blockedTasks.filter((t) => t !== taskInfo.id);
+  }
+
+  const updatedState = {
+    ...state,
+    state_revision: (state.state_revision ?? 0) + 1,
+    status: state.status === "initialized" && activeTasks.length > 0 ? "active" : state.status,
+    updated_at: timestamp,
+    active_tasks: activeTasks,
+    blocked_tasks: blockedTasks,
+    last_completed_task: lastCompletedTask,
+  };
+  const stCheck = validateAgainstSchema(updatedState, stateSchema);
+  if (!stCheck.valid) {
+    throw new Error(`Updated operational state failed schema validation: ${stCheck.errors.join("; ")}`);
+  }
+
+  const yamlText = serializeYaml(updatedRecord, { headerComment: `Task Contract ${taskInfo.id}` });
+  const dryRun = Boolean(options.dryRun);
+  if (!dryRun) {
+    atomicWriteFile(taskInfo.filePath, yamlText, { allowOverwrite: true });
+    atomicWriteFile(
+      stateFilePath,
+      serializeYaml(updatedState, { headerComment: "Current Operational Project State" }),
+      { allowOverwrite: true }
+    );
+    if (nextStatus === "completed" || nextStatus === "cancelled") {
+      releaseTaskLease({ projectDir, taskId: taskInfo.id, nowIso: timestamp, dryRun: false, harnessDir });
+    }
+  }
+
+  return {
+    dryRun,
+    id: taskInfo.id,
+    relPath: taskInfo.relPath,
+    previousStatus: taskInfo.record.status,
+    status: nextStatus,
+    record: updatedRecord,
+    stateRevision: updatedState.state_revision,
+    activeTasks,
+    blockedTasks,
+    lastCompletedTask,
+  };
+}
+
+/**
+ * Convenience wrapper marking a task "completed", removing it from active_tasks,
+ * updating last_completed_task, and releasing any active lease.
+ */
+export function completeTask(options = {}) {
+  return updateTask({
+    ...options,
+    status: "completed",
+    activate: false,
+  });
+}
+
+/**
  * Loads a single TASK-NNNN contract by exact ID.
  */
 export function getTask({ projectDir, taskId, harnessDir = DEFAULT_HARNESS_DIR }) {

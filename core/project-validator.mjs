@@ -357,6 +357,7 @@ export function validateProject(rawProjectDir, options = {}) {
     for (const id of state.open_conflicts || []) ensureIdExists("brain/state/current.yaml#open_conflicts", id);
     if (state.last_verified_evidence) ensureIdExists("brain/state/current.yaml#last_verified_evidence", state.last_verified_evidence);
     if (state.last_completed_task) ensureIdExists("brain/state/current.yaml#last_completed_task", state.last_completed_task);
+    if (state.last_checkpoint) ensureIdExists("brain/state/current.yaml#last_checkpoint", state.last_checkpoint);
 
     const activeSet = new Set(state.active_tasks || []);
     const blockedSet = new Set(state.blocked_tasks || []);
@@ -459,6 +460,11 @@ export function validateProject(rawProjectDir, options = {}) {
     } else if (spec.prefix === "INC") {
       for (const t of data.related_tasks || []) ensureIdExists(`${relFile}#related_tasks`, t);
       for (const ev of data.evidence_refs || []) ensureIdExists(`${relFile}#evidence_refs`, ev);
+    } else if (spec.prefix === "CHKPT") {
+      for (const t of data.active_tasks || []) ensureIdExists(`${relFile}#active_tasks`, t);
+      if (data.verification_evidence_ref) {
+        ensureIdExists(`${relFile}#verification_evidence_ref`, data.verification_evidence_ref);
+      }
     }
   }
 
