@@ -133,6 +133,13 @@ try {
   assert.equal(mcpStatus.result.isError, false);
   assert.equal(JSON.parse(mcpStatus.result.content[0].text).project.id, init.projectId);
 
+  // The generated configuration for this local tarball must also work offline.
+  const mcpConfig = JSON.parse(fs.readFileSync(path.join(newProject, ".vscode", "mcp.json"), "utf8"));
+  const launch = mcpConfig.servers.geloforge;
+  assert.equal(launch.command, process.execPath);
+  const generatedReply = runNode(launch.args, scratch, JSON.stringify(mcpRequests[0]) + "\n");
+  assert.equal(JSON.parse(generatedReply).result.serverInfo.version, expected);
+
   // Brownfield project: exercise adopt from CWD and preserve existing files.
   const existing = path.join(scratch, "existing-application");
   fs.mkdirSync(existing);

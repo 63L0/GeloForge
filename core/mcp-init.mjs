@@ -22,6 +22,7 @@ const CLIENTS = {
 
 const START = "<!-- geloforge:mcp-init:start -->";
 const END = "<!-- geloforge:mcp-init:end -->";
+const RELEASE_ARCHIVE = /^https:\/\/github\.com\/63L0\/GeloForge\/releases\/download\/v(\d+\.\d+\.\d+)\/geloforge-\1\.tgz$/;
 
 function readConfigFile(projectDir, relativePath) {
   const filePath = assertSafeWithinRoot(projectDir, relativePath);
@@ -118,7 +119,7 @@ function isGeloForgeServer(server) {
   if (/^npx(?:\.cmd)?$/i.test(command)) return args.some((arg) => /^geloforge(?:@\d.*)?$/.test(arg)) && args.includes("mcp");
   if (!/^node(?:\.exe)?$/i.test(command)) return false;
   return (args[1] === "mcp" && /(?:^|[\\/])geloforge\.mjs$/.test(args[0])) ||
-    (args[1] === "exec" && args.some((arg) => /^geloforge@\d/.test(arg)) && args.includes("mcp"));
+    (args[1] === "exec" && args.some((arg) => /^geloforge@\d/.test(arg) || RELEASE_ARCHIVE.test(arg)) && args.includes("mcp"));
 }
 
 function updateServer(file, client, server) {
@@ -183,10 +184,20 @@ function launchCommand({ projectDir, harnessDir, readOnly }) {
   if (readOnly) args.push("--read-only");
   const npm = process.env.npm_execpath;
   if (harnessDir.split(path.sep).includes("_npx") && npm && path.isAbsolute(npm) && fs.existsSync(npm)) {
-    const pkg = JSON.parse(fs.readFileSync(path.join(harnessDir, "package.json"), "utf8"));
-    // A registry install can outlive npm's temporary npx cache entry.
-    if (!pkg.private) {
-      return { command: process.execPath, args: [npm, "exec", "--yes", "--package", `geloforge@${pkg.version}`, "--", "geloforge", ...args] };
+    let installed;
+    try {
+      const lock = JSON.parse(fs.readFileSync(path.join(harnessDir, "..", "..", "package-lock.json"), "utf8"));
+      installed = lock.packages?.["node_modules/geloforge"];
+    } catch {
+      // An npm cache without installation metadata still has the local CLI.
+    }
+    const version = installed?.version;
+    const archive = `geloforge-${version}.tgz`;
+    const npmArchive = `https://registry.npmjs.org/geloforge/-/${archive}`;
+    const githubArchive = `https://github.com/63L0/GeloForge/releases/download/v${version}/${archive}`;
+    const source = installed?.resolved === npmArchive ? `geloforge@${version}` : installed?.resolved;
+    if (/^\d+\.\d+\.\d+$/.test(version) && (installed.resolved === npmArchive || source === githubArchive)) {
+      return { command: process.execPath, args: [npm, "exec", "--yes", "--package", source, "--", "geloforge", ...args] };
     }
   }
   return { command: process.execPath, args: [path.join(harnessDir, "scripts", "geloforge.mjs"), ...args] };

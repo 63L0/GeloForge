@@ -2,7 +2,7 @@
 
 All notable changes to GeloForge are recorded in this file.
 
-## [0.6.0] — Unreleased
+## [0.6.0] — 2026-11-20
 
 - Package the CLI for npm and test installation from the release tarball on Linux, macOS, and Windows.
 - Add `geloforge mcp init` for Cursor, VS Code, Claude Code, and Gemini CLI project setup and workflow instructions.
