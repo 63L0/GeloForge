@@ -1,0 +1,84 @@
+name: Publish GeloForge v0.6.0 on GitHub
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: geloforge-v0.6.0-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.repository == '63L0/GeloForge' &&
+      github.event.workflow_run.head_repository.full_name == '63L0/GeloForge' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: v0.6.0
+      VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Verify the release commit and build the tested tarball
+        id: package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx false; then
+            echo "Release $RELEASE_TAG is already public."
+            exit 0
+          fi
+          test "$(git rev-parse HEAD)" = "$VERIFIED_SHA"
+          if [[ "$(git ls-remote origin refs/heads/main | cut -f1)" != "$VERIFIED_SHA" ]]; then
+            echo "CI was for an earlier main commit."
+            exit 0
+          fi
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const version = process.env.RELEASE_TAG.slice(1);
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          assert.equal(pkg.name, 'geloforge');
+          assert.equal(pkg.version, version);
+          assert.notEqual(pkg.private, true);
+          assert.match(fs.readFileSync('CHANGELOG.md', 'utf8'), /^## \[0\.6\.0\] — 2026-11-20$/m);
+          assert.ok(fs.statSync('docs/release-notes-v0.6.0.md').size);
+          NODE
+          npm run smoke:package -- --pack-destination "$RUNNER_TEMP/geloforge-release"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+
+      - name: Create the public GitHub release for the tested commit
+        if: steps.package.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$VERIFIED_SHA"
+          if [[ -n "$(git ls-remote origin "refs/tags/$RELEASE_TAG")" ]]; then
+            git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$VERIFIED_SHA"
+          fi
+          gh release create "$RELEASE_TAG" "$RUNNER_TEMP/geloforge-release/geloforge-0.6.0.tgz" \
+            --target "$VERIFIED_SHA" --title "GeloForge $RELEASE_TAG" \
+            --notes-file docs/release-notes-v0.6.0.md --latest

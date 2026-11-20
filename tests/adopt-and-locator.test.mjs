@@ -63,6 +63,8 @@ test("adoptProject safely onboards dirty & clean existing Git repos without alte
       ".gitignore": "node_modules/\ndist/\n",
       "src/ledger.js": "export function totalCents(items) { return items.reduce((a, b) => a + b, 0); }\n",
       "tests/ledger.test.js": "console.log('ok');\n",
+      "templates/report.md": "# Report for {{PROJECT_NAME}}\n",
+      "templates/app.yaml": "name: '{{PROJECT_NAME}}'\n",
       "AGENTS.md": "# Custom Existing Team Guide\nDo not overwrite me.\n",
     });
 
