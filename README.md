@@ -83,6 +83,9 @@ When you're done, use `geloforge handoff` to record what changed, what was verif
 | **Cross-agent handoff** | Pass structured, checkable work between sessions or tools. |
 | **Portable Agent Skills** | Use open-format `SKILL.md` packages, with validation and progressive loading. |
 | **Reviewed skill improvements** | Draft improvements from evidence, require explicit authorization, track versions, and roll back. |
+| **Co-Pilot & checkpoints** | Get ranked next steps, human approval reminders, and resumable session notes. |
+| **Cooperative multi-IDE work** | Claim tasks and scopes, see peer collision warnings, and avoid accidental overlapping work. |
+| **Local MCP interface** | Connect compatible clients explicitly, with project-scoped tools and a read-only mode. |
 
 **Compatible workflow:** Codex, Claude Code, Gemini CLI, Antigravity, or any assistant that can read text you provide. GeloForge does not automatically operate or connect to those tools.
 
@@ -123,4 +126,4 @@ Have an idea, find a confusing command, or hit a bug? [Open an issue](https://gi
 
 If this helps your AI-assisted development workflow, consider **[starring the repository](https://github.com/63L0/GeloForge)** so you can find it again.
 
-**Current release:** [v0.4.0](https://github.com/63L0/GeloForge/releases/tag/v0.4.0) · [MIT License](./LICENSE)
+**Latest published release:** [GitHub Releases](https://github.com/63L0/GeloForge/releases/latest) · [MIT License](./LICENSE)
