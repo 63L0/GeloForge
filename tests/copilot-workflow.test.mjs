@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { bootstrapProject } from "../scripts/bootstrap-project.mjs";
 import { adoptProject } from "../core/adopt-project.mjs";
@@ -21,7 +22,13 @@ import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectRecommendations, getProjectStatus } from "../core/project-status.mjs";
 import { draftSkillFromExperience } from "../core/skills-lifecycle.mjs";
 import { validateProject } from "../core/project-validator.mjs";
-import { handleMcpMessage } from "../core/mcp-server.mjs";
+import {
+  MAX_MCP_HEADER_BYTES,
+  MAX_MCP_MESSAGE_BYTES,
+  MCP_TOOLS,
+  handleMcpMessage,
+  startMcpStdioServer,
+} from "../core/mcp-server.mjs";
 import { parseYaml } from "../core/yaml-subset.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -190,10 +197,32 @@ test("multi-IDE cooperative leases prevent overlapping edits, prune expired leas
     assert.equal(expiredCheck.expiredLeases.length, 1);
     assert.equal(expiredCheck.expiredLeases[0].task_id, "TASK-0002");
 
-    // Release lease 1 via CLI
+    // Releasing without confirmation or as another peer tool fails closed
+    assert.throws(
+      () => releaseTaskLease({ projectDir, taskId: "TASK-0001", nowIso: "2026-11-20T10:30:00Z" }),
+      /Refusing unverified lease release/i
+    );
+    assert.throws(
+      () => releaseTaskLease({ projectDir, taskId: "TASK-0001", tool: "codex-ide", nowIso: "2026-11-20T10:30:00Z" }),
+      /Lease ownership mismatch/i
+    );
+
+    // Release lease 1 via CLI confirming owning --tool
     const relCli = spawnSync(
       process.execPath,
-      [CLI_PATH, "task", "release", "--project", projectDir, "TASK-0001", "--created-at", "2026-11-20T10:30:00Z", "--json"],
+      [
+        CLI_PATH,
+        "task",
+        "release",
+        "--project",
+        projectDir,
+        "TASK-0001",
+        "--tool",
+        "gemini-ide",
+        "--created-at",
+        "2026-11-20T10:30:00Z",
+        "--json",
+      ],
       { encoding: "utf8", windowsHide: true }
     );
     assert.equal(relCli.status, 0, relCli.stderr);
@@ -526,5 +555,473 @@ test("MCP server handles JSONL & LSP stdio framing and strictly refuses privileg
     assert.equal(cpPayload.checkpointId, "CHKPT-0001");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("concurrent two-process claimTaskLease serializes via .state.lock, enforces timeout, and recovers stale locks", async () => {
+  const { tmp, projectDir } = initTempProject("gf-race-");
+  try {
+    createTask({ projectDir, title: "Worker task A", scopeIn: ["src/shared.mjs"], createdAt: "2026-11-20T09:05:00Z" });
+    createTask({ projectDir, title: "Worker task B", scopeIn: ["src/shared.mjs"], createdAt: "2026-11-20T09:05:00Z" });
+
+    const runClaimWorker = (taskId, tool, targetMs, holdMs = 100) =>
+      new Promise((resolve) => {
+        const script = [
+          `import { claimTaskLease } from ${JSON.stringify(new URL("../core/task-manager.mjs", import.meta.url).href)};`,
+          "const target = Number(process.argv[1]);",
+          "while (Date.now() < target) {}",
+          "try {",
+          `  const res = claimTaskLease({ projectDir: ${JSON.stringify(projectDir)}, taskId: ${JSON.stringify(taskId)}, tool: ${JSON.stringify(tool)}, scopes: ["src/shared.mjs"], _holdLockMs: ${holdMs} });`,
+          '  console.log(JSON.stringify({ ok: true, task: res.lease.task_id, tool: res.lease.tool }));',
+          "} catch (err) {",
+          '  console.error(JSON.stringify({ ok: false, message: err.message }));',
+          "  process.exitCode = 1;",
+          "}",
+        ].join("\n");
+        const child = spawn(process.execPath, ["--input-type=module", "-e", script, String(targetMs)], {
+          cwd: HARNESS_DIR,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+        let out = "";
+        let err = "";
+        child.stdout.on("data", (d) => {
+          out += d;
+        });
+        child.stderr.on("data", (d) => {
+          err += d;
+        });
+        child.on("close", (code) => resolve({ code, out: out.trim(), err: err.trim() }));
+      });
+
+    const targetStart = Date.now() + 350;
+    const [w1, w2] = await Promise.all([
+      runClaimWorker("TASK-0001", "gemini-ide", targetStart, 120),
+      runClaimWorker("TASK-0002", "codex-ide", targetStart, 120),
+    ]);
+    const wins = [w1, w2].filter((r) => r.code === 0);
+    const losses = [w1, w2].filter((r) => r.code !== 0);
+    assert.equal(wins.length, 1, `Expected exactly 1 winner; got w1=${JSON.stringify(w1)} w2=${JSON.stringify(w2)}`);
+    assert.equal(losses.length, 1);
+    assert.match(losses[0].err, /File-scope collision/i);
+
+    const active = listTaskLeases({ projectDir }).activeLeases;
+    assert.equal(active.length, 1);
+    assert.equal(fs.existsSync(path.join(projectDir, ".geloforge", ".state.lock")), false);
+
+    const winningTaskId = active[0].task_id;
+    const losingTaskId = winningTaskId === "TASK-0001" ? "TASK-0002" : "TASK-0001";
+
+    // Bounded lockTimeoutMs while another live process holds .state.lock
+    const holdScript = [
+      `import { claimTaskLease } from ${JSON.stringify(new URL("../core/task-manager.mjs", import.meta.url).href)};`,
+      `claimTaskLease({ projectDir: ${JSON.stringify(projectDir)}, taskId: ${JSON.stringify(winningTaskId)}, tool: ${JSON.stringify(active[0].tool)}, force: true, _holdLockMs: 450 });`,
+    ].join("\n");
+    const holder = spawn(process.execPath, ["--input-type=module", "-e", holdScript], {
+      cwd: HARNESS_DIR,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    // Wait until lockfile appears
+    const lockPath = path.join(projectDir, ".geloforge", ".state.lock");
+    const deadline = Date.now() + 2000;
+    while (!fs.existsSync(lockPath) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    assert.throws(
+      () =>
+        claimTaskLease({
+          projectDir,
+          taskId: losingTaskId,
+          tool: "codex-ide",
+          scopes: ["docs/other.md"],
+          lockTimeoutMs: 60,
+        }),
+      /Timed out waiting for project state lock/i
+    );
+    await new Promise((resolve) => holder.on("close", resolve));
+
+    // Stale lock recovery 1: guaranteed-dead child PID even with future expires_at
+    createTask({ projectDir, title: "Stale recovery task A", scopeIn: ["docs/separate-a.md"], createdAt: "2026-11-20T09:06:00Z" });
+    createTask({ projectDir, title: "Stale recovery task B", scopeIn: ["docs/separate-b.md"], createdAt: "2026-11-20T09:06:30Z" });
+    const deadChild = spawnSync(process.execPath, ["-e", "process.exit(0)"], { windowsHide: true });
+    assert.equal(deadChild.status, 0);
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: deadChild.pid,
+        token: "stale-dead-pid-token",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      "utf8"
+    );
+    const recoveredDeadPid = claimTaskLease({
+      projectDir,
+      taskId: "TASK-0003",
+      tool: "codex-ide",
+      scopes: ["docs/separate-a.md"],
+      lockTimeoutMs: 1000,
+    });
+    assert.equal(recoveredDeadPid.lease.task_id, "TASK-0003");
+    assert.equal(fs.existsSync(lockPath), false);
+
+    // Stale lock recovery 2: expired TTL timestamp
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: process.pid,
+        token: "stale-ttl-token",
+        created_at: "2020-01-01T00:00:00.000Z",
+        expires_at: "2020-01-01T00:01:00.000Z",
+      }),
+      "utf8"
+    );
+    const recoveredTtl = claimTaskLease({
+      projectDir,
+      taskId: "TASK-0004",
+      tool: "codex-ide",
+      scopes: ["docs/separate-b.md"],
+      lockTimeoutMs: 1000,
+    });
+    assert.equal(recoveredTtl.lease.task_id, "TASK-0004");
+    assert.equal(fs.existsSync(lockPath), false);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("fault injection triggers full multi-file rollback in claimTaskLease, updateTask, completeTask, and createCheckpoint", () => {
+  const { tmp, projectDir } = initTempProject("gf-tx-fault-");
+  try {
+    const t1 = createTask({ projectDir, title: "Transactional check", createdAt: "2026-11-20T09:05:00Z" });
+    const statePath = path.join(projectDir, "brain", "state", "current.yaml");
+    const leasesPath = path.join(projectDir, ".geloforge", "task-leases.yaml");
+
+    const snapTaskBeforeClaim = fs.readFileSync(t1.filePath, "utf8");
+    const snapStateBeforeClaim = fs.readFileSync(statePath, "utf8");
+
+    // 1. Fault on state write during claimTaskLease rolls back leases & task file
+    assert.throws(
+      () =>
+        claimTaskLease({
+          projectDir,
+          taskId: "TASK-0001",
+          tool: "gemini",
+          scopes: ["src/a.mjs"],
+          _faultHook: (label) => {
+            if (label === "state") throw new Error("Simulated state write failure");
+          },
+        }),
+      /Simulated state write failure/
+    );
+    assert.equal(fs.existsSync(leasesPath), false, "Newly created leases file must roll back cleanly");
+    assert.equal(fs.readFileSync(t1.filePath, "utf8"), snapTaskBeforeClaim);
+    assert.equal(fs.readFileSync(statePath, "utf8"), snapStateBeforeClaim);
+
+    // Succeed normal claim, then inject fault on leases removal during completeTask
+    claimTaskLease({ projectDir, taskId: "TASK-0001", tool: "gemini", scopes: ["src/a.mjs"] });
+    const snapTaskActive = fs.readFileSync(t1.filePath, "utf8");
+    const snapStateActive = fs.readFileSync(statePath, "utf8");
+    const snapLeasesActive = fs.readFileSync(leasesPath, "utf8");
+
+    assert.throws(
+      () =>
+        completeTask({
+          projectDir,
+          taskId: "TASK-0001",
+          tool: "gemini",
+          _faultHook: (label) => {
+            if (label === "leases") throw new Error("Simulated leases write failure");
+          },
+        }),
+      /Simulated leases write failure/
+    );
+    assert.equal(fs.readFileSync(t1.filePath, "utf8"), snapTaskActive);
+    assert.equal(fs.readFileSync(statePath, "utf8"), snapStateActive);
+    assert.equal(fs.readFileSync(leasesPath, "utf8"), snapLeasesActive);
+
+    // Fault on state write during updateTask rolls back task file cleanly
+    assert.throws(
+      () =>
+        updateTask({
+          projectDir,
+          taskId: "TASK-0001",
+          priority: "critical",
+          tool: "gemini",
+          _faultHook: (label) => {
+            if (label === "state") throw new Error("Simulated update state fault");
+          },
+        }),
+      /Simulated update state fault/
+    );
+    assert.equal(fs.readFileSync(t1.filePath, "utf8"), snapTaskActive);
+    assert.equal(fs.readFileSync(statePath, "utf8"), snapStateActive);
+
+    // Fault on state write during createCheckpoint unlinks newly written CHKPT-0001
+    assert.throws(
+      () =>
+        createCheckpoint({
+          projectDir,
+          summary: "Should roll back cleanly",
+          _faultHook: (label) => {
+            if (label === "state") throw new Error("Simulated checkpoint state fault");
+          },
+        }),
+      /Simulated checkpoint state fault/
+    );
+    assert.equal(fs.existsSync(path.join(projectDir, "brain", "handoffs", "CHKPT-0001-checkpoint.yaml")), false);
+    assert.equal(fs.readFileSync(statePath, "utf8"), snapStateActive);
+    assert.equal(validateProject(projectDir).valid, true);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("lease ownership distinguishes advisory labels and blocks unintended peer releases unless --force", () => {
+  const { tmp, projectDir } = initTempProject("gf-owner-");
+  try {
+    createTask({ projectDir, title: "Peer ownership guard", createdAt: "2026-11-20T09:05:00Z" });
+    const claim = claimTaskLease({
+      projectDir,
+      taskId: "TASK-0001",
+      tool: "gemini-cli",
+      sessionId: "gemini-win-1",
+      scopes: ["src/core"],
+      createdAt: "2026-11-20T09:06:00Z",
+    });
+    assert.equal(claim.lease.identity_mode, "advisory_self_declared");
+    assert.equal(claim.identityModel, "advisory_self_declared");
+
+    // Wrong tool or wrong sessionId cannot release or close active peer lease
+    assert.throws(
+      () => releaseTaskLease({ projectDir, taskId: "TASK-0001", sessionId: "codex-win-2", nowIso: "2026-11-20T09:10:00Z" }),
+      /Lease ownership mismatch/i
+    );
+    assert.throws(
+      () => completeTask({ projectDir, taskId: "TASK-0001", tool: "codex-cli", updatedAt: "2026-11-20T09:10:00Z" }),
+      /Lease ownership mismatch/i
+    );
+
+    // Matching advisory session confirms release cleanly
+    const rel = releaseTaskLease({
+      projectDir,
+      taskId: "TASK-0001",
+      sessionId: "gemini-win-1",
+      nowIso: "2026-11-20T09:10:00Z",
+    });
+    assert.equal(rel.released, true);
+    assert.equal(rel.releasedByOverride, false);
+
+    // Re-claim and verify explicit --force override works
+    claimTaskLease({
+      projectDir,
+      taskId: "TASK-0001",
+      tool: "gemini-cli",
+      sessionId: "gemini-win-1",
+      scopes: ["src/core"],
+      createdAt: "2026-11-20T09:11:00Z",
+    });
+    const forced = releaseTaskLease({
+      projectDir,
+      taskId: "TASK-0001",
+      tool: "human-override",
+      force: true,
+      nowIso: "2026-11-20T09:12:00Z",
+    });
+    assert.equal(forced.released, true);
+    assert.equal(forced.releasedByOverride, true);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("task done separates completion from verified evidence and enforces --require-evidence cleanly", () => {
+  const { tmp, projectDir } = initTempProject("gf-evid-truth-");
+  try {
+    createTask({ projectDir, title: "Task without test", activate: true, createdAt: "2026-11-20T09:05:00Z" });
+    createTask({ projectDir, title: "Task with test", activate: true, createdAt: "2026-11-20T09:05:30Z" });
+
+    // 1. Completing TASK-0001 without evidence warns honestly and leaves state.last_verified_evidence null
+    const unverifiedDone = completeTask({ projectDir, taskId: "TASK-0001", updatedAt: "2026-11-20T09:06:00Z" });
+    assert.equal(unverifiedDone.verified, false);
+    assert.equal(unverifiedDone.verificationStatus, "unverified");
+    assert.ok(unverifiedDone.warnings.some((w) => /not verified test evidence/i.test(w)));
+    const st1 = parseYaml(fs.readFileSync(path.join(projectDir, "brain", "state", "current.yaml"), "utf8"));
+    assert.equal(st1.last_verified_evidence, null);
+
+    // 2. Capture failing command -> draft EVID-0001 (NOT verified)
+    const failEv = captureEvidence({
+      projectDir,
+      taskId: "TASK-0002",
+      commandArgv: ["node", "-e", "process.exit(1)"],
+      createdAt: "2026-11-20T09:07:00Z",
+    });
+    assert.equal(failEv.verified, false);
+
+    // Refuses --require-evidence on unverified TASK-0002 and refuses linking draft/failed EVID-0001
+    assert.throws(
+      () => completeTask({ projectDir, taskId: "TASK-0002", requireEvidence: true }),
+      /Refusing to mark TASK-0002 completed with --require-evidence/i
+    );
+    assert.throws(
+      () => completeTask({ projectDir, taskId: "TASK-0002", evidenceRefs: [failEv.id] }),
+      /Refusing to link unverified evidence/i
+    );
+    assert.throws(
+      () => createCheckpoint({ projectDir, summary: "Bad ref", evidenceRef: failEv.id }),
+      /Refusing to link unverified evidence/i
+    );
+
+    // 3. Fix check -> capture passing command -> EVID-0002 (verified)
+    const passEv = captureEvidence({
+      projectDir,
+      taskId: "TASK-0002",
+      commandArgv: ["node", "-e", "console.log('verified')"],
+      verifiedBy: "qa-reviewer",
+      createdAt: "2026-11-20T09:08:00Z",
+    });
+    assert.equal(passEv.verified, true);
+
+    // Complete cleanly via CLI with --require-evidence (fails if unverified EVID-0001 still attached, so check explicit fix or new task!)
+    createTask({ projectDir, title: "Clean verified task", activate: true, createdAt: "2026-11-20T09:08:30Z" });
+    const passEv2 = captureEvidence({
+      projectDir,
+      taskId: "TASK-0003",
+      commandArgv: ["node", "-e", "console.log('clean pass')"],
+      verifiedBy: "qa-reviewer",
+      createdAt: "2026-11-20T09:09:00Z",
+    });
+    const cliDone = spawnSync(
+      process.execPath,
+      [CLI_PATH, "task", "done", "--project", projectDir, "TASK-0003", "--require-evidence", "--evidence", passEv2.id, "--json"],
+      { encoding: "utf8", windowsHide: true }
+    );
+    assert.equal(cliDone.status, 0, cliDone.stderr);
+    const doneJson = JSON.parse(cliDone.stdout);
+    assert.equal(doneJson.verified, true);
+    assert.equal(doneJson.verificationStatus, "verified");
+    assert.deepEqual(doneJson.verifiedEvidenceRefs, [passEv2.id]);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("MCP stdio enforces framing size bounds, malformed frame recovery, root confinement, and --read-only disclosure", async () => {
+  const { tmp: tmpA, projectDir: projectA } = initTempProject("gf-mcp-a-");
+  const { tmp: tmpB, projectDir: projectB } = initTempProject("gf-mcp-b-");
+  try {
+    assert.equal(MAX_MCP_MESSAGE_BYTES, 1024 * 1024);
+    assert.equal(MAX_MCP_HEADER_BYTES, 4096);
+
+    // Verify tool mutation metadata disclosure
+    const statusTool = MCP_TOOLS.find((t) => t.name === "geloforge_status");
+    const taskTool = MCP_TOOLS.find((t) => t.name === "geloforge_task");
+    assert.equal(statusTool.annotations.readOnlyHint, true);
+    assert.equal(taskTool.annotations.readOnlyHint, false);
+    assert.ok(taskTool.annotations.mutatingActions.includes("done"));
+
+    // Reject batch array JSON-RPC and non-trusted cross-project target escape
+    const arrErr = handleMcpMessage([{ jsonrpc: "2.0", id: 1, method: "ping" }], { defaultProjectDir: projectA });
+    assert.equal(arrErr.error.code, -32600);
+
+    const escapeCall = handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "geloforge_task", arguments: { action: "new", project: projectB, title: "Out of bounds write" } },
+      },
+      { defaultProjectDir: projectA }
+    );
+    assert.equal(escapeCall.result.isError, true);
+    assert.match(escapeCall.result.content[0].text, /outside trusted project root/i);
+
+    const skillEscape = handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "geloforge_skills", arguments: { action: "list", project: projectB } },
+      },
+      { defaultProjectDir: projectA }
+    );
+    assert.equal(skillEscape.result.isError, true);
+    assert.match(skillEscape.result.content[0].text, /outside trusted project root/i);
+
+    // --read-only permits read queries and refuses mutating actions cleanly
+    const roRead = handleMcpMessage(
+      { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "geloforge_status", arguments: {} } },
+      { defaultProjectDir: projectA, readOnly: true }
+    );
+    assert.equal(roRead.result.isError, false);
+
+    const roMutate = handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: { name: "geloforge_task", arguments: { action: "new", title: "Blocked write" } },
+      },
+      { defaultProjectDir: projectA, readOnly: true }
+    );
+    assert.equal(roMutate.result.isError, true);
+    assert.match(roMutate.result.content[0].text, /--read-only/i);
+
+    // Stdio framing bounds & recovery test: oversized Content-Length + negative Content-Length + multi-header valid ping
+    const inLsp = new PassThrough();
+    const outLsp = new PassThrough();
+    let lspOutText = "";
+    outLsp.on("data", (d) => {
+      lspOutText += d.toString("utf8");
+    });
+
+    const srvLsp = startMcpStdioServer({
+      defaultProjectDir: projectA,
+      input: inLsp,
+      output: outLsp,
+      maxMessageBytes: 256,
+      maxHeaderBytes: 128,
+    });
+
+    const oversizedBody = "x".repeat(400);
+    const validPing = JSON.stringify({ jsonrpc: "2.0", id: 77, method: "ping" });
+    inLsp.write(`Content-Length: ${oversizedBody.length}\r\n\r\n${oversizedBody}`);
+    inLsp.write("Content-Length: -5\r\n\r\n");
+    inLsp.write(
+      `Content-Type: application/vscode-jsonrpc; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(validPing, "utf8")}\r\n\r\n${validPing}`
+    );
+    inLsp.end();
+    await srvLsp;
+
+    assert.match(lspOutText, /exceeds maxMessageBytes/i);
+    assert.match(lspOutText, /Invalid Content-Length header/i);
+    assert.match(lspOutText, /"id":77,"result":\{\}/);
+
+    // JSONL oversized line followed by valid ping recovery
+    const inJsonl = new PassThrough();
+    const outJsonl = new PassThrough();
+    let jsonlOutText = "";
+    outJsonl.on("data", (d) => {
+      jsonlOutText += d.toString("utf8");
+    });
+    const srvJsonl = startMcpStdioServer({
+      defaultProjectDir: projectA,
+      input: inJsonl,
+      output: outJsonl,
+      maxMessageBytes: 128,
+    });
+    inJsonl.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: { pad: "y".repeat(200) } })}\n`);
+    inJsonl.write(`${JSON.stringify({ jsonrpc: "2.0", id: 88, method: "ping" })}\n`);
+    inJsonl.end();
+    await srvJsonl;
+
+    const jsonlLines = jsonlOutText.trim().split(/\r?\n/).map((l) => JSON.parse(l));
+    assert.equal(jsonlLines.length, 2);
+    assert.equal(jsonlLines[0].error.code, -32600);
+    assert.equal(jsonlLines[1].id, 88);
+  } finally {
+    fs.rmSync(tmpA, { recursive: true, force: true });
+    fs.rmSync(tmpB, { recursive: true, force: true });
   }
 });

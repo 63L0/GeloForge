@@ -1,8 +1,9 @@
 /**
  * Zero-dependency JSON-RPC 2.0 MCP stdio server for GeloForge (v0.5).
- * Exposes read/advisory/bounded operational tools over stdin/stdout (supporting both
- * newline-delimited JSON and Content-Length LSP-style framing) while refusing privileged
- * skill promotion, rollback, or key-signing operations over MCP.
+ * Exposes read/advisory and explicitly disclosed bounded-mutating tools over stdin/stdout
+ * (supporting newline-delimited JSON and Content-Length LSP framing with strict size bounds),
+ * enforces pinned project-root confinement and optional --read-only mode, and strictly
+ * refuses privileged skill promotion, rollback, or key-signing operations over MCP.
  */
 
 import fs from "node:fs";
@@ -33,6 +34,12 @@ const DEFAULT_HARNESS_DIR = path.resolve(__dirname, "..");
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const BLOCKED_SKILL_ACTIONS = new Set(["promote", "rollback", "keygen", "sign"]);
+export const MAX_MCP_MESSAGE_BYTES = 1024 * 1024;
+export const MAX_MCP_HEADER_BYTES = 4096;
+
+const MUTATING_TASK_ACTIONS = new Set(["new", "update", "done", "claim", "release"]);
+const MUTATING_CHECKPOINT_ACTIONS = new Set(["create"]);
+const MUTATING_SKILLS_ACTIONS = new Set(["draft", "propose", "propose-update"]);
 
 function getHarnessVersion(harnessDir) {
   try {
@@ -46,19 +53,31 @@ export const MCP_TOOLS = [
   {
     name: "geloforge_status",
     description:
-      "Inspect project validation health, operational state, active multi-IDE leases, pending human approvals inbox, and ranked next steps.",
+      "[READ-ONLY] Inspect project validation health, operational state, active multi-IDE leases, pending human approvals inbox, and ranked next steps.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      readOnlyActions: ["status"],
+      mutatingActions: [],
+    },
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        project: { type: "string", description: "Target project directory (optional if default cwd is a project)." },
+        project: { type: "string", description: "Target project directory (must match trusted project root when pinned)." },
       },
     },
   },
   {
     name: "geloforge_recommend",
     description:
-      "Return ranked Human-in-the-Loop Co-Pilot recommendations, pending human approval items, and multi-IDE overlap warnings.",
+      "[READ-ONLY] Return ranked Human-in-the-Loop Co-Pilot recommendations, pending human approval items, and multi-IDE overlap warnings.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      readOnlyActions: ["recommend"],
+      mutatingActions: [],
+    },
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -70,7 +89,13 @@ export const MCP_TOOLS = [
   {
     name: "geloforge_context",
     description:
-      "Compile a deterministic, trust-tiered, token-budgeted context packet with automatic completed-task pruning and peer IDE lease awareness.",
+      "[READ-ONLY] Compile a deterministic, trust-tiered, token-budgeted context packet with automatic completed-task pruning and peer IDE lease awareness.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      readOnlyActions: ["context"],
+      mutatingActions: [],
+    },
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -92,7 +117,13 @@ export const MCP_TOOLS = [
   {
     name: "geloforge_task",
     description:
-      "Manage scoped TASK-NNNN contracts and cooperative multi-IDE task/file-scope leases (list, show, new, update, done, claim, release, leases).",
+      "[READ + STATE-MUTATING] Manage scoped TASK-NNNN contracts and cooperative multi-IDE task/file-scope leases. Read-only actions: list, show, leases. Mutating actions (disabled in --read-only mode): new, update, done, claim, release.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      readOnlyActions: ["list", "show", "leases"],
+      mutatingActions: ["new", "update", "done", "claim", "release"],
+    },
     inputSchema: {
       type: "object",
       required: ["action"],
@@ -111,6 +142,8 @@ export const MCP_TOOLS = [
         role: { type: "string" },
         budget: { type: "string" },
         activate: { type: "boolean" },
+        evidenceRefs: { type: "array", items: { type: "string" } },
+        requireEvidence: { type: "boolean" },
         tool: { type: "string" },
         sessionId: { type: "string" },
         scopes: { type: "array", items: { type: "string" } },
@@ -124,7 +157,13 @@ export const MCP_TOOLS = [
   {
     name: "geloforge_checkpoint",
     description:
-      "Create, list, or inspect CHKPT-NNNN session recovery checkpoints to hand off cleanly across short sessions without context rot.",
+      "[READ + STATE-MUTATING] Create, list, or inspect CHKPT-NNNN session recovery checkpoints. Read-only actions: list, show. Mutating action (disabled in --read-only mode): create.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      readOnlyActions: ["list", "show"],
+      mutatingActions: ["create"],
+    },
     inputSchema: {
       type: "object",
       required: ["action"],
@@ -145,7 +184,14 @@ export const MCP_TOOLS = [
   {
     name: "geloforge_skills",
     description:
-      "Inspect, lint, draft quarantined skills from verified evidence, propose updates, or view history. Privileged promotion/rollback/signing actions are refused over MCP.",
+      "[READ + QUARANTINED-DRAFT ONLY] Inspect, lint, view history, or stage quarantined skill drafts/updates from verified evidence. Read-only actions: list, show, validate, lint, history. Mutating (quarantine-only, disabled in --read-only): draft, propose. Refused: promote, rollback, keygen, sign.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      readOnlyActions: ["list", "show", "validate", "lint", "history"],
+      mutatingActions: ["draft", "propose"],
+      refusedActions: ["promote", "rollback", "keygen", "sign"],
+    },
     inputSchema: {
       type: "object",
       required: ["action"],
@@ -174,14 +220,66 @@ export const MCP_TOOLS = [
   },
 ];
 
-function resolveTargetProject(args, defaultProjectDir, harnessDir) {
-  const explicit = typeof args?.project === "string" && args.project.trim() ? args.project.trim() : defaultProjectDir || null;
-  return resolveProjectDir({ project: explicit, harnessDir }).projectDir;
+function canonicalRealPath(dirPath) {
+  try {
+    return fs.realpathSync(dirPath);
+  } catch {
+    return path.resolve(dirPath);
+  }
 }
 
-function invokeTaskTool(args, defaultProjectDir, harnessDir) {
+function buildTrustedProjectRoots({ defaultProjectDir = null, allowedProjectRoots = null, harnessDir }) {
+  const roots = new Set();
+  if (Array.isArray(allowedProjectRoots)) {
+    for (const raw of allowedProjectRoots) {
+      if (typeof raw === "string" && raw.trim()) {
+        const resolved = resolveProjectDir({ project: raw.trim(), harnessDir }).projectDir;
+        roots.add(canonicalRealPath(resolved));
+      }
+    }
+  }
+  if (typeof defaultProjectDir === "string" && defaultProjectDir.trim()) {
+    const pinned = resolveProjectDir({ project: defaultProjectDir.trim(), harnessDir }).projectDir;
+    roots.add(canonicalRealPath(pinned));
+  } else if (roots.size === 0) {
+    try {
+      const cwdResolved = resolveProjectDir({ project: null, harnessDir }).projectDir;
+      roots.add(canonicalRealPath(cwdResolved));
+    } catch {
+      // Server started outside any project with no --project pin; defer to explicit root validation or no pinned root
+    }
+  }
+  return roots;
+}
+
+function resolveTargetProject(args, ctx) {
+  const { defaultProjectDir, allowedProjectRoots, harnessDir } = ctx;
+  const trustedRoots = buildTrustedProjectRoots({ defaultProjectDir, allowedProjectRoots, harnessDir });
+  const explicit =
+    typeof args?.project === "string" && args.project.trim() ? args.project.trim() : defaultProjectDir || null;
+  const resolvedTarget = resolveProjectDir({ project: explicit, harnessDir }).projectDir;
+  const canonicalTarget = canonicalRealPath(resolvedTarget);
+  if (trustedRoots.size > 0 && !trustedRoots.has(canonicalTarget)) {
+    throw new Error(
+      `Refusing MCP tool execution outside trusted project root (${Array.from(trustedRoots).join(", ")}): requested "${resolvedTarget}".`
+    );
+  }
+  return resolvedTarget;
+}
+
+function assertWritable(ctx, toolName, action) {
+  if (ctx.readOnly) {
+    throw new Error(`Refusing state-mutating MCP action "${toolName}:${action}" while server is in --read-only mode.`);
+  }
+}
+
+function invokeTaskTool(args, ctx) {
   const action = String(args?.action || "").trim().toLowerCase();
-  const projectDir = resolveTargetProject(args, defaultProjectDir, harnessDir);
+  if (MUTATING_TASK_ACTIONS.has(action)) {
+    assertWritable(ctx, "geloforge_task", action);
+  }
+  const projectDir = resolveTargetProject(args, ctx);
+  const harnessDir = ctx.harnessDir;
   switch (action) {
     case "list":
       return listTasks({ projectDir, status: args.status, harnessDir });
@@ -209,6 +307,11 @@ function invokeTaskTool(args, defaultProjectDir, harnessDir) {
         priority: args.priority,
         assignedRole: args.role,
         activate: Boolean(args.activate),
+        evidenceRefs: args.evidenceRefs,
+        requireEvidence: Boolean(args.requireEvidence),
+        tool: args.tool,
+        sessionId: args.sessionId,
+        force: Boolean(args.force),
         dryRun: Boolean(args.dryRun),
       });
     case "done":
@@ -216,6 +319,11 @@ function invokeTaskTool(args, defaultProjectDir, harnessDir) {
         projectDir,
         harnessDir,
         taskId: args.task,
+        evidenceRefs: args.evidenceRefs,
+        requireEvidence: Boolean(args.requireEvidence),
+        tool: args.tool,
+        sessionId: args.sessionId,
+        force: Boolean(args.force),
         dryRun: Boolean(args.dryRun),
       });
     case "claim":
@@ -236,6 +344,10 @@ function invokeTaskTool(args, defaultProjectDir, harnessDir) {
         projectDir,
         harnessDir,
         taskId: args.task,
+        tool: args.tool,
+        sessionId: args.sessionId,
+        role: args.role,
+        force: Boolean(args.force),
         dryRun: Boolean(args.dryRun),
       });
     case "leases":
@@ -249,9 +361,13 @@ function invokeTaskTool(args, defaultProjectDir, harnessDir) {
   }
 }
 
-function invokeCheckpointTool(args, defaultProjectDir, harnessDir) {
+function invokeCheckpointTool(args, ctx) {
   const action = String(args?.action || "").trim().toLowerCase();
-  const projectDir = resolveTargetProject(args, defaultProjectDir, harnessDir);
+  if (MUTATING_CHECKPOINT_ACTIONS.has(action)) {
+    assertWritable(ctx, "geloforge_checkpoint", action);
+  }
+  const projectDir = resolveTargetProject(args, ctx);
+  const harnessDir = ctx.harnessDir;
   switch (action) {
     case "create":
       return createCheckpoint({
@@ -274,19 +390,22 @@ function invokeCheckpointTool(args, defaultProjectDir, harnessDir) {
   }
 }
 
-function invokeSkillsTool(args, defaultProjectDir, harnessDir) {
+function invokeSkillsTool(args, ctx) {
   const action = String(args?.action || "").trim().toLowerCase();
   if (BLOCKED_SKILL_ACTIONS.has(action)) {
     throw new Error(
       `Refusing privileged skill mutation/signing over MCP (action "${action}"). Human must authorize via local CLI.`
     );
   }
+  if (MUTATING_SKILLS_ACTIONS.has(action)) {
+    assertWritable(ctx, "geloforge_skills", action);
+  }
 
-  const projectHint =
-    typeof args?.project === "string" && args.project.trim() ? args.project.trim() : defaultProjectDir || null;
+  const { defaultProjectDir, allowedProjectRoots, harnessDir } = ctx;
+  const trustedRoots = buildTrustedProjectRoots({ defaultProjectDir, allowedProjectRoots, harnessDir });
 
   if (action === "draft") {
-    const projectDir = resolveTargetProject(args, defaultProjectDir, harnessDir);
+    const projectDir = resolveTargetProject(args, ctx);
     return draftSkillFromExperience({
       projectDir,
       harnessDir,
@@ -303,7 +422,7 @@ function invokeSkillsTool(args, defaultProjectDir, harnessDir) {
   }
 
   if (action === "propose" || action === "propose-update") {
-    const projectDir = resolveTargetProject(args, defaultProjectDir, harnessDir);
+    const projectDir = resolveTargetProject(args, ctx);
     return proposeSkillUpdate({
       projectDir,
       harnessDir,
@@ -317,11 +436,19 @@ function invokeSkillsTool(args, defaultProjectDir, harnessDir) {
   }
 
   if (action === "history") {
-    const projectDir = resolveTargetProject(args, defaultProjectDir, harnessDir);
+    const projectDir = resolveTargetProject(args, ctx);
     return getSkillHistory({ projectDir, skillName: args.name, harnessDir });
   }
 
+  const projectHint =
+    typeof args?.project === "string" && args.project.trim() ? args.project.trim() : defaultProjectDir || null;
   const loc = resolveProjectForSkills({ project: projectHint, harnessDir });
+  if (trustedRoots.size > 0 && loc.projectDir && !trustedRoots.has(canonicalRealPath(loc.projectDir))) {
+    throw new Error(
+      `Refusing MCP tool execution outside trusted project root (${Array.from(trustedRoots).join(", ")}): requested "${loc.projectDir}".`
+    );
+  }
+
   const discovery = discoverSkills({
     projectDir: loc.projectDir,
     proposalsDir: loc.proposalsDir,
@@ -382,21 +509,21 @@ function invokeSkillsTool(args, defaultProjectDir, harnessDir) {
   throw new Error(`Unsupported skills action "${action}".`);
 }
 
-function executeToolCall(name, args, { defaultProjectDir, harnessDir }) {
+function executeToolCall(name, args, ctx) {
   switch (name) {
     case "geloforge_status": {
-      const projectDir = resolveTargetProject(args, defaultProjectDir, harnessDir);
+      const projectDir = resolveTargetProject(args, ctx);
       return getProjectStatus(projectDir);
     }
     case "geloforge_recommend": {
-      const projectDir = resolveTargetProject(args, defaultProjectDir, harnessDir);
+      const projectDir = resolveTargetProject(args, ctx);
       return getProjectRecommendations(projectDir);
     }
     case "geloforge_context": {
-      const projectDir = resolveTargetProject(args, defaultProjectDir, harnessDir);
+      const projectDir = resolveTargetProject(args, ctx);
       return compileContext({
         projectDir,
-        harnessDir,
+        harnessDir: ctx.harnessDir,
         taskId: args?.task,
         query: args?.query,
         profile: args?.profile || "working",
@@ -410,11 +537,11 @@ function executeToolCall(name, args, { defaultProjectDir, harnessDir }) {
       });
     }
     case "geloforge_task":
-      return invokeTaskTool(args, defaultProjectDir, harnessDir);
+      return invokeTaskTool(args, ctx);
     case "geloforge_checkpoint":
-      return invokeCheckpointTool(args, defaultProjectDir, harnessDir);
+      return invokeCheckpointTool(args, ctx);
     case "geloforge_skills":
-      return invokeSkillsTool(args, defaultProjectDir, harnessDir);
+      return invokeSkillsTool(args, ctx);
     default:
       return null;
   }
@@ -424,18 +551,37 @@ function executeToolCall(name, args, { defaultProjectDir, harnessDir }) {
  * Handles a single parsed JSON-RPC 2.0 MCP message and returns the response object
  * (or null for JSON-RPC notifications).
  */
-export function handleMcpMessage(msg, { defaultProjectDir = null, harnessDir = DEFAULT_HARNESS_DIR } = {}) {
+export function handleMcpMessage(
+  msg,
+  {
+    defaultProjectDir = null,
+    allowedProjectRoots = null,
+    harnessDir = DEFAULT_HARNESS_DIR,
+    readOnly = false,
+  } = {}
+) {
   const absHarness = path.resolve(harnessDir || DEFAULT_HARNESS_DIR);
-  if (!msg || typeof msg !== "object" || msg.jsonrpc !== "2.0") {
+  if (!msg || typeof msg !== "object" || Array.isArray(msg) || msg.jsonrpc !== "2.0") {
+    const safeId =
+      msg && !Array.isArray(msg) && (typeof msg.id === "string" || typeof msg.id === "number") ? msg.id : null;
     return {
       jsonrpc: "2.0",
-      id: msg?.id ?? null,
+      id: safeId,
       error: { code: -32600, message: "Invalid JSON-RPC 2.0 request." },
     };
   }
 
+  if (typeof msg.method !== "string" || msg.method.trim().length === 0) {
+    const safeId = typeof msg.id === "string" || typeof msg.id === "number" ? msg.id : null;
+    return {
+      jsonrpc: "2.0",
+      id: safeId,
+      error: { code: -32600, message: "Invalid JSON-RPC 2.0 request: missing method." },
+    };
+  }
+
   const isNotification = msg.id === undefined || msg.id === null;
-  const method = String(msg.method || "");
+  const method = msg.method;
 
   if (method === "notifications/initialized" || method === "notifications/cancelled") {
     return null;
@@ -444,6 +590,13 @@ export function handleMcpMessage(msg, { defaultProjectDir = null, harnessDir = D
   if (isNotification && method.startsWith("notifications/")) {
     return null;
   }
+
+  const ctx = {
+    defaultProjectDir,
+    allowedProjectRoots,
+    harnessDir: absHarness,
+    readOnly: Boolean(readOnly),
+  };
 
   try {
     if (method === "initialize") {
@@ -475,7 +628,15 @@ export function handleMcpMessage(msg, { defaultProjectDir = null, harnessDir = D
 
     if (method === "tools/call") {
       const toolName = msg.params?.name;
-      const toolArgs = msg.params?.arguments || {};
+      const rawArgs = msg.params?.arguments;
+      if (rawArgs !== undefined && (rawArgs === null || typeof rawArgs !== "object" || Array.isArray(rawArgs))) {
+        return {
+          jsonrpc: "2.0",
+          id: msg.id,
+          error: { code: -32602, message: "Invalid tool params: arguments must be a plain object." },
+        };
+      }
+      const toolArgs = rawArgs || {};
       if (typeof toolName !== "string" || !MCP_TOOLS.some((t) => t.name === toolName)) {
         return {
           jsonrpc: "2.0",
@@ -484,7 +645,7 @@ export function handleMcpMessage(msg, { defaultProjectDir = null, harnessDir = D
         };
       }
       try {
-        const result = executeToolCall(toolName, toolArgs, { defaultProjectDir, harnessDir: absHarness });
+        const result = executeToolCall(toolName, toolArgs, ctx);
         const serialized = redactSecretContent(JSON.stringify(result, null, 2));
         return {
           jsonrpc: "2.0",
@@ -535,32 +696,100 @@ function writeFramedResponse(output, responseObj, framing) {
   }
 }
 
+function parseLspContentLength(headersText, maxMessageBytes) {
+  const lines = headersText.split(/\r?\n/);
+  const contentLengths = [];
+  for (const rawLine of lines) {
+    if (!rawLine.trim()) continue;
+    const colonIdx = rawLine.indexOf(":");
+    if (colonIdx <= 0) {
+      return { ok: false, error: "Malformed LSP header line.", contentLength: 0 };
+    }
+    const name = rawLine.slice(0, colonIdx).trim().toLowerCase();
+    const val = rawLine.slice(colonIdx + 1).trim();
+    if (name === "content-length") {
+      if (!/^\d+$/.test(val)) {
+        return { ok: false, error: `Invalid Content-Length header "${val}".`, contentLength: 0 };
+      }
+      const n = Number(val);
+      if (!Number.isSafeInteger(n) || n <= 0) {
+        return { ok: false, error: `Invalid Content-Length value ${val} (must be >= 1).`, contentLength: 0 };
+      }
+      if (n > maxMessageBytes) {
+        return {
+          ok: false,
+          error: `MCP message Content-Length (${n} bytes) exceeds maxMessageBytes (${maxMessageBytes}).`,
+          contentLength: n,
+          skipBody: true,
+        };
+      }
+      contentLengths.push(n);
+    }
+  }
+  if (contentLengths.length === 0) {
+    return { ok: false, error: "Missing Content-Length header in LSP frame.", contentLength: 0 };
+  }
+  if (new Set(contentLengths).size > 1) {
+    return { ok: false, error: "Conflicting duplicate Content-Length headers.", contentLength: 0 };
+  }
+  return { ok: true, contentLength: contentLengths[0] };
+}
+
+function findHeaderSeparator(buffer) {
+  const crlf = buffer.indexOf("\r\n\r\n");
+  const lf = buffer.indexOf("\n\n");
+  if (crlf !== -1 && (lf === -1 || crlf <= lf)) {
+    return { index: crlf, len: 4 };
+  }
+  if (lf !== -1) {
+    return { index: lf, len: 2 };
+  }
+  return { index: -1, len: 0 };
+}
+
 /**
  * Starts the synchronous-per-message MCP JSON-RPC 2.0 server over stdin/stdout streams.
+ * Enforces bounded message/header sizes and malformed frame recovery cleanly.
  * Resolves when input stream ends cleanly.
  */
 export function startMcpStdioServer({
   defaultProjectDir = null,
+  allowedProjectRoots = null,
   harnessDir = DEFAULT_HARNESS_DIR,
   input = process.stdin,
   output = process.stdout,
+  maxMessageBytes = MAX_MCP_MESSAGE_BYTES,
+  maxHeaderBytes = MAX_MCP_HEADER_BYTES,
+  readOnly = false,
 } = {}) {
+  const safeMaxMsg =
+    Number.isInteger(maxMessageBytes) && maxMessageBytes >= 64 ? maxMessageBytes : MAX_MCP_MESSAGE_BYTES;
+  const safeMaxHdr =
+    Number.isInteger(maxHeaderBytes) && maxHeaderBytes >= 64 ? maxHeaderBytes : MAX_MCP_HEADER_BYTES;
+
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0);
+    let discardRemainingBytes = 0;
+    let discardUntilNewline = false;
+
+    const emitError = (code, message, framing) => {
+      writeFramedResponse(output, { jsonrpc: "2.0", id: null, error: { code, message } }, framing);
+    };
 
     const dispatchRaw = (rawJson, framing) => {
       let msg;
       try {
         msg = JSON.parse(rawJson);
       } catch {
-        writeFramedResponse(
-          output,
-          { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } },
-          framing
-        );
+        emitError(-32700, "Parse error", framing);
         return;
       }
-      const reply = handleMcpMessage(msg, { defaultProjectDir, harnessDir });
+      const reply = handleMcpMessage(msg, {
+        defaultProjectDir,
+        allowedProjectRoots,
+        harnessDir,
+        readOnly,
+      });
       if (reply !== null) {
         writeFramedResponse(output, reply, framing);
       }
@@ -568,9 +797,30 @@ export function startMcpStdioServer({
 
     const drainBuffer = () => {
       while (buffer.length > 0) {
+        if (discardRemainingBytes > 0) {
+          const drop = Math.min(discardRemainingBytes, buffer.length);
+          buffer = buffer.subarray(drop);
+          discardRemainingBytes -= drop;
+          continue;
+        }
+
+        if (discardUntilNewline) {
+          const nlIdx = buffer.indexOf("\n");
+          if (nlIdx === -1) {
+            buffer = Buffer.alloc(0);
+            break;
+          }
+          buffer = buffer.subarray(nlIdx + 1);
+          discardUntilNewline = false;
+          continue;
+        }
+
         // Trim leading whitespace before inspecting framing style
         let skip = 0;
-        while (skip < buffer.length && (buffer[skip] === 0x20 || buffer[skip] === 0x09 || buffer[skip] === 0x0d || buffer[skip] === 0x0a)) {
+        while (
+          skip < buffer.length &&
+          (buffer[skip] === 0x20 || buffer[skip] === 0x09 || buffer[skip] === 0x0d || buffer[skip] === 0x0a)
+        ) {
           skip += 1;
         }
         if (skip > 0) {
@@ -579,29 +829,53 @@ export function startMcpStdioServer({
         if (buffer.length === 0) break;
 
         const headPreview = buffer.subarray(0, Math.min(32, buffer.length)).toString("utf8");
-        if (/^content-length\s*:/i.test(headPreview)) {
-          let sepIndex = buffer.indexOf("\r\n\r\n");
-          let sepLen = 4;
+        if (/^content-(?:length|type)\s*:/i.test(headPreview)) {
+          const { index: sepIndex, len: sepLen } = findHeaderSeparator(buffer);
           if (sepIndex === -1) {
-            sepIndex = buffer.indexOf("\n\n");
-            sepLen = 2;
+            if (buffer.length > safeMaxHdr) {
+              buffer = Buffer.alloc(0);
+              emitError(-32600, `MCP header block exceeds maxHeaderBytes (${safeMaxHdr}).`, "lsp");
+            }
+            break;
           }
-          if (sepIndex === -1) break;
-          const headersText = buffer.subarray(0, sepIndex).toString("utf8");
-          const match = headersText.match(/content-length\s*:\s*(\d+)/i);
-          if (!match) {
+          if (sepIndex > safeMaxHdr) {
             buffer = buffer.subarray(sepIndex + sepLen);
+            emitError(-32600, `MCP header block exceeds maxHeaderBytes (${safeMaxHdr}).`, "lsp");
             continue;
           }
-          const contentLen = Number.parseInt(match[1], 10);
+          const headersText = buffer.subarray(0, sepIndex).toString("utf8");
+          const parsedHdr = parseLspContentLength(headersText, safeMaxMsg);
+          if (!parsedHdr.ok) {
+            buffer = buffer.subarray(sepIndex + sepLen);
+            if (parsedHdr.skipBody && parsedHdr.contentLength > 0) {
+              discardRemainingBytes = parsedHdr.contentLength;
+            }
+            emitError(-32600, parsedHdr.error, "lsp");
+            continue;
+          }
+          const contentLen = parsedHdr.contentLength;
           const bodyStart = sepIndex + sepLen;
-          if (buffer.length < bodyStart + contentLen) break;
+          if (buffer.length < bodyStart + contentLen) {
+            break;
+          }
           const bodyText = buffer.subarray(bodyStart, bodyStart + contentLen).toString("utf8");
           buffer = buffer.subarray(bodyStart + contentLen);
           dispatchRaw(bodyText, "lsp");
         } else {
           const nlIdx = buffer.indexOf("\n");
-          if (nlIdx === -1) break;
+          if (nlIdx === -1) {
+            if (buffer.length > safeMaxMsg) {
+              buffer = Buffer.alloc(0);
+              discardUntilNewline = true;
+              emitError(-32600, `MCP message exceeds maxMessageBytes (${safeMaxMsg}).`, "jsonl");
+            }
+            break;
+          }
+          if (nlIdx > safeMaxMsg) {
+            buffer = buffer.subarray(nlIdx + 1);
+            emitError(-32600, `MCP message exceeds maxMessageBytes (${safeMaxMsg}).`, "jsonl");
+            continue;
+          }
           const line = buffer.subarray(0, nlIdx).toString("utf8").trim();
           buffer = buffer.subarray(nlIdx + 1);
           if (line.length > 0) {
@@ -618,13 +892,17 @@ export function startMcpStdioServer({
     });
 
     input.on("end", () => {
-      if (buffer.length > 0) {
-        const leftover = buffer.toString("utf8").trim();
-        if (leftover && !/^content-length\s*:/i.test(leftover)) {
-          dispatchRaw(leftover, "jsonl");
+      if (!discardUntilNewline && discardRemainingBytes === 0 && buffer.length > 0) {
+        if (buffer.length > safeMaxMsg) {
+          emitError(-32600, `MCP message exceeds maxMessageBytes (${safeMaxMsg}).`, "jsonl");
+        } else {
+          const leftover = buffer.toString("utf8").trim();
+          if (leftover && !/^content-(?:length|type)\s*:/i.test(leftover)) {
+            dispatchRaw(leftover, "jsonl");
+          }
         }
-        buffer = Buffer.alloc(0);
       }
+      buffer = Buffer.alloc(0);
       resolve();
     });
 

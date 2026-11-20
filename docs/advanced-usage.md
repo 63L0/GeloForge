@@ -209,18 +209,19 @@ node scripts/geloforge.mjs recommend --json
 
 ### 2. Task Completion, Reactivation & Multi-IDE Cooperative Leases
 ```bash
-# Mark a task completed (updates state.last_completed_task and releases its lease)
+# Mark a task completed (records verificationStatus="unverified" unless verified EVID-* exists; pass --require-evidence to enforce)
 node scripts/geloforge.mjs task done --task TASK-0001
+node scripts/geloforge.mjs task done --task TASK-0001 --require-evidence --evidence EVID-0001 --tool gemini-ide
 
 # Update/reactivate a task cleanly
 node scripts/geloforge.mjs task update --task TASK-0001 --status active --activate
 
-# Claim a cooperative lease across IDEs/tools (blocks overlapping scopes unless --force)
+# Claim/release a cooperative lease across IDEs/tools (serialized via .geloforge/.state.lock; tool/session are advisory labels)
 node scripts/geloforge.mjs task claim --task TASK-0002 --tool gemini-ide --role developer --scope "src/auth" --ttl 120
 node scripts/geloforge.mjs task leases
-node scripts/geloforge.mjs task release --task TASK-0002
+node scripts/geloforge.mjs task release --task TASK-0002 --tool gemini-ide
 ```
-Active peer leases are automatically surfaced inside compiled `context` packets as an operational collision guard.
+Active peer leases are automatically surfaced inside compiled `context` packets as an operational collision guard. Releasing or completing another session's active lease requires matching `--tool` / `--session` confirmation (or explicit `--force`).
 
 ### 3. Anti-Context-Rot Context Compilation & Checkpoints
 ```bash
@@ -239,6 +240,13 @@ See [schemas/recovery-checkpoint.schema.json](../schemas/recovery-checkpoint.sch
 
 ### 4. Zero-Dependency MCP Server (`geloforge mcp`)
 ```bash
+# Default project-pinned server (supports read + disclosed state-mutating tools)
 node scripts/geloforge.mjs mcp --project /path/to/your/project
+
+# Read-only mode (refuses all state-mutating actions)
+node scripts/geloforge.mjs mcp --project /path/to/your/project --read-only
 ```
-Exposes `geloforge_status`, `geloforge_recommend`, `geloforge_context`, `geloforge_task`, `geloforge_checkpoint`, and read/lint/draft `geloforge_skills` tools over JSON-RPC 2.0 stdin/stdout (supporting both newline-delimited JSON and `Content-Length:` LSP framing). Privileged skill actions (`promote`, `rollback`, `keygen`, `sign`) are strictly refused over MCP so human authorization stays under local CLI / Git control.
+Supports JSON-RPC 2.0 stdin/stdout (`\n`-delimited JSON or `Content-Length:` LSP framing bounded to 1 MB messages / 4 KB headers) and confines calls to the pinned project root:
+- **Read-only tools:** `geloforge_status`, `geloforge_recommend`, `geloforge_context`, plus read actions (`list`/`show`/`leases`/`validate`/`lint`/`history`) on `geloforge_task`, `geloforge_checkpoint`, and `geloforge_skills`.
+- **State-mutating tools (disabled under `--read-only`):** `geloforge_task` (`new`, `update`, `done`, `claim`, `release`), `geloforge_checkpoint` (`create`), and quarantined `geloforge_skills` (`draft`, `propose`).
+- **Strictly refused over MCP:** `geloforge_skills` `promote`, `rollback`, `keygen`, and `sign` so human authorization remains under local CLI / Git control.

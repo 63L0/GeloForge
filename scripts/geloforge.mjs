@@ -194,14 +194,18 @@ Options:
 `);
       break;
     case "mcp":
-      console.log(`Usage: geloforge mcp [serve] [--project <path>]
+      console.log(`Usage: geloforge mcp [serve] [--project <path>] [--read-only]
 
 Runs GeloForge's zero-dependency JSON-RPC 2.0 MCP server on stdin/stdout.
-Supports status, recommend, context, task, checkpoint, and read/draft/lint skill tools;
-privileged skill promote/rollback/keygen/sign actions remain strictly refused over MCP.
+Pins operations to the configured/current project root (when present).
+Read-only tools: geloforge_status, geloforge_recommend, geloforge_context.
+State-mutating tools (disabled by --read-only): geloforge_task (new/update/done/claim/release),
+geloforge_checkpoint (create), geloforge_skills (draft/propose in quarantine only).
+Privileged skill promote/rollback/keygen/sign actions remain strictly refused over MCP.
 
 Options:
-  -p, --project <path>    Default project directory when tool call omits 'project'
+  -p, --project <path>    Trusted project root directory
+  --read-only             Refuse all state-mutating MCP actions
   -h, --help              Show help
 `);
       break;
@@ -270,16 +274,18 @@ Common Options:
   --scope-out <text>      Out-of-scope item ('new', repeatable)
   --input <relpath>       Required project input file path ('new', repeatable)
   --dep <TASK-NNNN>       Dependency task ID ('new', repeatable)
+  --evidence <EVID-NNNN>  Link verified evidence ID ('update'/'done', repeatable)
+  --require-evidence      Refuse 'done' unless task has verified EVID-* check(s)
   --created-by <name>     Author label ('new')
   --created-at <iso>      ISO-8601 timestamp override
   --dry-run               Preview changes without writing disk
 
 'task claim' / 'task release' / 'task leases' Options:
-  --tool <name>           IDE / agent tool label (e.g. "codex", "antigravity")
-  --session <id>          Session identifier label
+  --tool <name>           Advisory IDE / agent tool label (e.g. "codex", "antigravity")
+  --session <id>          Advisory session identifier label
   --scope <path-prefix>   Owned file/dir scope (repeatable; defaults to task scope_in)
   --ttl <minutes>         Lease TTL in minutes (1-1440, default: 120)
-  --force                 Override colliding active lease or reactivate completed check
+  --force                 Override colliding active lease or ownership mismatch
   --include-expired       Include expired leases in 'leases' output
 `);
       break;
@@ -846,6 +852,7 @@ async function handleMcp(args) {
     args: effectiveArgs,
     options: {
       project: { type: "string", short: "p" },
+      "read-only": { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
     strict: true,
@@ -859,7 +866,11 @@ async function handleMcp(args) {
   if (parsed.values.project) {
     defaultProjectDir = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR }).projectDir;
   }
-  await startMcpStdioServer({ defaultProjectDir, harnessDir: HARNESS_DIR });
+  await startMcpStdioServer({
+    defaultProjectDir,
+    harnessDir: HARNESS_DIR,
+    readOnly: parsed.values["read-only"],
+  });
   return 0;
 }
 
@@ -1125,6 +1136,11 @@ function handleTask(args) {
         priority: { type: "string" },
         role: { type: "string" },
         activate: { type: "boolean", default: false },
+        evidence: { type: "string", multiple: true },
+        "require-evidence": { type: "boolean", default: false },
+        tool: { type: "string" },
+        session: { type: "string" },
+        force: { type: "boolean", default: false },
         "created-at": { type: "string" },
         "dry-run": { type: "boolean", default: false },
         json: { type: "boolean", default: false },
@@ -1148,6 +1164,11 @@ function handleTask(args) {
             projectDir,
             harnessDir: HARNESS_DIR,
             taskId: targetId,
+            evidenceRefs: parsed.values.evidence,
+            requireEvidence: parsed.values["require-evidence"],
+            tool: parsed.values.tool,
+            sessionId: parsed.values.session,
+            force: parsed.values.force,
             updatedAt: parsed.values["created-at"],
             dryRun: parsed.values["dry-run"],
           })
@@ -1159,6 +1180,11 @@ function handleTask(args) {
             priority: parsed.values.priority,
             assignedRole: parsed.values.role,
             activate: parsed.values.activate,
+            evidenceRefs: parsed.values.evidence,
+            requireEvidence: parsed.values["require-evidence"],
+            tool: parsed.values.tool,
+            sessionId: parsed.values.session,
+            force: parsed.values.force,
             updatedAt: parsed.values["created-at"],
             dryRun: parsed.values["dry-run"],
           });
@@ -1171,6 +1197,12 @@ function handleTask(args) {
         ? `DRY RUN — Task ${res.id} not updated.`
         : `Task updated: ${res.id} (${res.previousStatus} -> ${res.status}) | state_revision=${res.stateRevision}`
     );
+    if (res.status === "completed") {
+      const evLabel =
+        (res.verifiedEvidenceRefs || []).length > 0 ? res.verifiedEvidenceRefs.join(", ") : "no verified EVID-* check";
+      console.log(`Verification : ${res.verificationStatus} (${evLabel})`);
+    }
+    for (const w of res.warnings || []) console.log(`  - [WARN] ${w}`);
     return 0;
   }
 
@@ -1241,6 +1273,10 @@ function handleTask(args) {
         project: { type: "string", short: "p" },
         task: { type: "string", short: "t" },
         id: { type: "string" },
+        tool: { type: "string" },
+        session: { type: "string" },
+        role: { type: "string" },
+        force: { type: "boolean", default: false },
         "created-at": { type: "string" },
         "dry-run": { type: "boolean", default: false },
         json: { type: "boolean", default: false },
@@ -1262,6 +1298,10 @@ function handleTask(args) {
       projectDir,
       harnessDir: HARNESS_DIR,
       taskId: targetId,
+      tool: parsed.values.tool,
+      sessionId: parsed.values.session,
+      role: parsed.values.role,
+      force: parsed.values.force,
       nowIso: parsed.values["created-at"],
       dryRun: parsed.values["dry-run"],
     });
