@@ -228,38 +228,48 @@ function canonicalRealPath(dirPath) {
   }
 }
 
-function buildTrustedProjectRoots({ defaultProjectDir = null, allowedProjectRoots = null, harnessDir }) {
+function buildTrustedProjectRoots({
+  defaultProjectDir = null,
+  allowedProjectRoots = null,
+  cwd = process.cwd(),
+  harnessDir,
+}) {
   const roots = new Set();
   if (Array.isArray(allowedProjectRoots)) {
     for (const raw of allowedProjectRoots) {
       if (typeof raw === "string" && raw.trim()) {
-        const resolved = resolveProjectDir({ project: raw.trim(), harnessDir }).projectDir;
+        const resolved = resolveProjectDir({ project: raw.trim(), cwd, harnessDir }).projectDir;
         roots.add(canonicalRealPath(resolved));
       }
     }
   }
   if (typeof defaultProjectDir === "string" && defaultProjectDir.trim()) {
-    const pinned = resolveProjectDir({ project: defaultProjectDir.trim(), harnessDir }).projectDir;
+    const pinned = resolveProjectDir({ project: defaultProjectDir.trim(), cwd, harnessDir }).projectDir;
     roots.add(canonicalRealPath(pinned));
   } else if (roots.size === 0) {
     try {
-      const cwdResolved = resolveProjectDir({ project: null, harnessDir }).projectDir;
+      const cwdResolved = resolveProjectDir({ project: null, cwd, harnessDir }).projectDir;
       roots.add(canonicalRealPath(cwdResolved));
     } catch {
-      // Server started outside any project with no --project pin; defer to explicit root validation or no pinned root
+      // Launched outside any recognized GeloForge project without --project; keep roots empty so callers fail closed
     }
   }
   return roots;
 }
 
 function resolveTargetProject(args, ctx) {
-  const { defaultProjectDir, allowedProjectRoots, harnessDir } = ctx;
-  const trustedRoots = buildTrustedProjectRoots({ defaultProjectDir, allowedProjectRoots, harnessDir });
+  const { defaultProjectDir, allowedProjectRoots, cwd, harnessDir } = ctx;
+  const trustedRoots = buildTrustedProjectRoots({ defaultProjectDir, allowedProjectRoots, cwd, harnessDir });
+  if (trustedRoots.size === 0) {
+    throw new Error(
+      'Refusing MCP tool execution without a trusted project root: server was started outside a recognized GeloForge project without --project. Start with "geloforge mcp --project <dir>" or run from inside a project directory.'
+    );
+  }
   const explicit =
     typeof args?.project === "string" && args.project.trim() ? args.project.trim() : defaultProjectDir || null;
-  const resolvedTarget = resolveProjectDir({ project: explicit, harnessDir }).projectDir;
+  const resolvedTarget = resolveProjectDir({ project: explicit, cwd, harnessDir }).projectDir;
   const canonicalTarget = canonicalRealPath(resolvedTarget);
-  if (trustedRoots.size > 0 && !trustedRoots.has(canonicalTarget)) {
+  if (!trustedRoots.has(canonicalTarget)) {
     throw new Error(
       `Refusing MCP tool execution outside trusted project root (${Array.from(trustedRoots).join(", ")}): requested "${resolvedTarget}".`
     );
@@ -401,11 +411,10 @@ function invokeSkillsTool(args, ctx) {
     assertWritable(ctx, "geloforge_skills", action);
   }
 
-  const { defaultProjectDir, allowedProjectRoots, harnessDir } = ctx;
-  const trustedRoots = buildTrustedProjectRoots({ defaultProjectDir, allowedProjectRoots, harnessDir });
+  const projectDir = resolveTargetProject(args, ctx);
+  const { harnessDir } = ctx;
 
   if (action === "draft") {
-    const projectDir = resolveTargetProject(args, ctx);
     return draftSkillFromExperience({
       projectDir,
       harnessDir,
@@ -422,7 +431,6 @@ function invokeSkillsTool(args, ctx) {
   }
 
   if (action === "propose" || action === "propose-update") {
-    const projectDir = resolveTargetProject(args, ctx);
     return proposeSkillUpdate({
       projectDir,
       harnessDir,
@@ -436,18 +444,10 @@ function invokeSkillsTool(args, ctx) {
   }
 
   if (action === "history") {
-    const projectDir = resolveTargetProject(args, ctx);
     return getSkillHistory({ projectDir, skillName: args.name, harnessDir });
   }
 
-  const projectHint =
-    typeof args?.project === "string" && args.project.trim() ? args.project.trim() : defaultProjectDir || null;
-  const loc = resolveProjectForSkills({ project: projectHint, harnessDir });
-  if (trustedRoots.size > 0 && loc.projectDir && !trustedRoots.has(canonicalRealPath(loc.projectDir))) {
-    throw new Error(
-      `Refusing MCP tool execution outside trusted project root (${Array.from(trustedRoots).join(", ")}): requested "${loc.projectDir}".`
-    );
-  }
+  const loc = resolveProjectForSkills({ project: projectDir, harnessDir });
 
   const discovery = discoverSkills({
     projectDir: loc.projectDir,
@@ -556,6 +556,7 @@ export function handleMcpMessage(
   {
     defaultProjectDir = null,
     allowedProjectRoots = null,
+    cwd = process.cwd(),
     harnessDir = DEFAULT_HARNESS_DIR,
     readOnly = false,
   } = {}
@@ -594,6 +595,7 @@ export function handleMcpMessage(
   const ctx = {
     defaultProjectDir,
     allowedProjectRoots,
+    cwd: cwd || process.cwd(),
     harnessDir: absHarness,
     readOnly: Boolean(readOnly),
   };
@@ -755,6 +757,7 @@ function findHeaderSeparator(buffer) {
 export function startMcpStdioServer({
   defaultProjectDir = null,
   allowedProjectRoots = null,
+  cwd = process.cwd(),
   harnessDir = DEFAULT_HARNESS_DIR,
   input = process.stdin,
   output = process.stdout,
@@ -787,6 +790,7 @@ export function startMcpStdioServer({
       const reply = handleMcpMessage(msg, {
         defaultProjectDir,
         allowedProjectRoots,
+        cwd,
         harnessDir,
         readOnly,
       });

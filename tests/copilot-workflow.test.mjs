@@ -22,6 +22,7 @@ import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectRecommendations, getProjectStatus } from "../core/project-status.mjs";
 import { draftSkillFromExperience } from "../core/skills-lifecycle.mjs";
 import { validateProject } from "../core/project-validator.mjs";
+import { withProjectLock } from "../core/project-lock.mjs";
 import {
   MAX_MCP_HEADER_BYTES,
   MAX_MCP_MESSAGE_BYTES,
@@ -622,6 +623,7 @@ test("concurrent two-process claimTaskLease serializes via .state.lock, enforces
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    const holderClosed = new Promise((resolve) => holder.once("close", resolve));
     // Wait until lockfile appears
     const lockPath = path.join(projectDir, ".geloforge", ".state.lock");
     const deadline = Date.now() + 2000;
@@ -639,7 +641,7 @@ test("concurrent two-process claimTaskLease serializes via .state.lock, enforces
         }),
       /Timed out waiting for project state lock/i
     );
-    await new Promise((resolve) => holder.on("close", resolve));
+    await holderClosed;
 
     // Stale lock recovery 1: guaranteed-dead child PID even with future expires_at
     createTask({ projectDir, title: "Stale recovery task A", scopeIn: ["docs/separate-a.md"], createdAt: "2026-11-20T09:06:00Z" });
@@ -666,26 +668,135 @@ test("concurrent two-process claimTaskLease serializes via .state.lock, enforces
     assert.equal(recoveredDeadPid.lease.task_id, "TASK-0003");
     assert.equal(fs.existsSync(lockPath), false);
 
-    // Stale lock recovery 2: expired TTL timestamp
+    // Live lock protection: an active process holding .state.lock longer than staleLockMs MUST NOT be stolen
+    createTask({ projectDir, title: "Live holder task", scopeIn: ["src/live-long.mjs"], createdAt: "2026-11-20T09:07:00Z" });
+    createTask({ projectDir, title: "Impatient peer task", scopeIn: ["src/live-long.mjs"], createdAt: "2026-11-20T09:07:10Z" });
+    const longHoldScript = [
+      `import { claimTaskLease } from ${JSON.stringify(new URL("../core/task-manager.mjs", import.meta.url).href)};`,
+      `claimTaskLease({ projectDir: ${JSON.stringify(projectDir)}, taskId: "TASK-0004", tool: "live-holder-ide", scopes: ["src/live-long.mjs"], staleLockMs: 60, _holdLockMs: 360 });`,
+    ].join("\n");
+    const liveHolder = spawn(process.execPath, ["--input-type=module", "-e", longHoldScript], {
+      cwd: HARNESS_DIR,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const liveHolderClosed = new Promise((resolve) => liveHolder.once("close", resolve));
+    const waitDeadline = Date.now() + 2500;
+    while (!fs.existsSync(lockPath) && Date.now() < waitDeadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(fs.existsSync(lockPath), true, "Expected live holder lockfile to appear");
+
+    // Attempting acquisition past staleLockMs (60ms) while lockTimeoutMs (140ms) < holdMs (360ms) must timeout, NOT steal!
+    assert.throws(
+      () =>
+        claimTaskLease({
+          projectDir,
+          taskId: "TASK-0005",
+          tool: "impatient-ide",
+          scopes: ["src/live-long.mjs"],
+          staleLockMs: 60,
+          lockTimeoutMs: 140,
+        }),
+      /Timed out waiting for project state lock/i
+    );
+
+    // A waiter with sufficient timeout waits out the live holder cleanly (past staleLockMs) and sees committed TASK-0004 lease
+    const longWaitScript = [
+      `import { claimTaskLease } from ${JSON.stringify(new URL("../core/task-manager.mjs", import.meta.url).href)};`,
+      "try {",
+      `  claimTaskLease({ projectDir: ${JSON.stringify(projectDir)}, taskId: "TASK-0005", tool: "patient-ide", scopes: ["src/live-long.mjs"], staleLockMs: 60, lockTimeoutMs: 3000 });`,
+      '  console.log("UNEXPECTED_WIN");',
+      "} catch (err) {",
+      "  console.error(err.message);",
+      "  process.exitCode = 1;",
+      "}",
+    ].join("\n");
+    const waiterRes = await new Promise((resolve) => {
+      const p = spawn(process.execPath, ["--input-type=module", "-e", longWaitScript], {
+        cwd: HARNESS_DIR,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      let out = "";
+      let err = "";
+      p.stdout.on("data", (d) => (out += d));
+      p.stderr.on("data", (d) => (err += d));
+      p.on("close", (code) => resolve({ code, out, err }));
+    });
+    await liveHolderClosed;
+    assert.equal(waiterRes.code, 1);
+    assert.match(waiterRes.err, /File-scope collision.*TASK-0004/i);
+
+    // Concurrent stale-lock reclaimers race: 3 independent processes racing on dead-PID lock; exactly 1 wins and 2 fail closed
+    createTask({ projectDir, title: "Reclaim racer 1", scopeIn: ["src/shared-reclaim.mjs"], createdAt: "2026-11-20T09:07:20Z" });
+    createTask({ projectDir, title: "Reclaim racer 2", scopeIn: ["src/shared-reclaim.mjs"], createdAt: "2026-11-20T09:07:30Z" });
+    createTask({ projectDir, title: "Reclaim racer 3", scopeIn: ["src/shared-reclaim.mjs"], createdAt: "2026-11-20T09:07:40Z" });
+    const deadChild2 = spawnSync(process.execPath, ["-e", "process.exit(0)"], { windowsHide: true });
+    assert.equal(deadChild2.status, 0);
     fs.writeFileSync(
       lockPath,
       JSON.stringify({
-        pid: process.pid,
-        token: "stale-ttl-token",
-        created_at: "2020-01-01T00:00:00.000Z",
-        expires_at: "2020-01-01T00:01:00.000Z",
+        pid: deadChild2.pid,
+        token: "dead-race-token",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
       }),
       "utf8"
     );
-    const recoveredTtl = claimTaskLease({
+    const reclaimBarrier = Date.now() + 350;
+    const runReclaimRacer = (taskId, tool) =>
+      new Promise((resolve) => {
+        const script = [
+          `import { claimTaskLease } from ${JSON.stringify(new URL("../core/task-manager.mjs", import.meta.url).href)};`,
+          "const t = Number(process.argv[1]);",
+          "while (Date.now() < t) {}",
+          "try {",
+          `  const res = claimTaskLease({ projectDir: ${JSON.stringify(projectDir)}, taskId: ${JSON.stringify(taskId)}, tool: ${JSON.stringify(tool)}, scopes: ["src/shared-reclaim.mjs"], staleLockMs: 50, lockTimeoutMs: 3000, _holdLockMs: 90 });`,
+          "  console.log(res.lease.task_id);",
+          "} catch (e) {",
+          "  console.error(e.message);",
+          "  process.exitCode = 1;",
+          "}",
+        ].join("\n");
+        const p = spawn(process.execPath, ["--input-type=module", "-e", script, String(reclaimBarrier)], {
+          cwd: HARNESS_DIR,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+        let out = "";
+        let err = "";
+        p.stdout.on("data", (d) => (out += d));
+        p.stderr.on("data", (d) => (err += d));
+        p.on("close", (code) => resolve({ code, out: out.trim(), err: err.trim() }));
+      });
+    const racerResults = await Promise.all([
+      runReclaimRacer("TASK-0006", "reclaim-a"),
+      runReclaimRacer("TASK-0007", "reclaim-b"),
+      runReclaimRacer("TASK-0008", "reclaim-c"),
+    ]);
+    assert.equal(racerResults.filter((r) => r.code === 0).length, 1);
+    assert.equal(racerResults.filter((r) => r.code !== 0).length, 2);
+    for (const loser of racerResults.filter((r) => r.code !== 0)) {
+      assert.match(loser.err, /File-scope collision/i);
+    }
+
+    // Corrupt/pidless lockfile older than staleLockMs recovers cleanly
+    createTask({ projectDir, title: "Corrupt lock target", scopeIn: ["docs/corrupt.md"], createdAt: "2026-11-20T09:07:50Z" });
+    fs.writeFileSync(lockPath, "{corrupt-unparseable", "utf8");
+    const pastSec = (Date.now() - 5000) / 1000;
+    fs.utimesSync(lockPath, pastSec, pastSec);
+    const recoveredCorrupt = claimTaskLease({
       projectDir,
-      taskId: "TASK-0004",
+      taskId: "TASK-0009",
       tool: "codex-ide",
-      scopes: ["docs/separate-b.md"],
+      scopes: ["docs/corrupt.md"],
+      staleLockMs: 50,
       lockTimeoutMs: 1000,
     });
-    assert.equal(recoveredTtl.lease.task_id, "TASK-0004");
+    assert.equal(recoveredCorrupt.lease.task_id, "TASK-0009");
     assert.equal(fs.existsSync(lockPath), false);
+    assert.equal(fs.existsSync(`${lockPath}.reclaim`), false);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -1023,5 +1134,151 @@ test("MCP stdio enforces framing size bounds, malformed frame recovery, root con
   } finally {
     fs.rmSync(tmpA, { recursive: true, force: true });
     fs.rmSync(tmpB, { recursive: true, force: true });
+  }
+});
+
+test("process-interruption rollback journal (.tx-journal.json) recovers interrupted partial writes on next locked call", () => {
+  const { tmp, projectDir } = initTempProject("gf-tx-journal-");
+  try {
+    const t1 = createTask({ projectDir, title: "Interrupted claim target", scopeIn: ["src/journal.mjs"], createdAt: "2026-11-20T09:05:00Z" });
+    const statePath = path.join(projectDir, "brain", "state", "current.yaml");
+    const leasesPath = path.join(projectDir, ".geloforge", "task-leases.yaml");
+    const journalPath = path.join(projectDir, ".geloforge", ".tx-journal.json");
+    const lockPath = path.join(projectDir, ".geloforge", ".state.lock");
+
+    const preCrashTask = fs.readFileSync(t1.filePath, "utf8");
+    const preCrashState = fs.readFileSync(statePath, "utf8");
+
+    // Simulate abrupt mid-transaction child process termination AFTER leases file is written (bypassing catch & finally)
+    const crashScript = [
+      `import { claimTaskLease } from ${JSON.stringify(new URL("../core/task-manager.mjs", import.meta.url).href)};`,
+      `claimTaskLease({`,
+      `  projectDir: ${JSON.stringify(projectDir)},`,
+      `  taskId: "TASK-0001",`,
+      `  tool: "crashed-ide",`,
+      `  scopes: ["src/journal.mjs"],`,
+      `  _faultHook: (label) => { if (label === "after:leases") process.exit(99); },`,
+      `});`,
+    ].join("\n");
+    const crashProc = spawnSync(process.execPath, ["--input-type=module", "-e", crashScript], {
+      cwd: HARNESS_DIR,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    assert.equal(crashProc.status, 99);
+    assert.equal(fs.existsSync(journalPath), true, "Pending rollback journal should exist after abrupt process exit");
+    assert.equal(fs.existsSync(lockPath), true, "Orphan lockfile should exist after abrupt process exit");
+    assert.equal(fs.existsSync(leasesPath), true, "Partial leases file was written before termination");
+    assert.match(fs.readFileSync(leasesPath, "utf8"), /crashed-ide/);
+
+    // Next locked operation reclaims dead PID lock and replays .tx-journal.json automatically before executing
+    const recoveryUpdate = updateTask({
+      projectDir,
+      taskId: "TASK-0001",
+      priority: "high",
+      updatedAt: "2026-11-20T09:10:00Z",
+    });
+    assert.equal(recoveryUpdate.record.priority, "high");
+    assert.deepEqual(recoveryUpdate.activeTasks, []);
+    assert.equal(fs.existsSync(journalPath), false, "Journal must be cleared after recovery");
+    assert.equal(fs.existsSync(lockPath), false);
+    assert.equal(fs.existsSync(leasesPath), false, "Interrupted newly-created leases file must be unlinked by journal replay");
+    const stateAfterFirst = parseYaml(fs.readFileSync(statePath, "utf8"));
+    assert.equal(stateAfterFirst.state_revision, 1);
+    assert.deepEqual(stateAfterFirst.active_tasks, []);
+    assert.notEqual(fs.readFileSync(t1.filePath, "utf8"), preCrashTask);
+
+    // Second interruption: crash AFTER mutating an existing task file, then verify exact pre-image restoration
+    const stableTaskSnap = fs.readFileSync(t1.filePath, "utf8");
+    const crashUpdateScript = [
+      `import { updateTask } from ${JSON.stringify(new URL("../core/task-manager.mjs", import.meta.url).href)};`,
+      `updateTask({`,
+      `  projectDir: ${JSON.stringify(projectDir)},`,
+      `  taskId: "TASK-0001",`,
+      `  priority: "critical",`,
+      `  updatedAt: "2026-11-20T09:15:00Z",`,
+      `  _faultHook: (label) => { if (label === "after:task") process.exit(98); },`,
+      `});`,
+    ].join("\n");
+    const crashProc2 = spawnSync(process.execPath, ["--input-type=module", "-e", crashUpdateScript], {
+      cwd: HARNESS_DIR,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    assert.equal(crashProc2.status, 98);
+    assert.match(fs.readFileSync(t1.filePath, "utf8"), /priority:\s*"critical"/);
+    assert.equal(fs.existsSync(journalPath), true);
+
+    const noopRecovery = withProjectLock(projectDir, () => "recovered");
+    assert.equal(noopRecovery, "recovered");
+    assert.equal(fs.readFileSync(t1.filePath, "utf8"), stableTaskSnap, "Pre-existing task file must be restored from .tx-journal.json");
+    assert.equal(fs.existsSync(journalPath), false);
+    assert.equal(validateProject(projectDir).valid, true);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("unpinned MCP server launched outside a project without --project fails closed across all tools", () => {
+  const { tmp: tmpProj, projectDir: projectA } = initTempProject("gf-unpinned-target-");
+  const outsideCwd = fs.mkdtempSync(path.join(os.tmpdir(), "gf-outside-cwd-"));
+  try {
+    createTask({ projectDir: projectA, title: "Target should never be touched", activate: true, createdAt: "2026-11-20T09:05:00Z" });
+    const stateBefore = fs.readFileSync(path.join(projectA, "brain", "state", "current.yaml"), "utf8");
+
+    const blockedCalls = [
+      { name: "geloforge_status", arguments: { project: projectA } },
+      { name: "geloforge_recommend", arguments: { project: projectA } },
+      { name: "geloforge_context", arguments: { project: projectA, query: "test" } },
+      { name: "geloforge_task", arguments: { action: "list", project: projectA } },
+      { name: "geloforge_task", arguments: { action: "new", project: projectA, title: "Unauthorized external task" } },
+      { name: "geloforge_checkpoint", arguments: { action: "create", project: projectA, summary: "Unauthorized checkpoint" } },
+      { name: "geloforge_skills", arguments: { action: "list", project: projectA } },
+    ];
+
+    for (let i = 0; i < blockedCalls.length; i += 1) {
+      const reply = handleMcpMessage(
+        { jsonrpc: "2.0", id: i + 1, method: "tools/call", params: blockedCalls[i] },
+        { defaultProjectDir: null, cwd: outsideCwd }
+      );
+      assert.equal(reply.result.isError, true, `Expected fail-closed refusal for ${blockedCalls[i].name}`);
+      assert.match(reply.result.content[0].text, /without a trusted project root/i);
+    }
+
+    // End-to-end CLI invocation launched from outside any project without --project
+    const cliReq = [
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "geloforge_task", arguments: { action: "new", project: projectA, title: "CLI unpinned bypass" } },
+      }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "geloforge_skills", arguments: { action: "list", project: projectA } },
+      }),
+    ].join("\n") + "\n";
+
+    const cliProc = spawnSync(process.execPath, [CLI_PATH, "mcp"], {
+      cwd: outsideCwd,
+      input: cliReq,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    assert.equal(cliProc.status, 0, cliProc.stderr);
+    const replies = cliProc.stdout.trim().split(/\r?\n/).map((l) => JSON.parse(l));
+    assert.equal(replies.length, 3);
+    assert.equal(replies[1].result.isError, true);
+    assert.match(replies[1].result.content[0].text, /without a trusted project root/i);
+    assert.equal(replies[2].result.isError, true);
+    assert.match(replies[2].result.content[0].text, /without a trusted project root/i);
+
+    assert.equal(fs.readFileSync(path.join(projectA, "brain", "state", "current.yaml"), "utf8"), stateBefore);
+  } finally {
+    fs.rmSync(tmpProj, { recursive: true, force: true });
+    fs.rmSync(outsideCwd, { recursive: true, force: true });
   }
 });

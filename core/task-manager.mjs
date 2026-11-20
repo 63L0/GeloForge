@@ -225,7 +225,7 @@ export function createTask(options = {}) {
       const stateYaml = serializeYaml(updatedState, { headerComment: "Current Operational Project State" });
       txSteps.push({ label: "state", filePath: stateFilePath, content: stateYaml, allowOverwrite: true });
     }
-    runMultiFileTransaction(txSteps, { faultHook: options._faultHook });
+    runMultiFileTransaction(txSteps, { projectDir, faultHook: options._faultHook });
   }
 
   return {
@@ -928,7 +928,7 @@ export function claimTaskLease({
       );
       runMultiFileTransaction(
         [{ label: "leases", filePath: leasesAbs, content: leaseYaml, allowOverwrite: true }, ...updatePlan.steps],
-        { faultHook: _faultHook }
+        { projectDir: loaded.projectDir, faultHook: _faultHook }
       );
     }
 
@@ -978,7 +978,7 @@ export function updateTask(options = {}) {
 
     const dryRun = Boolean(options.dryRun);
     if (!dryRun) {
-      runMultiFileTransaction(plan.steps, { faultHook: options._faultHook });
+      runMultiFileTransaction(plan.steps, { projectDir: loaded.projectDir, faultHook: options._faultHook });
     }
 
     return {

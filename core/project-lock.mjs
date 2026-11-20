@@ -1,8 +1,16 @@
 /**
- * Cross-platform local filesystem lock (.geloforge/.state.lock) and multi-file rollback transaction helper.
- * Serializes concurrent local GeloForge CLI/MCP mutations with bounded timeouts and stale-lock recovery.
- * Note: This lock serializes cooperative local GeloForge processes — it does NOT prevent non-harness
- * processes or external editors from modifying workspace files directly.
+ * Cross-platform local filesystem lock (.geloforge/.state.lock), concurrent-safe stale-lock
+ * reclamation, pre-image rollback journal (.geloforge/.tx-journal.json), and multi-file
+ * transaction helper.
+ *
+ * Security & durability boundary:
+ * - `.geloforge/.state.lock` serializes cooperative local GeloForge processes only (it is NOT
+ *   an OS mandatory file lock preventing external editors from touching files).
+ * - A lock owned by a living OS PID (`process.kill(pid, 0)`) is NEVER stolen regardless of TTL.
+ * - `runMultiFileTransaction` performs caught-exception rollback immediately in-process and writes
+ *   a pre-image journal (`.geloforge/.tx-journal.json`) so subsequent locked GeloForge operations
+ *   roll back interrupted partial writes after a process crash/kill. It is NOT a kernel-level
+ *   or fsync-backed ACID database across power loss or unsynchronized external readers.
  */
 
 import crypto from "node:crypto";
@@ -49,6 +57,14 @@ function isLockStale({ st, parsed }, staleLockMs, nowMs) {
     // Allow brief grace window for another process still flushing JSON after openSync("wx")
     return nowMs - st.mtimeMs >= Math.min(250, staleLockMs);
   }
+  // Never expire or steal a lock while its owning OS PID remains alive.
+  if (Number.isInteger(parsed.pid) && parsed.pid > 0) {
+    if (parsed.pid === process.pid || isPidAlive(parsed.pid)) {
+      return false;
+    }
+    return true;
+  }
+  // Fallback only when lock metadata lacks a valid positive integer pid
   const expMs = Date.parse(String(parsed.expires_at || ""));
   if (Number.isFinite(expMs) && nowMs > expMs) {
     return true;
@@ -56,30 +72,15 @@ function isLockStale({ st, parsed }, staleLockMs, nowMs) {
   if (nowMs - st.mtimeMs > staleLockMs) {
     return true;
   }
-  if (Number.isInteger(parsed.pid) && parsed.pid > 0 && parsed.pid !== process.pid && !isPidAlive(parsed.pid)) {
-    return true;
-  }
   return false;
 }
 
-function tryReclaimStaleLock(lockAbs) {
-  const staleTmp = `${lockAbs}.stale-${crypto.randomBytes(6).toString("hex")}`;
-  try {
-    fs.renameSync(lockAbs, staleTmp);
-  } catch (err) {
-    if (err && (err.code === "ENOENT" || err.code === "EPERM" || err.code === "EACCES")) {
-      return false;
-    }
-    throw err;
+function isExpectedSameLock(currentMeta, expectedMeta) {
+  const expToken = expectedMeta?.parsed?.token;
+  if (typeof expToken === "string" && expToken.length > 0) {
+    return currentMeta?.parsed?.token === expToken;
   }
-  try {
-    if (fs.existsSync(staleTmp)) {
-      fs.unlinkSync(staleTmp);
-    }
-  } catch {
-    // Ignore cleanup error on reclaimed stale lock temp file
-  }
-  return true;
+  return !currentMeta?.parsed && currentMeta?.st?.mtimeMs === expectedMeta?.st?.mtimeMs;
 }
 
 function releaseLockSafe(lockAbs, token) {
@@ -94,6 +95,133 @@ function releaseLockSafe(lockAbs, token) {
   } catch {
     // Do not unlink lock owned by another process or already removed
   }
+}
+
+function acquireReclaimGuard(reclaimAbs, staleLockMs) {
+  const guardToken = crypto.randomBytes(8).toString("hex");
+  const guardTtlMs = Math.max(1000, staleLockMs);
+  try {
+    const fd = fs.openSync(reclaimAbs, "wx", 0o600);
+    try {
+      const now = Date.now();
+      fs.writeFileSync(
+        fd,
+        `${JSON.stringify({ pid: process.pid, token: guardToken, created_at: new Date(now).toISOString() })}\n`,
+        "utf8"
+      );
+    } finally {
+      fs.closeSync(fd);
+    }
+    return guardToken;
+  } catch (err) {
+    if (!err || (err.code !== "EEXIST" && err.code !== "EPERM")) {
+      throw err;
+    }
+    // Check if an abandoned reclaim guard was left by a dead process
+    try {
+      const meta = parseLockMeta(reclaimAbs);
+      if (isLockStale(meta, guardTtlMs, Date.now())) {
+        const tmp = `${reclaimAbs}.dead-${crypto.randomBytes(4).toString("hex")}`;
+        try {
+          fs.renameSync(reclaimAbs, tmp);
+          if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+        } catch {
+          // Another process cleared or replaced it
+        }
+      }
+    } catch {
+      // Ignore transient ENOENT / busy races on guard check
+    }
+    return null;
+  }
+}
+
+function tryReclaimStaleLock(lockAbs, expectedMeta, staleLockMs) {
+  const reclaimAbs = `${lockAbs}.reclaim`;
+  const guardToken = acquireReclaimGuard(reclaimAbs, staleLockMs);
+  if (!guardToken) {
+    return false;
+  }
+
+  try {
+    let currentMeta;
+    try {
+      currentMeta = parseLockMeta(lockAbs);
+    } catch (err) {
+      if (err && err.code === "ENOENT") {
+        return false;
+      }
+      throw err;
+    }
+
+    // Re-verify identity and staleness so concurrent reclaimers never delete a winner's fresh live lock
+    if (!isExpectedSameLock(currentMeta, expectedMeta) || !isLockStale(currentMeta, staleLockMs, Date.now())) {
+      return false;
+    }
+
+    const staleTmp = `${lockAbs}.stale-${crypto.randomBytes(6).toString("hex")}`;
+    try {
+      fs.renameSync(lockAbs, staleTmp);
+    } catch (err) {
+      if (err && (err.code === "ENOENT" || err.code === "EPERM" || err.code === "EACCES" || err.code === "EBUSY")) {
+        return false;
+      }
+      throw err;
+    }
+    try {
+      if (fs.existsSync(staleTmp)) {
+        fs.unlinkSync(staleTmp);
+      }
+    } catch {
+      // Ignore cleanup error on reclaimed stale lock temp file
+    }
+    return true;
+  } finally {
+    releaseLockSafe(reclaimAbs, guardToken);
+  }
+}
+
+/**
+ * Replays and clears any pending rollback journal (`.geloforge/.tx-journal.json`) left by an
+ * interrupted process before executing new locked work. Caller must hold `.geloforge/.state.lock`.
+ */
+export function recoverPendingTransactionJournal(projectDir) {
+  const resolvedDir = path.resolve(projectDir);
+  const journalAbs = assertSafeWithinRoot(resolvedDir, ".geloforge/.tx-journal.json");
+  if (!fs.existsSync(journalAbs)) {
+    return { recovered: false, restoredFiles: 0 };
+  }
+  const st = fs.lstatSync(journalAbs);
+  if (st.isSymbolicLink() || !st.isFile()) {
+    throw new Error(`Refusing symbolic link or non-regular transaction journal: ${journalAbs}`);
+  }
+
+  const parsed = JSON.parse(fs.readFileSync(journalAbs, "utf8"));
+  const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+  let restoredFiles = 0;
+
+  for (const entry of [...entries].reverse()) {
+    if (!entry || typeof entry.relPath !== "string") continue;
+    const targetAbs = assertSafeWithinRoot(resolvedDir, entry.relPath);
+    if (fs.existsSync(targetAbs)) {
+      const targetSt = fs.lstatSync(targetAbs);
+      if (targetSt.isSymbolicLink() || !targetSt.isFile()) {
+        throw new Error(`Refusing journal recovery onto symlink or non-regular path: ${entry.relPath}`);
+      }
+    }
+    if (entry.existed) {
+      atomicWriteFile(targetAbs, String(entry.previousContent ?? ""), { allowOverwrite: true });
+    } else if (fs.existsSync(targetAbs)) {
+      fs.unlinkSync(targetAbs);
+    }
+    restoredFiles += 1;
+  }
+
+  if (fs.existsSync(journalAbs)) {
+    fs.unlinkSync(journalAbs);
+  }
+
+  return { recovered: true, restoredFiles };
 }
 
 /**
@@ -177,7 +305,7 @@ export function withProjectLock(
 
       const nowMs = Date.now();
       if (isLockStale(metaInfo, staleMs, nowMs)) {
-        if (tryReclaimStaleLock(lockAbs)) {
+        if (tryReclaimStaleLock(lockAbs, metaInfo, staleMs)) {
           continue;
         }
       }
@@ -194,6 +322,7 @@ export function withProjectLock(
 
   ACTIVE_LOCKS.add(canonicalDir);
   try {
+    recoverPendingTransactionJournal(resolvedDir);
     return fn();
   } finally {
     ACTIVE_LOCKS.delete(canonicalDir);
@@ -202,12 +331,16 @@ export function withProjectLock(
 }
 
 /**
- * Executes a sequence of file mutations atomically per file and rolls back every touched file
- * to its exact pre-transaction state if any step or faultHook throws.
+ * Executes a sequence of file mutations atomically per file with a pre-image rollback journal
+ * (when `projectDir` is supplied). Restores pre-transaction state immediately on caught
+ * exceptions and allows future locked processes to recover from interrupted runs via `.tx-journal.json`.
  */
-export function runMultiFileTransaction(steps, { faultHook = null } = {}) {
-  const snapshots = new Map();
+export function runMultiFileTransaction(steps, { projectDir = null, faultHook = null } = {}) {
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return;
+  }
 
+  const snapshots = new Map();
   for (const step of steps) {
     if (!step || typeof step.filePath !== "string") {
       throw new Error("Invalid transaction step: missing filePath.");
@@ -232,6 +365,28 @@ export function runMultiFileTransaction(steps, { faultHook = null } = {}) {
     }
   }
 
+  let journalAbs = null;
+  if (typeof projectDir === "string" && projectDir.trim().length > 0) {
+    const resolvedProject = path.resolve(projectDir);
+    journalAbs = assertSafeWithinRoot(resolvedProject, ".geloforge/.tx-journal.json");
+    const entries = Array.from(snapshots.values()).map((snap) => {
+      const relPath = path.relative(resolvedProject, path.resolve(snap.filePath)).replace(/\\/g, "/");
+      if (!relPath || relPath.startsWith("..") || path.isAbsolute(relPath)) {
+        throw new Error(`Refusing transaction journal entry outside project root: ${snap.filePath}`);
+      }
+      return {
+        relPath,
+        existed: snap.existed,
+        previousContent: snap.previousContent,
+      };
+    });
+    atomicWriteFile(
+      journalAbs,
+      `${JSON.stringify({ pid: process.pid, created_at: new Date().toISOString(), entries }, null, 2)}\n`,
+      { allowOverwrite: true }
+    );
+  }
+
   try {
     for (let i = 0; i < steps.length; i += 1) {
       const step = steps[i];
@@ -249,6 +404,9 @@ export function runMultiFileTransaction(steps, { faultHook = null } = {}) {
         faultHook(`after:${step.label}`, i);
       }
     }
+    if (journalAbs && fs.existsSync(journalAbs)) {
+      fs.unlinkSync(journalAbs);
+    }
   } catch (err) {
     const rollbackErrors = [];
     for (const snap of Array.from(snapshots.values()).reverse()) {
@@ -260,6 +418,13 @@ export function runMultiFileTransaction(steps, { faultHook = null } = {}) {
         }
       } catch (rbErr) {
         rollbackErrors.push(`${snap.filePath}: ${rbErr.message}`);
+      }
+    }
+    if (rollbackErrors.length === 0 && journalAbs && fs.existsSync(journalAbs)) {
+      try {
+        fs.unlinkSync(journalAbs);
+      } catch {
+        // Leave journal for next lock acquisition if cleanup failed
       }
     }
     if (rollbackErrors.length > 0) {

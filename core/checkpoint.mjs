@@ -254,7 +254,7 @@ export function createCheckpoint(options = {}) {
           allowOverwrite: true,
         },
       ],
-      { faultHook: options._faultHook }
+      { projectDir, faultHook: options._faultHook }
     );
   }
 

@@ -246,7 +246,7 @@ node scripts/geloforge.mjs mcp --project /path/to/your/project
 # Read-only mode (refuses all state-mutating actions)
 node scripts/geloforge.mjs mcp --project /path/to/your/project --read-only
 ```
-Supports JSON-RPC 2.0 stdin/stdout (`\n`-delimited JSON or `Content-Length:` LSP framing bounded to 1 MB messages / 4 KB headers) and confines calls to the pinned project root:
+Supports JSON-RPC 2.0 stdin/stdout (`\n`-delimited JSON or `Content-Length:` LSP framing bounded to 1 MB messages / 4 KB headers) and confines calls to the pinned project root (failing closed if launched outside a recognized project without `--project`):
 - **Read-only tools:** `geloforge_status`, `geloforge_recommend`, `geloforge_context`, plus read actions (`list`/`show`/`leases`/`validate`/`lint`/`history`) on `geloforge_task`, `geloforge_checkpoint`, and `geloforge_skills`.
 - **State-mutating tools (disabled under `--read-only`):** `geloforge_task` (`new`, `update`, `done`, `claim`, `release`), `geloforge_checkpoint` (`create`), and quarantined `geloforge_skills` (`draft`, `propose`).
 - **Strictly refused over MCP:** `geloforge_skills` `promote`, `rollback`, `keygen`, and `sign` so human authorization remains under local CLI / Git control.
