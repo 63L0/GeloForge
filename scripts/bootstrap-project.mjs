@@ -35,9 +35,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const HARNESS_DIR = path.resolve(__dirname, "..");
 const WORKSPACE_ROOT = path.resolve(HARNESS_DIR, "..");
+const IS_NPM_INSTALL = path.basename(WORKSPACE_ROOT) === "node_modules";
 const TEMPLATE_DIR = path.join(HARNESS_DIR, "templates", "project-starter");
 const PROFILES_DIR = path.join(HARNESS_DIR, "templates", "profiles");
 const VERSION_FILE = path.join(HARNESS_DIR, "VERSION");
+export const DEFAULT_INIT_LOCATION = IS_NPM_INSTALL ? "./projects/<slug>" : "<workspace-root>/projects/<slug>";
 
 function printHelp() {
   console.log(`AI Harness Project Bootstrapper
@@ -48,7 +50,7 @@ Usage:
 Options:
   --name <string>         Project display name (required, 3-80 chars)
   --slug <string>         Lowercase ASCII slug (optional; derived from --name)
-  --dest <path>           Target directory (default: <workspace-root>/projects/<slug>)
+  --dest <path>           Target directory (default: ${DEFAULT_INIT_LOCATION})
   --owner <string>        Project owner name (default: "Project Owner")
   --description <string>  Short project description
   --profile <name>        Optional project profile (web, desktop, mobile, automation, ai-system)
@@ -133,7 +135,7 @@ export function bootstrapProject(options = {}) {
   const resolvedProfile = resolveProfile(options.profile, compatConfig, PROFILES_DIR);
   const profileMeta = resolvedProfile ? resolvedProfile.meta : null;
 
-  const defaultDest = path.join(WORKSPACE_ROOT, "projects", slug);
+  const defaultDest = path.join(IS_NPM_INSTALL ? process.cwd() : WORKSPACE_ROOT, "projects", slug);
   const destDir = validateDestinationPath(options.dest ?? defaultDest, {
     harnessDir: HARNESS_DIR,
     workspaceRoot: WORKSPACE_ROOT,
@@ -163,7 +165,8 @@ export function bootstrapProject(options = {}) {
   const renderedMap = new Map();
 
   for (const relPath of baseFiles) {
-    const normalizedRel = relPath.replace(/\\/g, "/");
+    // npm omits .gitignore files from tarballs. Restore the name in the generated project.
+    const normalizedRel = relPath === "gitignore.template" ? ".gitignore" : relPath.replace(/\\/g, "/");
     const raw = fs.readFileSync(path.join(TEMPLATE_DIR, relPath), "utf8");
     const isYaml = normalizedRel.endsWith(".yaml") || normalizedRel.endsWith(".yml");
     const content =

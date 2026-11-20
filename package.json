@@ -28,12 +28,23 @@
   "bin": {
     "geloforge": "./scripts/geloforge.mjs"
   },
+  "files": [
+    "core/",
+    "policies/",
+    "schemas/",
+    "scripts/bootstrap-project.mjs",
+    "scripts/geloforge.mjs",
+    "templates/",
+    "THIRD_PARTY_NOTICES.md",
+    "VERSION"
+  ],
   "scripts": {
     "test": "node --test",
     "validate": "node --test",
     "validate:project": "node scripts/validate-project.mjs",
     "bootstrap": "node scripts/bootstrap-project.mjs",
     "geloforge": "node scripts/geloforge.mjs",
-    "benchmark": "node scripts/benchmark-context.mjs"
+    "benchmark": "node scripts/benchmark-context.mjs",
+    "smoke:package": "node scripts/smoke-fresh-install.mjs --packed"
   }
 }

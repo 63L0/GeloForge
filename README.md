@@ -29,7 +29,15 @@ You stay in control of changes and approvals. GeloForge helps organize the work;
 
 **Requires:** Node.js **20+** and Git. Works on Windows, macOS, and Linux.
 
-Clone GeloForge and create a local CLI link (one-time setup):
+Once v0.6 is available on npm, run these commands inside your existing project:
+
+```bash
+npx geloforge adopt --dry-run
+npx geloforge adopt
+npx geloforge status
+```
+
+For the current GitHub release, clone GeloForge and link the CLI:
 
 ```bash
 git clone https://github.com/63L0/GeloForge.git
@@ -49,7 +57,7 @@ geloforge status
 
 That's it. Your project now has its own file-based starting point. GeloForge's CLI works from the project root or a nested directory.
 
-**Prefer not to use `npm link`?** From the GeloForge checkout, use `node scripts/geloforge.mjs --help`; from another directory, invoke that script by its full path. This is a GitHub source project, **not a published npm package**.
+You can also run `node scripts/geloforge.mjs --help` from the GeloForge checkout, or invoke the script by its full path from any directory.
 
 [Follow the 5-minute walkthrough →](./docs/quickstart-5min.md)
 

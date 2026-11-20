@@ -38,8 +38,10 @@ jobs:
       - name: Run deterministic benchmarks
         run: npm run benchmark
 
-      - name: Fresh-checkout CLI installation and smoke test
+      - name: Install and smoke-test the npm tarball
+        run: npm run smoke:package
+
+      - name: Verify the source CLI link
         run: |
           npm link --ignore-scripts --no-audit --no-fund
           geloforge --version
-          node scripts/smoke-fresh-install.mjs

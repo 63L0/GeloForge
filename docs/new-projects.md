@@ -22,6 +22,8 @@ node scripts/bootstrap-project.mjs --name "<Project Name>" [options]
 | `--git` | No | `false` | Runs `git init -b main` locally inside the new project (never adds remotes or pushes) |
 | `--dry-run` | No | `false` | Validates all inputs/paths and previews planned files without writing anything |
 
+When running the npm-installed CLI, `geloforge init` with no `--dest` creates `./projects/<slug>` relative to your current directory.
+
 ## 2. Transactional Safety & Protections
 
 1. **Path & Symlink Hardening ([path-safety.mjs](../core/path-safety.mjs)):** Blocks traversal (`..`), UNC/network paths, Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`), trailing dots/spaces, filesystem roots, protected harness directories, and destinations traversing symbolic links or NTFS junctions.
