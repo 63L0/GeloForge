@@ -1,6 +1,6 @@
 # Dogfooding v0.6 on GeloForge
 
-The 15-second [terminal replay](./media/geloforge-v06-demo.gif) condenses a run on a disposable Git worktree of the GeloForge repository at `f583141`, using the adoption fix in this PR. Two scripted stdio MCP clients sent actual tool requests to separate GeloForge server processes in the same worktree.
+The 15-second [terminal replay](./media/geloforge-v06-demo.gif) condenses a run on a disposable Git worktree of GeloForge v0.6.0 (`96f1208`). Two scripted stdio MCP clients sent tool requests to separate GeloForge server processes in the same worktree.
 
 | Action | Observed result |
 | --- | --- |
