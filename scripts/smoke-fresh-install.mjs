@@ -100,19 +100,13 @@ try {
     "--profile", "quick", "--map"]);
   assert.equal(context.manifest.project_id, init.projectId);
 
-  const evidence = JSON.parse(cli(["evidence", "capture", "--project", newProject,
+  const verification = JSON.parse(cli(["verify", "--project", newProject,
     "--task", task.id, "--name", "Installed Node runtime", "--json", "--",
     process.execPath, "--version"]));
-  assert.equal(evidence.verified, true);
-  assert.equal(evidence.id, "EVID-0001");
-
-  const completed = cliJson(["task", "done", "--project", newProject, "--task", task.id,
-    "--require-evidence", "--evidence", evidence.id]);
-  assert.equal(completed.status, "completed");
-  assert.equal(completed.verificationStatus, "verified");
-
-  const cp = cliJson(["checkpoint", "create", "--project", newProject,
-    "--summary", "Fresh local CLI smoke passed"]);
+  assert.equal(verification.status, "completed");
+  assert.equal(verification.evidence.id, "EVID-0001");
+  assert.equal(verification.completion.verificationStatus, "verified");
+  const cp = verification.checkpoint;
   assert.match(cp.checkpointId, /^CHKPT-\d{4}$/);
   const checkpoints = cliJson(["checkpoint", "list", "--project", newProject]);
   assert.ok(checkpoints.checkpoints.some((x) => x.id === cp.checkpointId));
@@ -120,6 +114,10 @@ try {
   const finalValidation = cliJson(["validate", "--project", newProject]);
   assert.equal(finalValidation.valid, true,
     "Generated project with task/evidence/checkpoint must remain schema-valid");
+
+  const setup = cliJson(["mcp", "init", "--read-only"], newProject);
+  assert.equal(setup.clients.length, 4);
+  assert.equal(setup.files.length, 8);
 
   const mcpRequests = [
     { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
@@ -153,7 +151,7 @@ try {
   assert.equal(cliJson(["validate"], existing).valid, true);
 
   console.log(`PASS: v${expected} ${options.packed ? "npm tarball" : "source"} smoke ` +
-    "(CLI, init, task, context, evidence, done, checkpoint, adopt, validate, MCP)");
+    "(CLI, init, task, context, verify, checkpoint, adopt, validate, MCP setup and stdio)");
 } finally {
   fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 3 });
 }

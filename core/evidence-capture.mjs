@@ -12,7 +12,6 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   assertSafeWithinRoot,
-  atomicWriteFile,
   deriveSlug,
   hasSecretContent,
   redactSecretContent,
@@ -23,6 +22,7 @@ import { validateAgainstSchema } from "./json-schema-lite.mjs";
 import { getGitRepoInfo } from "./git-utils.mjs";
 import { loadProjectManifestAndState, scanAndAllocateRecordId } from "./project-locator.mjs";
 import { getTask } from "./task-manager.mjs";
+import { runMultiFileTransaction, withProjectLock } from "./project-lock.mjs";
 import { validateCreatedAt } from "./template-utils.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -89,36 +89,34 @@ export function captureEvidence(options = {}) {
     timeoutMs = num;
   }
 
-  const loaded = loadProjectManifestAndState(options.projectDir, harnessDir);
-  const { projectDir, schemasDir, state, stateSchema, stateFilePath, projectPaths } = loaded;
-
-  // Verify target task exists and is safe.
-  const targetTask = getTask({ projectDir, taskId, harnessDir });
-
-  // Validate evidence_dir and allocate sequential EVID-NNNN.
-  const evidenceDirAbs = assertSafeWithinRoot(projectDir, projectPaths.evidence_dir);
-  if (fs.existsSync(evidenceDirAbs) && fs.lstatSync(evidenceDirAbs).isSymbolicLink()) {
-    throw new Error(`Refusing symbolic link evidence directory: ${evidenceDirAbs}`);
-  }
-
-  const { id } = scanAndAllocateRecordId({
-    projectDir,
-    searchDirs: [projectPaths.evidence_dir, projectPaths.proposals_dir],
-    prefix: "EVID",
-    explicitId: options.id ?? null,
-  });
-
   const redactedCommand = redactSecretContent(commandArgv.join(" "));
   const checkName = validateScalarText("--name", options.name ?? `Command check: ${path.basename(commandArgv[0])}`);
   if (hasSecretContent(checkName)) {
     throw new Error("Refusing credential-like content in --name.");
   }
-  const title = validateScalarText("--title", options.title ?? `Evidence ${id}: ${checkName}`);
-  if (hasSecretContent(title)) {
-    throw new Error("Refusing credential-like content in --title.");
-  }
-
   const createdAt = validateCreatedAt(options.createdAt);
+  const dryRun = Boolean(options.dryRun);
+  const slug = deriveSlug(checkName) || "check";
+  const prepareTarget = () => {
+    const loaded = loadProjectManifestAndState(options.projectDir, harnessDir);
+    const { projectDir, projectPaths } = loaded;
+    const targetTask = getTask({ projectDir, taskId, harnessDir });
+    assertSafeWithinRoot(projectDir, projectPaths.evidence_dir);
+    const { id } = scanAndAllocateRecordId({
+      projectDir,
+      searchDirs: [projectPaths.evidence_dir, projectPaths.proposals_dir],
+      prefix: "EVID",
+      explicitId: options.id ?? null,
+    });
+    const title = validateScalarText("--title", options.title ?? `Evidence ${id}: ${checkName}`);
+    if (hasSecretContent(title)) throw new Error("Refusing credential-like content in --title.");
+    const relPath = `${projectPaths.evidence_dir}/${id}-${slug.slice(0, 42)}.yaml`;
+    const filePath = assertSafeWithinRoot(projectDir, relPath);
+    if (fs.existsSync(filePath)) throw new Error(`Refusing to overwrite existing evidence file: ${filePath}`);
+    return { ...loaded, targetTask, id, title, relPath, filePath };
+  };
+  const initial = dryRun ? prepareTarget() : withProjectLock(options.projectDir, prepareTarget);
+  const { projectDir } = initial;
   const gitInfo = getGitRepoInfo(projectDir);
   const sourceRevision = !gitInfo.available ? "no-git-repo" : gitInfo.unborn ? "git-unborn-head" : gitInfo.head;
   const environment = {
@@ -126,17 +124,8 @@ export function captureEvidence(options = {}) {
     runtime: `Node.js ${process.version}`,
   };
 
-  const slug = deriveSlug(checkName) || "check";
-  const relPath = `${projectPaths.evidence_dir}/${id}-${slug.slice(0, 42)}.yaml`;
-  const filePath = assertSafeWithinRoot(projectDir, relPath);
-  if (fs.existsSync(filePath)) {
-    throw new Error(`Refusing to overwrite existing evidence file: ${filePath}`);
-  }
-
-  const dryRun = Boolean(options.dryRun);
-  const linkTask = options.linkTask !== false;
-
   if (dryRun) {
+    const { id, title, relPath, filePath } = initial;
     const previewRecord = {
       schema_version: "1.1",
       id,
@@ -235,95 +224,103 @@ export function captureEvidence(options = {}) {
           : []),
       ];
 
-  const record = {
-    schema_version: "1.1",
-    id,
-    title,
-    task_id: taskId,
-    status: manifestStatus,
-    memory_layer: "L3_RESEARCH_EVIDENCE",
-    authority_level: isVerified ? "A3" : "A6",
-    produced_by_role: producedByRole,
-    verified_by: verifiedBy,
-    created_at: createdAt,
-    source_revision: sourceRevision,
-    environment,
-    checks: [
-      {
-        name: checkName,
-        command: redactedCommand,
-        result: checkResult,
-        summary: redactSecretContent(summary),
-      },
-    ],
-    artifacts: [],
-    limitations: limitations.map((l) => redactSecretContent(l)),
-  };
+  // Run the command outside the project lock, then allocate and link against current state.
+  return withProjectLock(projectDir, () => {
+    const { schemasDir, state, stateSchema, stateFilePath, targetTask, id, title, relPath, filePath } = prepareTarget();
+    const record = {
+      schema_version: "1.1",
+      id,
+      title,
+      task_id: taskId,
+      status: manifestStatus,
+      memory_layer: "L3_RESEARCH_EVIDENCE",
+      authority_level: isVerified ? "A3" : "A6",
+      produced_by_role: producedByRole,
+      verified_by: verifiedBy,
+      created_at: createdAt,
+      source_revision: sourceRevision,
+      environment,
+      checks: [
+        {
+          name: checkName,
+          command: redactedCommand,
+          result: checkResult,
+          summary: redactSecretContent(summary),
+        },
+      ],
+      artifacts: [],
+      limitations: limitations.map((l) => redactSecretContent(l)),
+    };
 
-  const evidSchema = JSON.parse(fs.readFileSync(path.join(schemasDir, "evidence-manifest.schema.json"), "utf8"));
-  const schemaCheck = validateAgainstSchema(record, evidSchema);
-  if (!schemaCheck.valid) {
-    throw new Error(`Captured evidence failed schema validation: ${schemaCheck.errors.join("; ")}`);
-  }
-
-  const yamlText = serializeYaml(record, { headerComment: `Evidence Manifest ${id}` });
-  atomicWriteFile(filePath, yamlText, { allowOverwrite: false });
-
-  let linkedToTask = false;
-  if (linkTask) {
-    const refs = Array.isArray(targetTask.record.evidence_refs) ? [...targetTask.record.evidence_refs] : [];
-    if (!refs.includes(id)) {
-      refs.push(id);
-      const updatedTask = {
-        ...targetTask.record,
-        updated_at: createdAt,
-        evidence_refs: refs,
-      };
-      const taskSchema = JSON.parse(fs.readFileSync(path.join(schemasDir, "task-contract.schema.json"), "utf8"));
-      const tValid = validateAgainstSchema(updatedTask, taskSchema);
-      if (!tValid.valid) {
-        throw new Error(`Failed updating task ${taskId} with evidence ref: ${tValid.errors.join("; ")}`);
-      }
-      atomicWriteFile(targetTask.filePath, serializeYaml(updatedTask, { headerComment: `Task Contract ${taskId}` }), {
-        allowOverwrite: true,
-      });
+    const evidSchema = JSON.parse(fs.readFileSync(path.join(schemasDir, "evidence-manifest.schema.json"), "utf8"));
+    const schemaCheck = validateAgainstSchema(record, evidSchema);
+    if (!schemaCheck.valid) {
+      throw new Error(`Captured evidence failed schema validation: ${schemaCheck.errors.join("; ")}`);
     }
-    linkedToTask = true;
 
-    if (isVerified) {
-      const updatedState = {
-        ...state,
-        state_revision: (state.state_revision ?? 0) + 1,
-        updated_at: createdAt,
-        last_verified_evidence: id,
-      };
-      const stValid = validateAgainstSchema(updatedState, stateSchema);
-      if (!stValid.valid) {
-        throw new Error(`Failed updating state with verified evidence ${id}: ${stValid.errors.join("; ")}`);
+    const yamlText = serializeYaml(record, { headerComment: `Evidence Manifest ${id}` });
+    const steps = [{ label: "evidence", filePath, content: yamlText, allowOverwrite: false }];
+
+    const linkedToTask = options.linkTask !== false && (!options.linkVerifiedOnly || isVerified);
+    if (linkedToTask) {
+      const refs = Array.isArray(targetTask.record.evidence_refs) ? [...targetTask.record.evidence_refs] : [];
+      if (!refs.includes(id)) {
+        refs.push(id);
+        const updatedTask = {
+          ...targetTask.record,
+          updated_at: createdAt,
+          evidence_refs: refs,
+        };
+        const taskSchema = JSON.parse(fs.readFileSync(path.join(schemasDir, "task-contract.schema.json"), "utf8"));
+        const tValid = validateAgainstSchema(updatedTask, taskSchema);
+        if (!tValid.valid) {
+          throw new Error(`Failed updating task ${taskId} with evidence ref: ${tValid.errors.join("; ")}`);
+        }
+        steps.push({
+          label: "task",
+          filePath: targetTask.filePath,
+          content: serializeYaml(updatedTask, { headerComment: `Task Contract ${taskId}` }),
+        });
       }
-      atomicWriteFile(stateFilePath, serializeYaml(updatedState, { headerComment: "Current Operational Project State" }), {
-        allowOverwrite: true,
-      });
-    }
-  }
 
-  return {
-    dryRun: false,
-    id,
-    taskId,
-    relPath,
-    filePath,
-    command: redactedCommand,
-    exitCode: proc.status ?? null,
-    signal: proc.signal ?? null,
-    timedOut,
-    checkResult,
-    status: manifestStatus,
-    verified: isVerified,
-    durationMs,
-    linkedToTask,
-    outputExcerpt: excerpt,
-    record,
-    yaml: yamlText,
-  };
+      if (isVerified) {
+        const updatedState = {
+          ...state,
+          state_revision: (state.state_revision ?? 0) + 1,
+          updated_at: createdAt,
+          last_verified_evidence: id,
+        };
+        const stValid = validateAgainstSchema(updatedState, stateSchema);
+        if (!stValid.valid) {
+          throw new Error(`Failed updating state with verified evidence ${id}: ${stValid.errors.join("; ")}`);
+        }
+        steps.push({
+          label: "state",
+          filePath: stateFilePath,
+          content: serializeYaml(updatedState, { headerComment: "Current Operational Project State" }),
+        });
+      }
+    }
+
+    runMultiFileTransaction(steps, { projectDir });
+    return {
+      dryRun: false,
+      id,
+      taskId,
+      relPath,
+      filePath,
+      command: redactedCommand,
+      exitCode: proc.status ?? null,
+      signal: proc.signal ?? null,
+      timedOut,
+      checkResult,
+      status: manifestStatus,
+      verified: isVerified,
+      durationMs,
+      linkedToTask,
+      outputExcerpt: excerpt,
+      record,
+      yaml: yamlText,
+    };
+  });
 }

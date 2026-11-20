@@ -26,6 +26,7 @@ import {
   updateTask,
 } from "../core/task-manager.mjs";
 import { captureEvidence } from "../core/evidence-capture.mjs";
+import { verifyTask } from "../core/verify-task.mjs";
 import { createCheckpoint, getCheckpoint, listCheckpoints } from "../core/checkpoint.mjs";
 import { startMcpStdioServer } from "../core/mcp-server.mjs";
 import { initMcpClients } from "../core/mcp-init.mjs";
@@ -66,6 +67,7 @@ Commands:
   adopt      Add GeloForge Second Brain to an existing project without overwriting files
   task       Create, update, lease, complete, list, or inspect scoped task contracts (TASK-NNNN)
   evidence   Run an explicit command (shell: false) and record EVID-NNNN manifest
+  verify     Run a check, save a checkpoint, and complete the task on verified evidence
   validate   Validate a project's schemas, compatibility, IDs, references, and links
   context    Compile a deterministic, trust-tiered context packet for a task or query
   skills     Discover, inspect, validate, and security-lint portable SKILL.md packages
@@ -294,6 +296,25 @@ Common Options:
   --ttl <minutes>         Lease TTL in minutes (1-1440, default: 120)
   --force                 Override colliding active lease or ownership mismatch
   --include-expired       Include expired leases in 'leases' output
+`);
+      break;
+    case "verify":
+      console.log(`Usage: geloforge verify [options] -- <command> [args...]
+
+Run the explicit command from the project root. A successful check records verified
+evidence, saves a checkpoint, and completes the task with --require-evidence.
+A failed check saves draft evidence and leaves the task open for a retry.
+
+Options:
+  -p, --project <path>    Target project (auto-detected from CWD if omitted)
+  -t, --task <id>         Task to finish (defaults to the sole active task)
+  --name <text>           Evidence check name
+  --timeout <ms>          Command timeout (50-600000, default 60000)
+  --tool <name>           Cooperative lease tool label
+  --session <id>          Cooperative lease session label
+  --dry-run               Preview verification without running the command
+  --json                  Emit verification results
+  -h, --help              Show help
 `);
       break;
     case "evidence":
@@ -1397,6 +1418,61 @@ function handleTask(args) {
   throw new Error(`Unknown task subcommand "${subcmd}". Expected: new, update, done, claim, release, leases, list, or show.`);
 }
 
+function splitCheckArguments(args) {
+  const dash = args.indexOf("--");
+  return dash === -1 ? { options: args, command: [] } : { options: args.slice(0, dash), command: args.slice(dash + 1) };
+}
+
+function parseCheckTimeout(value) {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value.trim())) throw new Error(`Invalid --timeout "${value}". Must be a positive integer.`);
+  return Number.parseInt(value.trim(), 10);
+}
+
+function handleVerify(args) {
+  const { options, command } = splitCheckArguments(args);
+  const { values } = parseArgs({
+    args: options,
+    options: {
+      project: { type: "string", short: "p" },
+      task: { type: "string", short: "t" },
+      name: { type: "string" },
+      timeout: { type: "string" },
+      tool: { type: "string" },
+      session: { type: "string" },
+      "dry-run": { type: "boolean" },
+      json: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  if (!args.length || values.help) {
+    printSubHelp("verify");
+    return 0;
+  }
+  if (!command.length) throw new Error('Pass a command after "--". Example: geloforge verify -- node --test');
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const result = verifyTask({
+    projectDir, harnessDir: HARNESS_DIR, taskId: values.task, commandArgv: command,
+    name: values.name, timeoutMs: parseCheckTimeout(values.timeout),
+    tool: values.tool, sessionId: values.session, dryRun: values["dry-run"],
+  });
+  if (values.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else if (result.status === "dry_run") {
+    console.log(`Would check ${result.taskId} with ${result.evidence.command}`);
+  } else {
+    console.log(`${result.evidence.id} ${result.evidence.status} for ${result.taskId}`);
+    if (result.checkpoint) console.log(`${result.checkpoint.checkpointId} saved`);
+    if (result.completion) {
+      console.log(`${result.taskId} completed with verified evidence`);
+      for (const warning of result.completion.warnings) console.log(`  [WARN] ${warning}`);
+    } else {
+      console.error(result.error || result.evidence.record.checks[0].summary);
+    }
+  }
+  return ["completed", "dry_run"].includes(result.status) ? 0 : 1;
+}
+
 function handleEvidence(args) {
   if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
     printSubHelp("evidence");
@@ -1407,13 +1483,10 @@ function handleEvidence(args) {
     throw new Error(`Unknown evidence subcommand "${subcmd}". Expected: capture.`);
   }
 
-  // Split raw argv at the first "--" so command flags (--test, --json, -v) never collide with CLI flags.
-  const dashIdx = rest.indexOf("--");
-  const gfArgs = dashIdx === -1 ? rest : rest.slice(0, dashIdx);
-  const cmdArgv = dashIdx === -1 ? [] : rest.slice(dashIdx + 1);
+  const { options, command } = splitCheckArguments(rest);
 
   const parsed = parseArgs({
-    args: gfArgs,
+    args: options,
     options: {
       project: { type: "string", short: "p" },
       task: { type: "string", short: "t" },
@@ -1437,14 +1510,6 @@ function handleEvidence(args) {
     return 0;
   }
 
-  let timeoutMs;
-  if (parsed.values.timeout !== undefined) {
-    if (!/^\d+$/.test(parsed.values.timeout.trim())) {
-      throw new Error(`Invalid --timeout "${parsed.values.timeout}". Must be a positive integer.`);
-    }
-    timeoutMs = Number.parseInt(parsed.values.timeout.trim(), 10);
-  }
-
   const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
   const res = captureEvidence({
     projectDir,
@@ -1455,11 +1520,11 @@ function handleEvidence(args) {
     id: parsed.values.id,
     producedByRole: parsed.values.role,
     verifiedBy: parsed.values["verified-by"],
-    timeoutMs,
+    timeoutMs: parseCheckTimeout(parsed.values.timeout),
     linkTask: !parsed.values["no-link"],
     createdAt: parsed.values["created-at"],
     dryRun: parsed.values["dry-run"],
-    commandArgv: cmdArgv,
+    commandArgv: command,
   });
 
   if (parsed.values.json) {
@@ -2178,6 +2243,9 @@ async function main() {
         break;
       case "evidence":
         code = handleEvidence(rest);
+        break;
+      case "verify":
+        code = handleVerify(rest);
         break;
       case "validate":
         code = handleValidate(rest);
