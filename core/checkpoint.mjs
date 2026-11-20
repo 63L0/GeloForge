@@ -12,14 +12,14 @@ import { validateAgainstSchema } from "./json-schema-lite.mjs";
 import { checkRecordSchemaVersion } from "./compatibility.mjs";
 import {
   assertSafeWithinRoot,
-  atomicWriteFile,
   hasSecretContent,
   isForbiddenSecretPath,
   walkNonSymlinkFiles,
 } from "./path-safety.mjs";
 import { getGitStatusScoped } from "./git-utils.mjs";
 import { loadProjectManifestAndState, scanAndAllocateRecordId } from "./project-locator.mjs";
-import { listTaskLeases } from "./task-manager.mjs";
+import { runMultiFileTransaction, withProjectLock } from "./project-lock.mjs";
+import { listTaskLeases, verifyTaskEvidenceRefs } from "./task-manager.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -103,8 +103,9 @@ export function createCheckpoint(options = {}) {
     throw new Error("Missing required project directory (--project <dir>).");
   }
 
-  const { projectDir, schemasDir, compatConfig, manifest, state, stateSchema, projectPaths } =
-    loadProjectManifestAndState(options.projectDir, harnessDir);
+  const execute = () => {
+    const { projectDir, schemasDir, compatConfig, manifest, state, stateSchema, projectPaths } =
+      loadProjectManifestAndState(options.projectDir, harnessDir);
 
   if (!state) {
     throw new Error(`Missing or invalid ${projectPaths.state} in ${projectDir}`);
@@ -131,6 +132,15 @@ export function createCheckpoint(options = {}) {
     evidenceRef = String(evidenceRef).trim().toUpperCase();
     if (!/^EVID-\d{4}$/.test(evidenceRef)) {
       throw new Error(`Invalid --evidence ref "${evidenceRef}". Expected EVID-NNNN.`);
+    }
+    if (options.evidenceRef !== undefined) {
+      verifyTaskEvidenceRefs({
+        projectDir,
+        projectPaths,
+        schemasDir,
+        evidenceRefs: [evidenceRef],
+        strictExplicit: true,
+      });
     }
   } else {
     evidenceRef = null;
@@ -233,12 +243,18 @@ export function createCheckpoint(options = {}) {
   }
 
   if (!options.dryRun) {
-    atomicWriteFile(targetAbs, yamlText, { allowOverwrite: false });
     const stateAbs = assertSafeWithinRoot(projectDir, stateRelPath);
-    atomicWriteFile(
-      stateAbs,
-      serializeYaml(nextState, { headerComment: "Current operational state of the project." }),
-      { allowOverwrite: true }
+    runMultiFileTransaction(
+      [
+        { label: "checkpoint", filePath: targetAbs, content: yamlText, allowOverwrite: false },
+        {
+          label: "state",
+          filePath: stateAbs,
+          content: serializeYaml(nextState, { headerComment: "Current operational state of the project." }),
+          allowOverwrite: true,
+        },
+      ],
+      { faultHook: options._faultHook }
     );
   }
 
@@ -257,6 +273,15 @@ export function createCheckpoint(options = {}) {
         ? `geloforge context --task ${activeTasks[0]} --from-diff --map --profile quick`
         : "geloforge recommend",
   };
+  };
+
+  if (options.dryRun) {
+    return execute();
+  }
+  return withProjectLock(options.projectDir, execute, {
+    lockTimeoutMs: options.lockTimeoutMs,
+    staleLockMs: options.staleLockMs,
+  });
 }
 
 function scanCheckpointsInternal({ projectDir, schemasDir, compatConfig, projectPaths }) {
