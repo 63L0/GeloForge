@@ -45,13 +45,13 @@ The isolated smoke script must prove that, on a fresh checkout with no paid API:
 
 ## 4. Release actions — only after approval
 
-1. Change `CHANGELOG.md` from **Unreleased (release candidate)** to the approved actual publication date in a reviewed PR.
+1. Confirm the reviewed `CHANGELOG.md` heading is dated **2026-11-20**; do not tag any other date without updating this release finalization PR.
 2. Merge release-finalization PR, verify `main` SHA and **main push** CI (not just PR checks). Record CI run ID and all six job results.
 3. Confirm annotated `v0.5.0` tag and GitHub Release do **not** already exist; if either does, inspect rather than overwrite.
-4. Create annotated `v0.5.0` tag at the exact verified `main` commit; never move existing published tags.
+4. The one-time `.github/workflows/publish-v0.5.0.yml` publisher must run **only after successful push CI on the exact latest `main` SHA**, verify versions and old tags, then create an annotated `v0.5.0` tag at that commit. Never move existing published tags.
 5. Publish GitHub Release **GeloForge v0.5.0** using [release notes](./release-notes-v0.5.0.md). Publish **source only**, not npm.
 6. Verify published tag's peeled commit, full Release page, source archives, GitHub Actions evidence and `v0.5.0` latest status.
-7. Update [README.md](../README.md) link from `v0.4.0` to `v0.5.0` only once the release is actually published, through a follow-up reviewed PR.
+7. [README.md](../README.md) uses the version-agnostic [GitHub Releases latest](https://github.com/63L0/GeloForge/releases/latest) link, which follows the published release. Verify it resolves to v0.5.0 after publication.
 
 ## 5. Evidence log (fill only with verified results)
 
