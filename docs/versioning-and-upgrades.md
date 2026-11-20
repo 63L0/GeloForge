@@ -6,7 +6,7 @@ The foundation tracks four distinct version axes rather than relying on a single
 
 | Axis | Location | Current Value | Purpose |
 | :--- | :--- | :--- | :--- |
-| **Harness Version** | [VERSION](../VERSION), [package.json](../package.json), [compatibility.json](../core/compatibility.json) | `0.3.0` | Tracks harness tooling, validator, and policy releases |
+| **Harness Version** | [VERSION](../VERSION), [package.json](../package.json), [compatibility.json](../core/compatibility.json) | `0.4.0` | Tracks harness tooling, validator, and policy releases |
 | **Template Version** | [compatibility.json](../core/compatibility.json), project `brain/manifest.yaml` | `1.0.0` | Tracks the structural layout of `templates/project-starter/` |
 | **Schema Version** | Every record's `schema_version` (`1.0`, `1.1`) | `1.1` (default) | Tracks machine-validated YAML/JSON contract structure |
 | **Profile Version** | `templates/profiles/<name>/profile.json`, project `brain/manifest.yaml` | `1.0.0` | Tracks optional domain overlay (`web`, `desktop`, etc.) |

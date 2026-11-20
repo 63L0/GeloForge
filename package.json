@@ -1,7 +1,7 @@
 {
   "name": "geloforge",
   "version": "0.4.0",
-  "description": "A reusable starter kit for AI-assisted coding projects, with built-in project memory, templates, and validation tools.",
+  "description": "Local, provider-neutral CLI for AI coding project memory, command-backed evidence, portable skills, and cross-agent handoffs.",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -14,12 +14,13 @@
     "url": "https://github.com/63L0/GeloForge/issues"
   },
   "keywords": [
+    "ai-coding",
     "ai-harness",
-    "second-brain",
-    "project-templates",
-    "adr",
-    "developer-tools",
-    "json-schema"
+    "agent-skills",
+    "context-engineering",
+    "project-memory",
+    "cross-agent-handoff",
+    "developer-tools"
   ],
   "engines": {
     "node": ">=20.0.0"

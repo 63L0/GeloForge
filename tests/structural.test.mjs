@@ -185,7 +185,7 @@ test("all 12 JSON schemas parse strictly and all 10 templates + 10 examples vali
   }
 });
 
-test("all relative markdown links in harness/**/*.md resolve and README covers all 10 topics", () => {
+test("all relative markdown links resolve and README is a concise, useful onboarding entrypoint", () => {
   const mdFiles = walkFiles(HARNESS_DIR, (p) => p.endsWith(".md"));
   assert.ok(mdFiles.length > 20);
   const linkRegex = /!?\[[^\]]*\]\(([^)]+)\)/g;
@@ -207,8 +207,26 @@ test("all relative markdown links in harness/**/*.md resolve and README covers a
   }
 
   const readme = fs.readFileSync(path.join(HARNESS_DIR, "README.md"), "utf8");
-  for (let i = 1; i <= 10; i += 1) {
-    assert.match(readme, new RegExp(`^## ${i}\\.`, "m"), `README.md missing numbered section ${i}`);
+  // The homepage should be approachable; detailed command reference lives in docs.
+  for (const heading of [
+    "Why GeloForge?", "Quick start", "See it in action",
+    "What you can do", "How it fits your project",
+    "Documentation", "Contributing",
+  ]) {
+    assert.ok(readme.includes(`## ${heading}`), `README.md missing onboarding section: ${heading}`);
+  }
+  assert.ok(Buffer.byteLength(readme, "utf8") < 8500, "README.md homepage is too long; move details to docs");
+  for (const command of [
+    "geloforge adopt --dry-run", "geloforge status",
+    "geloforge task new", "geloforge evidence capture", "geloforge context",
+  ]) {
+    assert.ok(readme.includes(command), `README.md missing working example: ${command}`);
+  }
+  for (const path of [
+    "./docs/quickstart-5min.md", "./docs/advanced-usage.md",
+    "./docs/portable-skills.md", "./SECURITY.md", "./CONTRIBUTING.md",
+  ]) {
+    assert.ok(readme.includes(`](${path})`), `README.md missing important documentation link: ${path}`);
   }
 
   for (const role of ["orchestrator.md", "researcher.md", "software-architect.md", "developer.md", "qa-security-reviewer.md"]) {

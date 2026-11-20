@@ -2,7 +2,7 @@
 
 This document maintains an honest boundary between **technically enforced capabilities**, **documented-only safeguards**, **not-implemented features**, and **untested environments**.
 
-## 1. Technically Enforced & Verified Today (v0.3.0)
+## 1. Technically Enforced & Verified Today (v0.4.0)
 - **Workspace & Repository Separation:** Verified no workspace root `.git`, independent harness Git repo, `.gitattributes` LF normalization, and `.gitignore` exclusions tested via `git check-ignore`.
 - **Bootstrap, Brownfield Adoption, Output & Symlink Safety:** [path-safety.mjs](../core/path-safety.mjs), [bootstrap-project.mjs](../scripts/bootstrap-project.mjs), [adopt-project.mjs](../core/adopt-project.mjs), and [project-locator.mjs](../core/project-locator.mjs) enforce traversal blocking, symlink/NTFS junction refusal, overwrite refusal, CWD Git-root discovery bounds, single-pass placeholder rendering, sensitive `--out` path refusal, and scoped rollback of newly created paths.
 - **Command-Backed Evidence Capture ([evidence-capture.mjs](../core/evidence-capture.mjs)):** Executes explicit CLI `-- <cmd>` arguments using `shell: false`, redacts secret patterns from output and diagnostics, and distinguishes non-zero failures/timeouts (`status: "draft"`) from `exit 0` (`status: "verified"`). Note: `exit 0` verifies command execution completed successfully under local OS user privileges — **not** test completeness or semantic correctness.
