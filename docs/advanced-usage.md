@@ -194,3 +194,59 @@ npm run benchmark
 - **Security & Limitations:** See [SECURITY.md](../SECURITY.md), [CONTRIBUTING.md](../CONTRIBUTING.md), and [docs/known-limitations.md](../docs/known-limitations.md).
 - **Third-Party Research Attribution:** Architectural patterns in v0.3 and v0.4 were informed by public open-source tools documented in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) and [docs/research/upstream-patterns-v0.3.md](../docs/research/upstream-patterns-v0.3.md) (NousResearch Hermes Agent `[MIT]`, `agentskills.io`, GitHub Spec Kit `[MIT]`, BMad Method `[MIT]`, OpenHands `[MIT]`, and Aider `[Apache-2.0]` concepts re-implemented cleanly in original zero-dependency Node.js without copying external source files).
 - **License:** Released under the [MIT License](../LICENSE) (`Copyright (c) 2026 63L0`). Note: `"private": true` in [package.json](../package.json) prevents accidental npm registry publishing while keeping this repository open-source under MIT.
+
+## v0.5 Human-in-the-Loop Co-Pilot, Anti-Context-Rot & Multi-IDE Coordination
+
+GeloForge v0.5 adds practical Co-Pilot coordination and short-session workflows without changing Second Brain determinism or security boundaries:
+
+### 1. Human-in-the-Loop Approval Inbox & Recommendations
+```bash
+node scripts/geloforge.mjs recommend
+node scripts/geloforge.mjs recommend --json
+```
+- Scans pending skill drafts/updates (`proposals/skills/.proposals/*.yaml`), pending `APPR-*.yaml` records, proposed `ADR-*.md` frontmatter, open `CONF-*` conflicts, and overlapping multi-IDE leases.
+- Ranks recommended next actions with explicit trade-off options while preserving human authorization gates.
+
+### 2. Task Completion, Reactivation & Multi-IDE Cooperative Leases
+```bash
+# Mark a task completed (records verificationStatus="unverified" unless verified EVID-* exists; pass --require-evidence to enforce)
+node scripts/geloforge.mjs task done --task TASK-0001
+node scripts/geloforge.mjs task done --task TASK-0001 --require-evidence --evidence EVID-0001 --tool gemini-ide
+
+# Update/reactivate a task cleanly
+node scripts/geloforge.mjs task update --task TASK-0001 --status active --activate
+
+# Claim/release a cooperative lease across IDEs/tools (serialized via .geloforge/.state.lock; tool/session are advisory labels)
+node scripts/geloforge.mjs task claim --task TASK-0002 --tool gemini-ide --role developer --scope "src/auth" --ttl 120
+node scripts/geloforge.mjs task leases
+node scripts/geloforge.mjs task release --task TASK-0002 --tool gemini-ide
+```
+Active peer leases are automatically surfaced inside compiled `context` packets as an operational collision guard. Releasing or completing another session's active lease requires matching `--tool` / `--session` confirmation (or explicit `--force`).
+
+### 3. Anti-Context-Rot Context Compilation & Checkpoints
+```bash
+# Focus context on current Git diff changes (completed tasks pruned automatically)
+node scripts/geloforge.mjs context --from-diff --map --profile quick
+
+# Include historical completed tasks only when explicitly needed
+node scripts/geloforge.mjs context --query "billing" --include-completed
+
+# Save/inspect a schema-valid CHKPT-NNNN session checkpoint before rotating sessions
+node scripts/geloforge.mjs checkpoint create --summary "Core auth verified; ready for QA review"
+node scripts/geloforge.mjs checkpoint list
+node scripts/geloforge.mjs checkpoint show CHKPT-0001
+```
+See [schemas/recovery-checkpoint.schema.json](../schemas/recovery-checkpoint.schema.json) for checkpoint fields and [SECURITY.md](../SECURITY.md) for boundaries.
+
+### 4. Zero-Dependency MCP Server (`geloforge mcp`)
+```bash
+# Default project-pinned server (supports read + disclosed state-mutating tools)
+node scripts/geloforge.mjs mcp --project /path/to/your/project
+
+# Read-only mode (refuses all state-mutating actions)
+node scripts/geloforge.mjs mcp --project /path/to/your/project --read-only
+```
+Supports JSON-RPC 2.0 stdin/stdout (`\n`-delimited JSON or `Content-Length:` LSP framing bounded to 1 MB messages / 4 KB headers) and confines calls to the pinned project root (failing closed if launched outside a recognized project without `--project`):
+- **Read-only tools:** `geloforge_status`, `geloforge_recommend`, `geloforge_context`, plus read actions (`list`/`show`/`leases`/`validate`/`lint`/`history`) on `geloforge_task`, `geloforge_checkpoint`, and `geloforge_skills`.
+- **State-mutating tools (disabled under `--read-only`):** `geloforge_task` (`new`, `update`, `done`, `claim`, `release`), `geloforge_checkpoint` (`create`), and quarantined `geloforge_skills` (`draft`, `propose`).
+- **Strictly refused over MCP:** `geloforge_skills` `promote`, `rollback`, `keygen`, and `sign` so human authorization remains under local CLI / Git control.

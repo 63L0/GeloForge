@@ -18,3 +18,9 @@ Read shared project memory in priority order before proposing or implementing ch
 - Never silently ignore contradicting evidence (`A3`/`A5`); log a `CONF-NNNN` conflict in `brain/conflicts/` or `proposals/`.
 - Owner approval (`APPR-NNNN`) is required for requirement changes, architecture decisions, security boundaries, spend/paid APIs, and destructive or external mutations.
 - Never commit secrets (`.env*`, keys, tokens) to this repository.
+
+## Human-in-the-Loop Co-Pilot Protocol
+
+- **Recommend, don't assume:** When multiple architectural or product approaches exist, present options + trade-offs and run `geloforge recommend` to check pending human approvals.
+- **Prevent context rot:** Start focused tasks with `geloforge context --task TASK-NNNN --from-diff --map --profile quick`, mark finished tasks `done`, and save state with `geloforge checkpoint create` before switching sessions.
+- **Coordinate across IDEs:** Claim a cooperative lease (`geloforge task claim --task TASK-NNNN --tool <ide> --role <role> --scopes "..."`) before concurrent editing, and release it when finished.
