@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { bootstrapProject, renderSinglePass } from "../scripts/bootstrap-project.mjs";
-import { assertNoSymlinkInTree, validateDestinationPath } from "../core/path-safety.mjs";
+import { assertNoSymlinkInTree, assertSafeWithinRoot, validateDestinationPath } from "../core/path-safety.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,6 +52,7 @@ test("symbolic links and NTFS junctions in destination ancestors or templates ar
 
     const linkType = process.platform === "win32" ? "junction" : "dir";
     fs.symlinkSync(HARNESS_DIR, junctionLink, linkType);
+    assert.throws(() => assertSafeWithinRoot(tmp, "junction-to-harness/escaped-child"), /symbolic links/i);
 
     assert.throws(
       () =>
@@ -70,6 +71,22 @@ test("symbolic links and NTFS junctions in destination ancestors or templates ar
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
   }
+});
+
+test("a project lock can disappear during the path safety lookup", (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "harness-lock-stat-"));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 }));
+  const lock = path.join(tmp, ".geloforge", ".state.lock");
+  fs.mkdirSync(path.dirname(lock));
+  fs.writeFileSync(lock, "{}");
+  const lstat = fs.lstatSync;
+  t.mock.method(fs, "lstatSync", (file, options) => {
+    if (file === lock) fs.unlinkSync(lock);
+    return lstat(file, options);
+  });
+
+  assert.equal(assertSafeWithinRoot(tmp, ".geloforge/.state.lock"), lock);
+  assert.equal(fs.existsSync(lock), false);
 });
 
 test("single-pass placeholder rendering prevents double-interpolation and preserves custom braces", () => {
