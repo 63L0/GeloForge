@@ -46,8 +46,7 @@ assert.equal(expected, "0.5.0", "Release smoke only covers v0.5.0 candidate");
 assert.equal(pkg.version, expected);
 assert.equal(compat.harness_version, expected);
 assert.equal(pkg.private, true, "GitHub source release must remain private to npm");
-assert.equal(fs.existsSync(path.join(ROOT, "node_modules")), false,
-  "Fresh-checkout smoke requires no third-party node_modules directory");
+assert.deepEqual(Object.keys(pkg.dependencies || {}), [], "GeloForge must have no runtime packages");
 
 assert.equal(cli(["--version"]), expected);
 assert.match(cli(["--help"]), /checkpoint|recommend|mcp/);
@@ -76,9 +75,9 @@ try {
     "--profile", "quick", "--map"]);
   assert.equal(context.manifest.project_id, init.projectId);
 
-  const evidence = cliJson(["evidence", "capture", "--project", newProject,
-    "--task", task.id, "--name", "Installed Node runtime", "--",
-    process.execPath, "--version"]);
+  const evidence = JSON.parse(cli(["evidence", "capture", "--project", newProject,
+    "--task", task.id, "--name", "Installed Node runtime", "--json", "--",
+    process.execPath, "--version"]));
   assert.equal(evidence.verified, true);
   assert.equal(evidence.id, "EVID-0001");
 
