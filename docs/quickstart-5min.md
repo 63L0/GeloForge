@@ -1,25 +1,15 @@
 # GeloForge 5-Minute Quickstart
 
-Start organizing project memory, scoped tasks, verified command evidence, compiled context packets, and clean cross-agent handoffs in an existing or new repository.
-
-> **New to GeloForge?** You do **not** have to rewrite your project or adopt a complex multi-project workspace layout. Run these commands directly inside any existing repository.
+Adopt an existing repository, create a scoped task, and hand it off with command-backed evidence.
 
 ---
 
 ## Prerequisites
 
-- **Node.js `>= 20.0.0`** (zero external `npm install` packages required)
+- **Node.js 20+**
 - **Git**
 
-Make `geloforge` callable from anywhere on your machine (optional, once per clone):
-
-```bash
-git clone https://github.com/63L0/GeloForge.git
-cd GeloForge
-npm link
-```
-
-*(Without `npm link`, run `node /path/to/GeloForge/scripts/geloforge.mjs <command>` instead.)*
+The examples use `npx` to run the published package directly from npm.
 
 ---
 
@@ -31,13 +21,13 @@ Inside your repository root:
 cd /path/to/your-project
 
 # Preview what will be added without writing anything
-geloforge adopt --dry-run
+npx geloforge adopt --dry-run
 
 # Add Second Brain (brain/ and tasks/) without modifying existing source files or README.md
-geloforge adopt --profile web
+npx geloforge adopt --profile web
 ```
 
-- Already want a fresh project from scratch? Use `geloforge init --name "My App" --profile web --dest ../my-app --git`.
+- To start a new project, run `npx geloforge init --name "My App" --profile web --dest ./my-app --git` from its parent directory.
 - Need custom folders? Pass `--tasks-dir ops-tasks --evidence-dir ops-evidence`.
 - `geloforge adopt` never overwrites pre-existing files and preserves existing Git history and dirty worktrees.
 
@@ -48,10 +38,10 @@ geloforge adopt --profile web
 From the repository root **or any nested subdirectory** (`--project` is auto-detected up to your Git root):
 
 ```bash
-geloforge status
+npx geloforge status
 
 # Create and activate TASK-0001 cleanly
-geloforge task new --title "Add checkout validation" --input src/checkout.js --activate
+npx geloforge task new --title "Add checkout validation" --input src/checkout.js --activate
 ```
 
 ---
@@ -59,15 +49,15 @@ geloforge task new --title "Add checkout validation" --input src/checkout.js --a
 ## Step 3: Compile Context + Codebase Map (+ Optional Portable Skills)
 
 ```bash
-geloforge context --task TASK-0001 --map --profile quick
+npx geloforge context --task TASK-0001 --map --profile quick
 
 # Optional: include validated .agents/skills or global skills cleanly with Tier 0/1/2 disclosure
-geloforge skills list
-geloforge skills lint --strict
-geloforge context --task TASK-0001 --map --skills
+npx geloforge skills list
+npx geloforge skills lint --strict
+npx geloforge context --task TASK-0001 --map --skills
 ```
 
-- Copies a trust-tiered prompt packet combining global `A0` safety rules, open conflicts, project state, `TASK-0001`, verified `EVID-0001`, a `.gitignore`-aware outline of relevant files, and (when `--skills` is passed) relevant non-authoritative `SKILL.md` workflows.
+- The context packet includes project rules, current state, task scope, linked evidence when available, and a Git-aware code outline. Add `--skills` to include relevant `SKILL.md` workflows.
 - Want strict trust isolation (exclude unverified `A5`–`A6` drafts & unverified skills)? Add `--exclude-unverified`.
 - Learn more in the [Portable Skills Guide](./portable-skills.md).
 
@@ -78,7 +68,7 @@ geloforge context --task TASK-0001 --map --skills
 Run your project's build, linter, or test command after `--`.
 
 ```bash
-geloforge verify -- node --test
+npx geloforge verify -- node --test
 ```
 
 `verify` uses the sole active task or a task selected with `--task TASK-0001`. A passing check records verified evidence, saves a checkpoint, and completes the task. A failing check records draft evidence, exits with a failure, and leaves the task open for another run. Use `evidence capture` when you want to record a check while keeping the task open.
@@ -94,7 +84,7 @@ geloforge verify -- node --test
 
 ```bash
 # Create an auditable handoff packet separating verified EVID-* from unverified claims
-geloforge handoff \
+npx geloforge handoff \
   --task TASK-0001 \
   --from-tool codex --to-tool gemini-cli \
   --completed "Implemented checkout validation" \
@@ -102,12 +92,12 @@ geloforge handoff \
   --next-action "Inspect EVID-0001 and merge PR"
 
 # Inspect a received handoff & verify whole Second Brain integrity
-geloforge handoff --inspect handoffs/HANDOFF-0001-task-0001.yaml
-geloforge validate
+npx geloforge handoff --inspect handoffs/HANDOFF-0001-task-0001.yaml
+npx geloforge validate
 ```
 
 ---
 
 ## Optional Multi-Project Workspace Layout
 
-Prefer isolating multiple scaffolded apps next to a harness checkout? `geloforge init --name "My App"` without `--dest` defaults to `<workspace-root>/projects/<slug>` automatically. See [README.md](../README.md) and [docs/new-projects.md](./new-projects.md) for all flags.
+The npm CLI defaults to `./projects/<slug>` when you run `npx geloforge init --name "My App"` without `--dest`. [Project setup options](./new-projects.md)
