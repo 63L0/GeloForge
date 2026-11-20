@@ -355,6 +355,7 @@ export function runMultiFileTransaction(steps, { projectDir = null, faultHook = 
         filePath: step.filePath,
         existed: true,
         previousContent: fs.readFileSync(step.filePath, "utf8"),
+        mode: step.mode,
       });
     } else {
       snapshots.set(step.filePath, {
@@ -398,7 +399,7 @@ export function runMultiFileTransaction(steps, { projectDir = null, faultHook = 
           fs.unlinkSync(step.filePath);
         }
       } else {
-        atomicWriteFile(step.filePath, step.content, { allowOverwrite: step.allowOverwrite !== false });
+        atomicWriteFile(step.filePath, step.content, { allowOverwrite: step.allowOverwrite !== false, mode: step.mode });
       }
       if (typeof faultHook === "function") {
         faultHook(`after:${step.label}`, i);
@@ -412,7 +413,7 @@ export function runMultiFileTransaction(steps, { projectDir = null, faultHook = 
     for (const snap of Array.from(snapshots.values()).reverse()) {
       try {
         if (snap.existed) {
-          atomicWriteFile(snap.filePath, snap.previousContent, { allowOverwrite: true });
+          atomicWriteFile(snap.filePath, snap.previousContent, { allowOverwrite: true, mode: snap.mode });
         } else if (fs.existsSync(snap.filePath)) {
           fs.unlinkSync(snap.filePath);
         }
