@@ -6,6 +6,10 @@
 [![Latest release](https://img.shields.io/github/v/release/63L0/GeloForge?label=release)](https://github.com/63L0/GeloForge/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
+![15-second GeloForge terminal replay showing MCP setup, an overlapping lease blocked, verified evidence, and a signed skill approval](./docs/media/geloforge-v06-demo.gif)
+
+[Read and replay the GeloForge worktree case study](./docs/dogfooding-v06.md).
+
 When an AI coding session ends, important decisions, unfinished work, and test results are easy to lose. **GeloForge keeps that knowledge in your repository**, not trapped inside one assistant's chat.
 
 It's a small, open-source **command-line toolkit** for project memory, task tracking, verified command results, reusable agent skills, and handoffs between coding assistants. Built with Node.js, with **no paid API, hosted service, or third-party runtime dependencies**.

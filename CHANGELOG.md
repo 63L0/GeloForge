@@ -2,6 +2,14 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.6.0] — Unreleased
+
+- Package the CLI for npm and test installation from the release tarball on Linux, macOS, and Windows.
+- Add `geloforge mcp init` for Cursor, VS Code, Claude Code, and Gemini CLI project setup and workflow instructions.
+- Add `geloforge verify` to run a check, record evidence, save a checkpoint, and complete a verified task.
+- Scope placeholder validation to GeloForge project records and guides so existing application templates can survive adoption.
+- Add a terminal replay and reproducible dogfooding run on GeloForge's own Git worktree.
+
 ## [0.5.0] — 2026-11-20
 
 GeloForge v0.5 focuses on practical, human-supervised AI coding sessions and cooperative work across IDEs. This is a GitHub source release; npm publication remains disabled by `private: true`. Release publication is gated on successful CI for the exact current `main` commit.

@@ -471,6 +471,8 @@ export function validateProject(rawProjectDir, options = {}) {
   // 6. Markdown links, placeholder hygiene, and portability scan
   const harnessTokenRegex =
     /\{\{(PROJECT_NAME|PROJECT_SLUG|PROJECT_ID|PROJECT_DESCRIPTION|PROJECT_OWNER|CREATED_AT|CREATED_DATE|HARNESS_VERSION|TEMPLATE_VERSION|PROFILE_NAME|PROFILE_VERSION)\}\}/;
+  const isProjectMemoryFile = (rel) => rel === manifestRel || requiredCoreFiles.includes(rel) ||
+    isSecondBrainOrGuideRelPath(rel, projectPaths);
   const mdFiles = walkNonSymlinkFiles(projectDir, projectDir, (p) => p.endsWith(".md"), null, {
     ignoreDirs: IGNORED_PROJECT_SCAN_DIRS,
     onSymlink: (_rel, msg) => errors.push(msg),
@@ -481,7 +483,7 @@ export function validateProject(rawProjectDir, options = {}) {
   for (const mdFile of mdFiles) {
     const relMd = path.relative(projectDir, mdFile).replace(/\\/g, "/");
     const raw = fs.readFileSync(mdFile, "utf8");
-    if (harnessTokenRegex.test(raw)) {
+    if (isProjectMemoryFile(relMd) && harnessTokenRegex.test(raw)) {
       errors.push(`${relMd}: contains unreplaced template placeholder`);
     }
     if (isSecondBrainOrGuideRelPath(relMd, projectPaths) && /(^|[^A-Za-z0-9_])([A-Za-z]:[\\/])/.test(raw)) {
@@ -519,15 +521,14 @@ export function validateProject(rawProjectDir, options = {}) {
     }
   }
 
-  // Check YAML files for leftover harness placeholders too
+  // Existing application templates may intentionally contain these tokens.
   const yamlFiles = walkNonSymlinkFiles(projectDir, projectDir, (p) => /\.ya?ml$/i.test(p), null, {
     ignoreDirs: IGNORED_PROJECT_SCAN_DIRS,
     onSymlink: (_rel, msg) => errors.push(msg),
   });
   for (const yf of yamlFiles) {
-    const raw = fs.readFileSync(yf, "utf8");
-    if (harnessTokenRegex.test(raw)) {
-      const relY = path.relative(projectDir, yf).replace(/\\/g, "/");
+    const relY = path.relative(projectDir, yf).replace(/\\/g, "/");
+    if (isProjectMemoryFile(relY) && harnessTokenRegex.test(fs.readFileSync(yf, "utf8"))) {
       errors.push(`${relY}: contains unreplaced template placeholder`);
     }
   }
