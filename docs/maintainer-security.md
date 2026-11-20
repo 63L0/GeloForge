@@ -42,12 +42,12 @@ For genuinely independent approval:
 4. Review the exact candidate package digest, diff, evidence, and source commit before approval.
 5. Preserve and inspect the audit history; verify snapshots and approvals at promotion/rollback.
 
-## Release sequence
+## Ongoing change and release safeguards
 
-1. Land this CODEOWNERS and maintainer security guide.
-2. Configure and verify `main` branch rules in GitHub Settings.
-3. Recheck PR #5's updated mergeability and all required checks against latest `main`.
-4. Complete PR #5 human review and merge only after approval.
-5. Prepare the v0.4.0 release separately; do not move the published `v0.3.0` tag.
+1. Keep `.github/CODEOWNERS` and the `Protect main` ruleset aligned with the repository's actual reviewers and CI job names.
+2. Before merging a PR, inspect the latest head SHA, all six required CI checks, and whether the branch protections are actively enforced.
+3. When adding independent maintainers, enable required human review and code-owner review without permitting automation bypasses.
+4. Keep previously published tags (including `v0.3.0` and `v0.4.0`) immutable. Prepare later releases on a separate reviewed branch.
+5. For skill promotion, prefer externally controlled signing keys or genuinely enforced server-side reviews over local confirmations alone.
 
-These are recommended controls, not proof that the current repository is already protected. Always verify GitHub's actual settings and merge behavior.
+These are recommended controls, not proof that the current repository is protected. Always verify GitHub's actual settings and merge behavior.
