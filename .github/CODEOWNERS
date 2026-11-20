@@ -1,0 +1,16 @@
+# GeloForge reviewer routing for sensitive source and trust-boundary changes.
+# GitHub does not enforce approval from these owners unless a branch protection rule
+# or repository ruleset explicitly requires code-owner reviews.
+# Solo-maintainer warning: a PR author cannot approve their own PR. Do NOT enable
+# mandatory code-owner approvals until a separate trusted reviewer is available.
+
+* @63L0
+
+/.github/CODEOWNERS @63L0
+/.github/workflows/ @63L0
+/.agents/skills/ @63L0
+/.geloforge/ @63L0
+/core/ @63L0
+/scripts/ @63L0
+/schemas/ @63L0
+/SECURITY.md @63L0
