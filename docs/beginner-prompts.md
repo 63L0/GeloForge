@@ -57,5 +57,21 @@ Save our session progress using `npx geloforge checkpoint create --summary "..."
 ## 6. Turn a working fix into a reusable quarantined skill
 
 ```text
-Analyze our verified work with `npx geloforge skills suggest --scaffold-draft --dry-run` first and show me what skill draft it would stage under `proposals/skills/`. Wait for my confirmation before writing the quarantined draft, and do not promote it until I review and approve it.
+Analyze our verified work with `npx geloforge skills suggest --scaffold-draft --dry-run` first (or use `--template <id> --scaffold-draft` if a starter template fits) and show me what skill draft it would stage under `proposals/skills/`. Wait for my confirmation before writing the quarantined draft, and do not promote it until I review and approve it.
+```
+
+---
+
+## 7. Compact a long chat cleanly (`compact`)
+
+```text
+This conversation is getting long. Run `npx geloforge compact --summary "<SHORT PROGRESS SUMMARY>"` (pass `--task <TASK-ID>` if one is active), confirm the checkpoint ID recorded, and give me the exact ready-to-paste fresh-chat prompt so I can continue cleanly in a new window.
+```
+
+---
+
+## 8. Generate a shareable PR or status report (`report`)
+
+```text
+Run `npx geloforge report` for this project (pass `--task <TASK-ID>` to scope to one task) and give me the Markdown verification summary showing task status, verified EVID-* receipts, latest checkpoint, and doctor health checks.
 ```

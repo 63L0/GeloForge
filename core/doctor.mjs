@@ -78,7 +78,7 @@ export async function runProjectDoctor({
 } = {}) {
   const harnessDir = path.resolve(rawHarnessDir || DEFAULT_HARNESS_DIR);
   const loaded = loadProjectManifestAndState(rawProjectDir, harnessDir);
-  const { projectDir, manifest, projectPaths } = loaded;
+  const { projectDir, manifest, state, projectPaths } = loaded;
   const checks = [];
 
   // 1. Node.js runtime
@@ -288,6 +288,30 @@ export async function runProjectDoctor({
       status: "warn",
       summary: "No ambient Git or IDE GeloForge hooks configured yet",
       fix: "geloforge hooks init --dry-run",
+    });
+  }
+
+  // 9. Session hygiene / long-session compaction readiness
+  const activeTasksCount = Array.isArray(state?.active_tasks) ? state.active_tasks.length : 0;
+  const dirtyFilesCount = gitState.available ? gitState.dirtyCount : 0;
+  const stateRev = typeof state?.state_revision === "number" ? state.state_revision : 0;
+  const lastCheckpointLabel = state?.last_checkpoint || "none";
+  const needsCompaction =
+    activeTasksCount > 3 ||
+    (gitState.available && dirtyFilesCount >= 10 && !state?.last_checkpoint) ||
+    (stateRev >= 8 && !state?.last_checkpoint);
+  if (needsCompaction) {
+    checks.push({
+      id: "session_hygiene",
+      status: "warn",
+      summary: `Long or uncompacted session state detected (active_tasks=${activeTasksCount}, dirty_files=${dirtyFilesCount}, last_checkpoint=${lastCheckpointLabel})`,
+      fix: "geloforge compact",
+    });
+  } else {
+    checks.push({
+      id: "session_hygiene",
+      status: "pass",
+      summary: `Session state is compact (active_tasks=${activeTasksCount}, last_checkpoint=${lastCheckpointLabel})`,
     });
   }
 

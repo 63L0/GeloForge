@@ -22,7 +22,7 @@ import {
   releaseTaskLease,
   updateTask,
 } from "./task-manager.mjs";
-import { createCheckpoint, getCheckpoint, listCheckpoints } from "./checkpoint.mjs";
+import { compactSession, createCheckpoint, getCheckpoint, listCheckpoints } from "./checkpoint.mjs";
 import { discoverSkills, resolveProjectForSkills } from "./skills.mjs";
 import { suggestProjectSkills } from "./skills-advisor.mjs";
 import { lintDiscoveredSkills, lintSkill } from "./skills-lint.mjs";
@@ -39,7 +39,7 @@ export const MAX_MCP_MESSAGE_BYTES = 1024 * 1024;
 export const MAX_MCP_HEADER_BYTES = 4096;
 
 const MUTATING_TASK_ACTIONS = new Set(["new", "update", "done", "claim", "release"]);
-const MUTATING_CHECKPOINT_ACTIONS = new Set(["create"]);
+const MUTATING_CHECKPOINT_ACTIONS = new Set(["create", "compact"]);
 const MUTATING_SKILLS_ACTIONS = new Set(["draft", "propose", "propose-update", "scaffold"]);
 
 function getHarnessVersion(harnessDir) {
@@ -166,21 +166,25 @@ export const MCP_TOOLS = [
   {
     name: "geloforge_checkpoint",
     description:
-      "[READ + STATE-MUTATING] Create, list, or inspect CHKPT-NNNN session recovery checkpoints. Read-only actions: list, show. Mutating action (disabled in --read-only mode): create.",
+      "[READ + STATE-MUTATING] Create, list, inspect, resume, or 1-command compact CHKPT-NNNN session recovery checkpoints. Read-only actions: list, show, resume. Mutating actions (disabled in --read-only mode): create, compact.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
-      readOnlyActions: ["list", "show"],
-      mutatingActions: ["create"],
+      readOnlyActions: ["list", "show", "resume"],
+      mutatingActions: ["create", "compact"],
     },
     inputSchema: {
       type: "object",
       required: ["action"],
       additionalProperties: false,
       properties: {
-        action: { type: "string", enum: ["create", "list", "show"] },
+        action: { type: "string", enum: ["create", "list", "show", "resume", "compact"] },
         project: { type: "string" },
         checkpointId: { type: "string" },
+        task: { type: "string", description: "Optional TASK-NNNN focus for compact." },
+        profile: { type: "string", enum: ["quick", "working", "deep"] },
+        map: { type: "boolean" },
+        skills: { type: "boolean" },
         summary: { type: "string" },
         resumeInstructions: { type: "string" },
         evidenceRef: { type: "string" },
@@ -192,6 +196,7 @@ export const MCP_TOOLS = [
     input_examples: [
       { action: "list" },
       { action: "create", summary: "Verification checks passed", evidenceRef: "EVID-0001" },
+      { action: "compact", summary: "Ready for fresh chat handoff" },
     ],
   },
   {
@@ -220,6 +225,7 @@ export const MCP_TOOLS = [
         query: { type: "string" },
         task: { type: "string" },
         limit: { type: "integer", minimum: 1, maximum: 20 },
+        template: { type: "string", description: "Optional starter skill template ID for suggest/scaffold." },
         includeDrafts: { type: "boolean" },
         strict: { type: "boolean" },
         evidenceIds: { type: "array", items: { type: "string" } },
@@ -417,6 +423,22 @@ function invokeCheckpointTool(args, ctx) {
       return listCheckpoints({ projectDir, status: args.status, harnessDir });
     case "show":
       return getCheckpoint({ projectDir, checkpointId: args.checkpointId, harnessDir });
+    case "resume":
+      return getCheckpoint({ projectDir, checkpointId: args.checkpointId, harnessDir, newest: true });
+    case "compact":
+      return compactSession({
+        projectDir,
+        harnessDir,
+        taskId: args.task,
+        summary: args.summary,
+        resumeInstructions: args.resumeInstructions,
+        evidenceRef: args.evidenceRef,
+        createdBy: args.createdBy || "mcp-client",
+        profile: args.profile,
+        includeMap: args.map !== false,
+        includeSkills: Boolean(args.skills),
+        dryRun: Boolean(args.dryRun),
+      });
     default:
       throw new Error(`Unsupported checkpoint action "${action}".`);
   }
@@ -444,6 +466,7 @@ function invokeSkillsTool(args, ctx) {
       goal: args.goal || null,
       query: args.query || null,
       limit: args.limit,
+      templateId: args.template || null,
       includeDrafts: Boolean(args.includeDrafts),
       scaffoldDraft: action === "scaffold",
       skillName: args.name || null,

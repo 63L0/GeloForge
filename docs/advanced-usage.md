@@ -8,7 +8,7 @@ This is the in-depth reference previously presented on the repository homepage. 
 
 **Build with AI coding assistants without losing context, decisions, or verification truth.**
 
-**Version:** `0.9.1` | **License:** [MIT](../LICENSE)
+**Version:** `0.10.0` | **License:** [MIT](../LICENSE)
 
 GeloForge is a zero-dependency, provider-neutral toolkit for organizing projects, managing project memory, compiling bounded prompt context, mapping source symbols, pinning MCP tool surfaces, recommending/quarantining skills, running bounded coding loops, and handing off verified work across coding sessions or different AI assistants.
 
@@ -18,7 +18,7 @@ It stores persistent project memory in plain Markdown and YAML inside your proje
 
 ## 1. What GeloForge Does Today
 
-- **Unified CLI ([scripts/geloforge.mjs](../scripts/geloforge.mjs)):** Non-interactive `geloforge` commands (`init`, `adopt`, `task`, `evidence`, `verify`, `validate`, `context`, `skills`, `handoff`, `checkpoint`, `recommend`, `autonomous`, `loop`, `proposal`, `worktree`, `status`, `doctor`, `hooks`, `mcp`) with CWD project auto-discovery, `--json` output, and atomic `--out` writes.
+- **Unified CLI ([scripts/geloforge.mjs](../scripts/geloforge.mjs)):** Non-interactive `geloforge` commands (`init`, `adopt`, `task`, `evidence`, `verify`, `validate`, `context`, `skills`, `handoff`, `checkpoint`, `compact`, `report`, `recommend`, `autonomous`, `loop`, `proposal`, `worktree`, `status`, `doctor`, `hooks`, `mcp`) with CWD project auto-discovery, `--json` output, and atomic `--out` writes.
 - **Brownfield Adoption & Greenfield Scaffolding (`adopt`, `init`):** Safely onboard existing repos with `geloforge adopt` without altering existing source files ([adopt-project.mjs](../core/adopt-project.mjs)), or initialize new Second Brain repos ([templates/project-starter/](../templates/project-starter/README.md)) with domain overlays (`web`, `desktop`, `mobile`, `automation`, `ai-system`).
 - **Task Contracts & Command-Backed Evidence (`task`, `evidence`, `verify`):** Manage schema-strict `TASK-NNNN` contracts ([task-manager.mjs](../core/task-manager.mjs)) and capture real `EVID-NNNN` records via `geloforge evidence capture -- <cmd>` or `geloforge verify` with `shell: false`, secret redaction, and explicit pass/fail/timeout accuracy ([evidence-capture.mjs](../core/evidence-capture.mjs)).
 - **Portable Agent Skills & Advisor (`skills`, `context --skills`):** Discover, analyze/recommend (`skills suggest` + quarantined `--scaffold-draft`), validate, and statically security-lint [agentskills.io](https://agentskills.io)-compatible `SKILL.md` packages in `.agents/skills/` and `~/.geloforge/skills/` (`GELOFORGE_SKILLS_DIR`) with progressive disclosure (`Tier 0` index -> `Tier 1` relevant skills -> `Tier 2` support paths), quarantine for `proposals/skills/`, and evidence-backed drafting, update proposals, Ed25519/PR-branch/TTY-authorized promotion, content-addressed history, and rollback ([skills.mjs](../core/skills.mjs), [skills-advisor.mjs](../core/skills-advisor.mjs), [skills-lint.mjs](../core/skills-lint.mjs), [skills-lifecycle.mjs](../core/skills-lifecycle.mjs), [Portable Skills Guide](../docs/portable-skills.md), [Example Skill](../examples/skills/evidence-backed-bugfix/SKILL.md)).
@@ -398,4 +398,40 @@ geloforge hooks init --dry-run
 
 # Install selected targets
 geloforge hooks init --target git,claude,gemini
+```
+
+---
+
+## v0.10 Long-Session Compaction, Starter Skill Catalog & PR Reports
+
+### 1. One-Command Long-Session Compaction (`geloforge compact`)
+
+Create a schema-valid `CHKPT-NNNN` checkpoint, compile a slim diff-focused `quick` resume packet, and emit a ready-to-paste fresh-chat prompt in one step (also available as `geloforge checkpoint compact` and MCP `geloforge_checkpoint` `compact`):
+
+```bash
+geloforge compact --summary "Completed webhook verification; ready for fresh session"
+geloforge compact --task TASK-0001 --out ../packets/resume.md --json
+```
+
+`geloforge doctor` automatically inspects `session_hygiene` (active task count, uncheckpointed dirty files, high state revision without checkpoint) and recommends `geloforge compact` before context bloat sets in.
+
+### 2. Curated Starter Skill Templates (`skills suggest --template`)
+
+`geloforge skills suggest` ranks curated domain starter workflows (`web-ui-verification`, `backend-api-contracts`, `automation-workflow-guardrails`, `desktop-mobile-release-check`, `security-and-regression-gate`) alongside your project's own signals. Stage any matching template cleanly into quarantine under `proposals/skills/`:
+
+```bash
+geloforge skills suggest --template backend-api-contracts --scaffold-draft --dry-run
+geloforge skills suggest --template backend-api-contracts --scaffold-draft
+```
+
+Starter scaffolds combine the domain checklist with your repository's detected commands and constraints, and stay non-promotable until verified `EVID-*` evidence is captured.
+
+### 3. Shareable PR & Verification Reports (`geloforge report`)
+
+Generate a GitHub-Flavored Markdown or JSON summary across tasks, audited `EVID-*` receipts, session checkpoints, and `doctor` checks (`project-report.mjs`):
+
+```bash
+geloforge report
+geloforge report --task TASK-0001 --out ../reports/pr-verification.md
+geloforge report --check-mcp --json
 ```

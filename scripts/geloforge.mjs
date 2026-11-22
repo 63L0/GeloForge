@@ -33,18 +33,19 @@ import {
 } from "../core/task-manager.mjs";
 import { captureEvidence } from "../core/evidence-capture.mjs";
 import { verifyTask } from "../core/verify-task.mjs";
-import { createCheckpoint, getCheckpoint, listCheckpoints } from "../core/checkpoint.mjs";
+import { compactSession, createCheckpoint, getCheckpoint, listCheckpoints } from "../core/checkpoint.mjs";
 import { startMcpStdioServer } from "../core/mcp-server.mjs";
 import { initMcpClients } from "../core/mcp-init.mjs";
 import { checkMcpLock, lockMcpServers } from "../core/mcp-lock.mjs";
 import { runProjectDoctor } from "../core/doctor.mjs";
 import { HOOK_TARGETS, initProjectHooks } from "../core/hooks-init.mjs";
+import { generateProjectReport } from "../core/project-report.mjs";
 import { getCodingLoopStatus, runCodingLoop } from "../core/coding-loop.mjs";
 import {
   discoverSkills,
   resolveProjectForSkills,
 } from "../core/skills.mjs";
-import { suggestProjectSkills } from "../core/skills-advisor.mjs";
+import { STARTER_SKILL_CATALOG, suggestProjectSkills } from "../core/skills-advisor.mjs";
 import { STATIC_LINT_DISCLAIMER, lintDiscoveredSkills, lintSkill } from "../core/skills-lint.mjs";
 import {
   draftSkillFromExperience,
@@ -84,7 +85,9 @@ Commands:
   context    Compile a deterministic, trust-tiered context packet for a task or query
   skills     Discover, inspect, validate, and security-lint portable SKILL.md packages
   handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
-  checkpoint Create, list, or inspect session recovery checkpoints (CHKPT-NNNN)
+  checkpoint Create, list, inspect, resume, or compact session checkpoints (CHKPT-NNNN)
+  compact    Save a recovery checkpoint, build a slim resume packet, and print a fresh-chat prompt
+  report     Generate a shareable Markdown/JSON PR & project verification report
   recommend  Show ranked Human-in-the-Loop Co-Pilot recommendations & approval inbox
   autonomous Run opt-in staging audits, review progress, and learn from completed audits
   loop       Run bounded implement -> verify -> review -> fix coding loop for a task
@@ -263,13 +266,14 @@ Options:
 `);
       break;
     case "checkpoint":
-      console.log(`Usage: geloforge checkpoint <create|list|show|resume> [options]
+      console.log(`Usage: geloforge checkpoint <create|list|show|resume|compact> [options]
 
 Subcommands:
   create                  Capture a CHKPT-NNNN session recovery checkpoint
   list                    List recovery checkpoints ordered newest first
   show                    Inspect a specific checkpoint (or last project checkpoint)
   resume                  Read a checkpoint, compare current state, and show the next action
+  compact                 1-command checkpoint + slim resume packet + fresh-chat prompt (alias: geloforge compact)
 
 Options:
   -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
@@ -284,6 +288,48 @@ Options:
   --dry-run               Preview checkpoint without writing disk ('create')
   --local                 Save in local-runtime/checkpoints/ without updating project state ('create')
   --json                  Emit structured JSON output
+  -h, --help              Show help
+`);
+      break;
+    case "compact":
+      console.log(`Usage: geloforge compact [options]
+
+Saves a recovery checkpoint (CHKPT-NNNN), compiles a slim quick resume context packet,
+and outputs a ready-to-paste fresh-chat resume prompt for long sessions.
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  -t, --task <TASK-NNNN>  Focus resume packet on a specific task (defaults to first active task)
+  -q, --query <text>      Resume focus query when no task is active
+  --summary <text>        Progress summary for the saved checkpoint
+  --resume <text>         Explicit resume instructions override
+  --evidence <EVID-NNNN>  Link verified evidence ID
+  --profile <name>        Context profile: quick (default), working, or deep
+  --budget <int>          Override context token budget
+  --no-map                Omit selective codebase symbol map from resume packet
+  --skills                Include matching portable skills in resume packet
+  --exclude-unverified    Omit unverified A5-A6/draft items from resume packet
+  -o, --out <file>        Write compiled resume Markdown packet atomically to a safe path
+  --local                 Save checkpoint locally without incrementing project state_revision
+  --dry-run               Preview checkpoint and prompt without writing files
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+`);
+      break;
+    case "report":
+      console.log(`Usage: geloforge report [options]
+
+Generates a shareable Markdown/JSON verification report across tasks, evidence receipts,
+session checkpoints, and doctor health checks (for PRs, handoffs, or release audits).
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  -t, --task <TASK-NNNN>  Filter report tables to one specific task contract
+  --check-mcp             Probe live stdio MCP servers against .geloforge/mcp-lock.json
+  --timeout-ms <ms>       MCP probe timeout in ms (500-30000)
+  -o, --out <file>        Write Markdown report atomically to a safe path
+  --dry-run               Preview report without writing '--out' file
+  --json                  Emit structured JSON report
   -h, --help              Show help
 `);
       break;
@@ -477,6 +523,7 @@ Advisor Options ('suggest'):
   --query <text>          Alias for --goal
   --task <TASK-NNNN>      Analyze a specific task's scope and acceptance criteria
   --limit <1..20>         Max existing skills to recommend (default: 5)
+  --template <id>         Use a curated starter template (${STARTER_SKILL_CATALOG.map((t) => t.id).join(", ")})
   --scaffold-draft        Stage a quarantined SKILL.md draft under proposals/skills/ (never active)
   --name <skill-slug>     Custom skill slug when used with --scaffold-draft
 
@@ -1146,7 +1193,138 @@ function handleCheckpoint(args) {
     return 0;
   }
 
-  throw new Error(`Unknown checkpoint subcommand "${subcmd}". Expected: create, list, show, or resume.`);
+  if (subcmd === "compact") {
+    return handleCompact(rest);
+  }
+
+  throw new Error(`Unknown checkpoint subcommand "${subcmd}". Expected: create, list, show, resume, or compact.`);
+}
+
+function handleCompact(args) {
+  const parsed = parseArgs({
+    args,
+    options: {
+      project: { type: "string", short: "p" },
+      task: { type: "string", short: "t" },
+      query: { type: "string", short: "q" },
+      summary: { type: "string" },
+      resume: { type: "string" },
+      evidence: { type: "string" },
+      "created-by": { type: "string" },
+      role: { type: "string" },
+      status: { type: "string" },
+      id: { type: "string" },
+      "created-at": { type: "string" },
+      profile: { type: "string" },
+      budget: { type: "string" },
+      "no-map": { type: "boolean", default: false },
+      skills: { type: "boolean", default: false },
+      "from-diff": { type: "boolean", default: false },
+      "exclude-unverified": { type: "boolean", default: false },
+      out: { type: "string", short: "o" },
+      "dry-run": { type: "boolean", default: false },
+      local: { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (parsed.values.help) {
+    printSubHelp("compact");
+    return 0;
+  }
+  let budgetNum;
+  if (parsed.values.budget !== undefined) {
+    if (!/^\d+$/.test(parsed.values.budget.trim())) {
+      throw new Error(`Invalid --budget "${parsed.values.budget}". Must be a positive integer.`);
+    }
+    budgetNum = Number.parseInt(parsed.values.budget.trim(), 10);
+  }
+  const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
+  const res = compactSession({
+    projectDir,
+    harnessDir: HARNESS_DIR,
+    workspaceRoot: WORKSPACE_ROOT,
+    taskId: parsed.values.task,
+    query: parsed.values.query,
+    summary: parsed.values.summary,
+    resumeInstructions: parsed.values.resume,
+    evidenceRef: parsed.values.evidence,
+    createdBy: parsed.values["created-by"],
+    role: parsed.values.role,
+    status: parsed.values.status,
+    id: parsed.values.id,
+    createdAt: parsed.values["created-at"],
+    profile: parsed.values.profile || "quick",
+    budget: budgetNum,
+    includeMap: !parsed.values["no-map"],
+    includeSkills: parsed.values.skills,
+    fromDiff: parsed.values["from-diff"],
+    excludeUnverified: parsed.values["exclude-unverified"],
+    out: parsed.values.out,
+    dryRun: parsed.values["dry-run"],
+    local: parsed.values.local,
+  });
+  if (parsed.values.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return 0;
+  }
+  console.log(res.dryRun ? `DRY RUN — Session compaction preview (${res.checkpointId})` : `Session compacted: ${res.recordPath}`);
+  console.log(`Checkpoint     : ${res.checkpointId} | state_revision=${res.stateRevision} | branch=${res.record.git_branch}`);
+  console.log(
+    `Resume Packet  : profile=${res.contextPacket.effectiveProfile} (~${res.contextPacket.estimatedTokens} tokens, ${res.contextPacket.includedDocuments} docs included, ${res.contextPacket.omittedDocuments} omitted)`
+  );
+  if (res.contextPacket.outPath) {
+    console.log(`Packet Written : ${res.contextPacket.outPath}`);
+  }
+  console.log("");
+  console.log("Paste this prompt into a fresh AI chat:");
+  console.log(`  ${res.freshSessionPrompt}`);
+  return 0;
+}
+
+async function handleReport(args) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      project: { type: "string", short: "p" },
+      task: { type: "string", short: "t" },
+      "check-mcp": { type: "boolean", default: false },
+      "timeout-ms": { type: "string" },
+      out: { type: "string", short: "o" },
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (values.help) {
+    printSubHelp("report");
+    return 0;
+  }
+  const timeoutMs = values["timeout-ms"] !== undefined ? parseCheckTimeout(values["timeout-ms"]) : undefined;
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const res = await generateProjectReport({
+    projectDir,
+    harnessDir: HARNESS_DIR,
+    workspaceRoot: WORKSPACE_ROOT,
+    taskId: values.task,
+    checkMcp: values["check-mcp"],
+    timeoutMs,
+    out: values.out,
+    dryRun: values["dry-run"],
+  });
+  if (values.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return 0;
+  }
+  console.log(res.markdown.trimEnd());
+  if (res.outPath) {
+    console.log(`\n${values["dry-run"] ? "DRY RUN — Report not written" : "Report written"}: ${res.outPath}`);
+  }
+  return 0;
 }
 
 function handleMcpInit(args) {
@@ -2405,6 +2583,7 @@ async function handleSkillsSuggest(rest) {
       "global-dir": { type: "string" },
       "include-drafts": { type: "boolean", default: false },
       limit: { type: "string" },
+      template: { type: "string" },
       "scaffold-draft": { type: "boolean", default: false },
       name: { type: "string" },
       "dry-run": { type: "boolean", default: false },
@@ -2451,6 +2630,7 @@ async function handleSkillsSuggest(rest) {
     query: parsed.values.query || null,
     includeDrafts: Boolean(parsed.values["include-drafts"]),
     limit,
+    templateId: parsed.values.template || null,
     scaffoldDraft,
     skillName: parsed.values.name || null,
     dryRun: Boolean(parsed.values["dry-run"]),
@@ -2495,6 +2675,19 @@ async function handleSkillsSuggest(rest) {
       console.log(`  - [${gap.kind}] ${gap.suggestedName}${draftTag} — ${promoTag}`);
       console.log(`      Reason : ${gap.reason}`);
       console.log(`      Action : ${gap.recommendedCommand}`);
+    }
+  }
+  if (Array.isArray(res.starterCatalog) && res.starterCatalog.length > 0) {
+    console.log("");
+    console.log("Starter Skill Templates:");
+    for (const tpl of res.starterCatalog.slice(0, 3)) {
+      const stateTag = tpl.alreadyActive
+        ? " [active]"
+        : tpl.alreadyQuarantined
+          ? " [quarantined draft exists]"
+          : "";
+      console.log(`  - ${tpl.id} (score=${tpl.score})${stateTag} — ${tpl.description}`);
+      console.log(`      Stage: ${tpl.scaffoldCommand}`);
     }
   }
   if (res.scaffoldResult) {
@@ -2877,6 +3070,12 @@ async function main() {
         break;
       case "checkpoint":
         code = handleCheckpoint(rest);
+        break;
+      case "compact":
+        code = handleCompact(rest);
+        break;
+      case "report":
+        code = await handleReport(rest);
         break;
       case "recommend":
         code = handleRecommend(rest);

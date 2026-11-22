@@ -2,6 +2,14 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.10.0] — 2026-11-22
+
+- Add 1-command long-session compaction (`geloforge compact` / `geloforge checkpoint compact` + MCP `geloforge_checkpoint` `compact` and `resume` actions) in `core/checkpoint.mjs`, saving `CHKPT-NNNN`, compiling a slim diff-focused resume packet, and generating a fresh-chat resume prompt.
+- Add `session_hygiene` checks in `geloforge doctor` (`core/doctor.mjs`) and `session_compaction` ranking in `geloforge recommend` (`core/project-status.mjs`) to detect long/uncompacted sessions automatically.
+- Add curated 5-template **Starter Skill Catalog** (`STARTER_SKILL_CATALOG`) in `core/skills-advisor.mjs` with `geloforge skills suggest --template <id> [--scaffold-draft]` and MCP `geloforge_skills` `template` support to stage lint-clean quarantined starter workflows (`web-ui-verification`, `backend-api-contracts`, `automation-workflow-guardrails`, `desktop-mobile-release-check`, `security-and-regression-gate`).
+- Add shareable PR & project verification report generator (`geloforge report`, `core/project-report.mjs`) outputting GitHub-Flavored Markdown tables and JSON across tasks, audited `EVID-*` receipts, checkpoints, and doctor checks.
+- Expand offline regression evals (`npm run eval`) to 10 cases (`10/10`) and add end-to-end tests in `tests/compact-and-report.test.mjs`.
+
 ## [0.9.1] — 2026-11-22
 
 - Overhaul `README.md` into a comprehensive public showcase highlighting all major GeloForge features (Contextual BM25 & 3-zone context compiler, 15+ language codebase map, evidence-gated verification, MCP init & SHA-256 tool pinning, `skills suggest` & quarantined scaffolder, bounded coding loops, staging audits, cooperative file leases, Git worktrees, `doctor`, and `hooks init`), using the raw GitHub demo GIF URL so it renders cleanly on both GitHub and npmjs.com.
