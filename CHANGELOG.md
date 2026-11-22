@@ -2,6 +2,14 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.9.0] — 2026-11-22
+
+- Add deterministic Project/Goal Skills Advisor and quarantined skill scaffolder (`geloforge skills suggest [--goal|--task|--scaffold-draft]`, `core/skills-advisor.mjs`, MCP `geloforge_skills` `suggest` and `scaffold`, plus `geloforge recommend` integration).
+- Add one-command project diagnostics (`geloforge doctor`, `core/doctor.mjs`) checking Node.js version, Second Brain validation, harness compatibility, Git status, leases, skills lint, MCP lock drift, and ambient hooks with actionable fixes.
+- Add opt-in ambient hook installer (`geloforge hooks init`, `core/hooks-init.mjs`) for Git `pre-commit`, Claude Code (`hooks.Stop`), and Gemini CLI (`hooks.AfterAgent`) preserving existing user config and MCP servers cleanly.
+- Expand offline regression eval suite (`npm run eval`) to 8 cases covering Markdown heading BM25 ranking (`eval-006`), Windows `.state.lock` transient error retries (`eval-007`), and `skills suggest` quarantine/promotion fail-closed gates (`eval-008`).
+- Add beginner-friendly "Prompt-to-Install" AI onboarding guide in `README.md` and `docs/beginner-prompts.md`.
+
 ## [0.8.1] — 2026-11-22
 
 - Index Markdown headings (`#`–`####`, excluding YAML frontmatter and fenced code blocks) into Contextual BM25 `headerText` (`core/context-compiler.mjs`) so authoritative Markdown docs such as `brain/architecture/overview.md` rank accurately against shorter research drafts.

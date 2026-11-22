@@ -5,7 +5,7 @@
  * and coding loop guardrails offline in disposable workspaces.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,6 +16,10 @@ import { compileContext } from "../core/context-compiler.mjs";
 import { runCodingLoop } from "../core/coding-loop.mjs";
 import { checkMcpLock, lockMcpServers, MCP_LOCK_PATH } from "../core/mcp-lock.mjs";
 import { handleMcpMessage } from "../core/mcp-server.mjs";
+import { withProjectLock } from "../core/project-lock.mjs";
+import { discoverSkills } from "../core/skills.mjs";
+import { suggestProjectSkills } from "../core/skills-advisor.mjs";
+import { promoteSkillProposal } from "../core/skills-lifecycle.mjs";
 import { claimTaskLease, createTask, releaseTaskLease } from "../core/task-manager.mjs";
 import { bootstrapProject } from "./bootstrap-project.mjs";
 
@@ -96,6 +100,45 @@ function runRetrievalEval(spec) {
   const ws = makeWorkspace("gf-eval-ret-");
   try {
     const { projectDir } = ws;
+    if (spec.input.mode === "markdown_heading") {
+      const filler = Array.from({ length: spec.input.fillerCount || 180 }, (_, idx) => `topology worker pipeline ${idx + 1}`).join(" ");
+      fs.writeFileSync(
+        path.join(projectDir, "brain", "architecture", "overview.md"),
+        [
+          "# Architecture Overview — Eval Fixture App",
+          "",
+          spec.input.overviewHeading,
+          "",
+          "```bash",
+          "# ignored_fence_heading_token",
+          "```",
+          "",
+          filler,
+          "",
+        ].join("\n"),
+        "utf8"
+      );
+      for (const rDoc of spec.input.researchDocs || []) {
+        writeResearchDoc(projectDir, rDoc.relPath, { id: rDoc.id, title: rDoc.title, body: rDoc.body });
+      }
+      const packet = compileContext({
+        projectDir,
+        harnessDir: HARNESS_DIR,
+        query: spec.input.query,
+        profile: spec.input.profile || "deep",
+      });
+      const includedPaths = packet.manifest.included_documents.map((d) => d.path);
+      const mustIdx = includedPaths.indexOf(spec.expected.mustInclude);
+      assert.ok(mustIdx !== -1, `Expected ${spec.expected.mustInclude} to be included`);
+      for (const otherPath of spec.expected.mustOutrankList || []) {
+        const otherIdx = includedPaths.indexOf(otherPath);
+        if (otherIdx !== -1) {
+          assert.ok(mustIdx < otherIdx, `Expected ${spec.expected.mustInclude} (${mustIdx}) before ${otherPath} (${otherIdx})`);
+        }
+      }
+      return { includedCount: includedPaths.length, mustIncludeRank: mustIdx };
+    }
+
     const { rareDoc, noisyDoc, unrelatedDoc } = spec.input;
     for (const doc of [rareDoc, unrelatedDoc]) {
       writeAdrDoc(projectDir, doc.relPath, { id: doc.id, title: doc.title, body: doc.body });
@@ -308,12 +351,124 @@ async function runCodingLoopEval(spec) {
   }
 }
 
+function runLockSafetyEval(spec) {
+  const ws = makeWorkspace("gf-eval-lock-");
+  const origLstatSync = fs.lstatSync;
+  try {
+    const { projectDir } = ws;
+    const lockDir = path.join(projectDir, ".geloforge");
+    fs.mkdirSync(lockDir, { recursive: true });
+    const lockPath = path.join(lockDir, ".state.lock");
+    const deadChild = spawnSync(process.execPath, ["-e", "process.exit(0)"], { windowsHide: true });
+    assert.equal(deadChild.status, 0);
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: deadChild.pid,
+        token: "eval-dead-token",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      "utf8"
+    );
+
+    const lockTargets = new Set([path.resolve(lockPath), path.join(fs.realpathSync(projectDir), ".geloforge", ".state.lock")]);
+    const inspectCodes = spec.input.inspectTransientCodes || ["EPERM", "EBUSY"];
+    let injectedPathErrors = 0;
+    let injectedInspectErrors = 0;
+
+    fs.lstatSync = function evalPatchedLstatSync(target, ...rest) {
+      if (typeof target === "string" && lockTargets.has(path.resolve(target))) {
+        const opts = rest[0];
+        if (opts && opts.throwIfNoEntry === false && injectedPathErrors < 1) {
+          injectedPathErrors += 1;
+          const err = new Error(`${spec.input.pathTransientCode}: simulated lock path race`);
+          err.code = spec.input.pathTransientCode || "EPERM";
+          throw err;
+        }
+        if (!opts && injectedInspectErrors < inspectCodes.length) {
+          const code = inspectCodes[injectedInspectErrors];
+          injectedInspectErrors += 1;
+          const err = new Error(`${code}: simulated lock inspect race`);
+          err.code = code;
+          throw err;
+        }
+      }
+      return origLstatSync.call(this, target, ...rest);
+    };
+
+    const outcome = withProjectLock(projectDir, () => spec.expected.result, {
+      lockTimeoutMs: spec.input.lockTimeoutMs || 2000,
+      staleLockMs: spec.input.staleLockMs || 50,
+      retryDelayMs: spec.input.retryDelayMs || 10,
+    });
+    assert.equal(outcome, spec.expected.result);
+    assert.equal(injectedPathErrors, spec.expected.injectedPathErrors);
+    assert.equal(injectedInspectErrors, spec.expected.injectedInspectErrors);
+    assert.equal(fs.existsSync(lockPath), false);
+    return { outcome, injectedPathErrors, injectedInspectErrors };
+  } finally {
+    fs.lstatSync = origLstatSync;
+    ws.cleanup();
+  }
+}
+
+function runSkillsGuardrailsEval(spec) {
+  const ws = makeWorkspace("gf-eval-skills-");
+  const isolatedGlobal = path.join(ws.root, "empty-global");
+  fs.mkdirSync(isolatedGlobal, { recursive: true });
+  try {
+    const { projectDir } = ws;
+    fs.writeFileSync(
+      path.join(projectDir, "package.json"),
+      JSON.stringify({ name: "eval-skills-app", scripts: { test: spec.input.testCommand } }, null, 2),
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(projectDir, "brain", "requirements", "constraints.md"),
+      `# Constraints\n\n- ${spec.input.constraintBullet}\n`,
+      "utf8"
+    );
+
+    const advised = suggestProjectSkills({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      globalSkillsDir: isolatedGlobal,
+      goal: spec.input.goal,
+      scaffoldDraft: true,
+    });
+    assert.equal(advised.skillGaps[0].kind, spec.expected.gapKind);
+    assert.equal(advised.scaffoldResult.mode, spec.expected.mode);
+    assert.equal(advised.scaffoldResult.quarantined, spec.expected.quarantined);
+    assert.equal(advised.scaffoldResult.promotable, spec.expected.promotable);
+    assert.equal(advised.scaffoldResult.lintPassed, spec.expected.lintPassed);
+
+    const disc = discoverSkills({ projectDir, globalSkillsDir: isolatedGlobal, proposalsDir: "proposals", includeDrafts: false });
+    assert.equal(disc.activeSkills.length, 0);
+    assert.throws(
+      () =>
+        promoteSkillProposal({
+          projectDir,
+          harnessDir: HARNESS_DIR,
+          skillName: advised.scaffoldResult.skillName,
+          interactiveConfirm: () => true,
+        }),
+      /Proposal metadata missing|Refusing untrusted proposal without provenance/i
+    );
+    return { skillName: advised.scaffoldResult.skillName, quarantined: true, promoteBlocked: true };
+  } finally {
+    ws.cleanup();
+  }
+}
+
 const EVAL_RUNNERS = {
   retrieval: runRetrievalEval,
   context_layout: runLayoutEval,
   context_cache: runCacheEval,
   mcp_guardrails: runMcpGuardrailsEval,
   coding_loop: runCodingLoopEval,
+  lock_safety: runLockSafetyEval,
+  skills_guardrails: runSkillsGuardrailsEval,
 };
 
 async function main() {

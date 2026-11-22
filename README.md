@@ -31,26 +31,40 @@ When you start a fresh AI chat or switch tools, yesterday’s context disappears
 
 ## Quick start
 
-**Prerequisites:** Node.js 20+ and Git installed. Run these three commands from the root of any existing project:
+**Prerequisites:** Node.js 20+ and Git installed. Pick whichever path feels easier:
+
+### Option A — New to CLI? Paste this to your AI coding agent
+
+Copy this into **Cursor, Claude Code, Codex, Gemini CLI, or Antigravity** inside your project folder:
+
+```text
+Set up GeloForge in this repository safely. First run `npx geloforge adopt --dry-run` and explain what files will be added without modifying my existing code. After I confirm, run `npx geloforge adopt`, `npx geloforge mcp init`, `npx geloforge hooks init --dry-run`, and `npx geloforge doctor`. Then run `npx geloforge skills suggest` to recommend matching skills and ask what my first goal is. Do NOT edit my app code or auto-promote skills.
+```
+
+> Want ready-to-paste prompts for daily tasks, tests, and checkpoints? See **[Beginner AI Prompts](./docs/beginner-prompts.md)**.
+
+### Option B — Run the CLI yourself
+
+Run these from the root of any existing project:
 
 ```bash
 # 1. Preview what files will be added (touches nothing)
 npx geloforge adopt --dry-run
 
-# 2. Add GeloForge Second Brain alongside your code (safe on existing repos)
+# 2. Add GeloForge Second Brain alongside your code + check health
 npx geloforge adopt
-
-# 3. Check project health and next recommended step
 npx geloforge status
+npx geloforge doctor
 ```
 
-**Connect your AI editor in one command:**
+**Connect your AI editor and optional ambient hooks:**
 
 ```bash
 npx geloforge mcp init
+npx geloforge hooks init --dry-run
 ```
 
-This configures **Cursor, VS Code, Claude Code, and Gemini CLI** (add `--client antigravity` for Antigravity) to talk to GeloForge's local MCP server. Open your project, approve the folder's MCP prompt, and your agents can read tasks, context, and evidence automatically.
+This configures **Cursor, VS Code, Claude Code, and Gemini CLI** (add `--client antigravity` for Antigravity) and previews opt-in Git/agent hooks. Open your project, approve the folder's MCP prompt, and your agents can read tasks, context, and evidence automatically.
 
 > Starting a brand-new project instead? See [Creating a new project](./docs/new-projects.md) or try the [5-minute quickstart](./docs/quickstart-5min.md).
 
@@ -87,7 +101,8 @@ If a check fails or times out, GeloForge marks the evidence as `draft` (never `v
 - **Pause and resume without losing context** — Save lightweight checkpoints (`checkpoint create`) or structured handoffs (`handoff`) carrying exact evidence IDs and next actions.
 - **Pin MCP tool definitions** — Lock configured stdio MCP servers to `.geloforge/mcp-lock.json` and run `npx geloforge mcp lock --check` to catch added, removed, or silently altered tool schemas.
 - **Run bounded coding loops** — Use `npx geloforge loop run --config <file>` for a capped `implement → verify → review → fix` cycle where failing tests always block completion.
-- **Turn winning fixes into reusable skills** — Draft portable `.agents/skills/*/SKILL.md` playbooks from verified evidence and promote updates only after strict linting and cryptographic Ed25519 approval.
+- **Analyze & suggest skills** — Run `npx geloforge skills suggest` (or `--scaffold-draft`) to match existing skills and stage quarantined drafts for owner review and Ed25519 approval.
+- **Check setup health in one command** — Run `npx geloforge doctor` for pass/warn/fail diagnostics with exact fixes, or `npx geloforge hooks init` to add lightweight Git, Claude Code, or Gemini CLI checks.
 - **Isolate parallel work cleanly** — Manage clean-checked Git worktrees under `worktrees/` with `npx geloforge worktree add`.
 
 ---
@@ -108,6 +123,7 @@ Everything GeloForge adds lives in clear, human-readable folders — never touch
 
 ## Documentation
 
+- [Beginner AI prompts](./docs/beginner-prompts.md) — ready-to-paste prompts to let your AI agent set up and run GeloForge
 - [5-minute quickstart](./docs/quickstart-5min.md) — fastest hands-on walkthrough for beginners
 - [CLI and MCP guide](./docs/advanced-usage.md) — full command reference, MCP init/lock, worktrees, and coding loops
 - [Portable Agent Skills](./docs/portable-skills.md) — progressive disclosure, linting, and Ed25519 skill promotion

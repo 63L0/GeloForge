@@ -87,6 +87,73 @@
         "expectedRoundsUsed": 1,
         "expectedAttempts": 2
       }
+    },
+    {
+      "id": "eval-006-bm25-markdown-heading-ranking",
+      "category": "retrieval",
+      "title": "Contextual BM25 indexes Markdown headings so long architecture overview outranks shorter research drafts",
+      "input": {
+        "mode": "markdown_heading",
+        "query": "How does a Messenger inquiry reach quotation handoff?",
+        "profile": "deep",
+        "overviewHeading": "### How does a Messenger inquiry reach quotation handoff?",
+        "fillerCount": 180,
+        "researchDocs": [
+          {
+            "relPath": "brain/research/RES-0001-messenger-photo.md",
+            "id": "RES-0001",
+            "title": "Messenger inquiry photo architecture",
+            "body": "Short note on messenger inquiry handling and handoff."
+          },
+          {
+            "relPath": "brain/research/RES-0002-quotation-notes.md",
+            "id": "RES-0002",
+            "title": "Quotation handoff notes",
+            "body": "Short note on quotation handoff steps."
+          }
+        ]
+      },
+      "expected": {
+        "mustInclude": "brain/architecture/overview.md",
+        "mustOutrankList": [
+          "brain/research/RES-0001-messenger-photo.md",
+          "brain/research/RES-0002-quotation-notes.md"
+        ]
+      }
+    },
+    {
+      "id": "eval-007-project-lock-transient-fs-retry",
+      "category": "lock_safety",
+      "title": "withProjectLock retries transient Windows EPERM and EBUSY lstat errors on .state.lock instead of aborting",
+      "input": {
+        "pathTransientCode": "EPERM",
+        "inspectTransientCodes": ["EPERM", "EBUSY"],
+        "lockTimeoutMs": 2000,
+        "staleLockMs": 50,
+        "retryDelayMs": 10
+      },
+      "expected": {
+        "result": "recovered-after-transient-fs",
+        "injectedPathErrors": 1,
+        "injectedInspectErrors": 2
+      }
+    },
+    {
+      "id": "eval-008-skills-advisor-quarantine-gate",
+      "category": "skills_guardrails",
+      "title": "Skills advisor stages quarantined goal/repo drafts that pass strict lint while promote fails closed without EVID-*",
+      "input": {
+        "goal": "Verify database migration safety",
+        "testCommand": "node --test",
+        "constraintBullet": "Validate database migrations inside transactions before release."
+      },
+      "expected": {
+        "gapKind": "goal_workflow",
+        "mode": "repo_scaffold_quarantined",
+        "quarantined": true,
+        "promotable": false,
+        "lintPassed": true
+      }
     }
   ]
 }
