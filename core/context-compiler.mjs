@@ -33,6 +33,35 @@ const DEFAULT_HARNESS_DIR = path.resolve(__dirname, "..");
 
 export { TOKEN_ESTIMATE_METHOD, estimateTokens };
 
+function extractMarkdownHeadings(text, maxHeadings = 24) {
+  if (typeof text !== "string" || text.length === 0) {
+    return [];
+  }
+  const lines = text.split(/\r?\n/);
+  let idx = 0;
+  if (lines[0] && lines[0].trim() === "---") {
+    const closingIdx = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
+    if (closingIdx !== -1) {
+      idx = closingIdx + 1;
+    }
+  }
+  const headings = [];
+  let inFence = false;
+  for (; idx < lines.length && headings.length < maxHeadings; idx += 1) {
+    const trimmed = lines[idx].trim();
+    if (/^(?:`{3,}|~{3,})/.test(trimmed)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const match = /^#{1,4}\s+(.+?)\s*#*\s*$/.exec(trimmed);
+    if (match && match[1]) {
+      headings.push(match[1]);
+    }
+  }
+  return headings;
+}
+
 export const PROFILE_BUDGETS = {
   quick: 4000,
   working: 8000,
@@ -632,11 +661,16 @@ export function compileContext(options = {}) {
       });
       return;
     }
+    const mdHeadings =
+      typeof candidate.path === "string" && candidate.path.toLowerCase().endsWith(".md")
+        ? extractMarkdownHeadings(candidate.text)
+        : [];
     const headerText = [
       candidate.path,
       candidate.authority_level || "",
       candidate.memory_layer || "",
       candidate.title || "",
+      ...mdHeadings,
       ...(candidate.tags || []),
     ].join(" ");
     const titleTerms = tokenizeTerms(headerText);

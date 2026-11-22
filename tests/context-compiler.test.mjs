@@ -766,3 +766,116 @@ test("Contextual BM25 ranks concise rare-term constraints above verbose common-t
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
   }
 });
+
+test("compileContext Contextual BM25 indexes Markdown headings so long architecture overview beats shorter research drafts", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gf-ctx-md-headings-"));
+  try {
+    const projectDir = path.join(tmp, "heading-bm25");
+    bootstrapProject({ name: "Heading BM25 App", dest: projectDir, git: false });
+    fs.mkdirSync(path.join(projectDir, "brain", "research"), { recursive: true });
+
+    const filler = Array.from({ length: 180 }, (_, idx) => `topology worker dispatch pipeline note ${idx + 1}`).join(" ");
+    fs.writeFileSync(
+      path.join(projectDir, "brain", "architecture", "overview.md"),
+      [
+        "# Architecture Overview — Heading BM25 App",
+        "",
+        "## 1. High-Level Topology",
+        "",
+        "### How does a Messenger inquiry reach quotation handoff?",
+        "",
+        "1. Ingress validates the webhook and queues the event.",
+        "",
+        "```bash",
+        "# ignored_fence_heading_token",
+        "```",
+        "",
+        filler,
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+
+    const writeResearch = (relName, id, title, tags, body) => {
+      fs.writeFileSync(
+        path.join(projectDir, "brain", "research", relName),
+        [
+          "---",
+          'schema_version: "1.1"',
+          `id: "${id}"`,
+          `title: "${title}"`,
+          'status: "draft"',
+          'memory_layer: "L3_RESEARCH_EVIDENCE"',
+          'authority_level: "A5"',
+          'author_role: "researcher"',
+          'created_at: "2026-10-01T00:00:00Z"',
+          'updated_at: "2026-10-01T00:00:00Z"',
+          'valid_until: "2027-10-01"',
+          `question: "${title}"`,
+          'confidence: "low"',
+          "sources: []",
+          "related_tasks: []",
+          "related_adrs: []",
+          "contradicts: []",
+          `tags: ${JSON.stringify(tags)}`,
+          "---",
+          "",
+          body,
+          "",
+        ].join("\n"),
+        "utf8"
+      );
+    };
+
+    writeResearch(
+      "RES-0001-messenger-photo.md",
+      "RES-0001",
+      "Messenger inquiry photo architecture",
+      ["messenger", "inquiry"],
+      "Short note on messenger inquiry handling and handoff."
+    );
+    writeResearch(
+      "RES-0002-quotation-notes.md",
+      "RES-0002",
+      "Quotation handoff notes",
+      ["quotation", "handoff"],
+      "Short note on quotation handoff steps."
+    );
+
+    const deepPacket = compileContext({
+      projectDir,
+      query: "How does a Messenger inquiry reach quotation handoff?",
+      profile: "deep",
+    });
+    const deepPaths = deepPacket.manifest.included_documents.map((d) => d.path);
+    const overviewIdx = deepPaths.indexOf("brain/architecture/overview.md");
+    const res1Idx = deepPaths.indexOf("brain/research/RES-0001-messenger-photo.md");
+    const res2Idx = deepPaths.indexOf("brain/research/RES-0002-quotation-notes.md");
+    assert.ok(overviewIdx !== -1, "Expected brain/architecture/overview.md to be included");
+    if (res1Idx !== -1) assert.ok(overviewIdx < res1Idx, "Expected architecture overview to rank before RES-0001");
+    if (res2Idx !== -1) assert.ok(overviewIdx < res2Idx, "Expected architecture overview to rank before RES-0002");
+
+    writeResearch(
+      "RES-0003-fence-check.md",
+      "RES-0003",
+      "Title with ignored_fence_heading_token",
+      ["ignored_fence_heading_token"],
+      "Short draft whose YAML title explicitly targets ignored_fence_heading_token."
+    );
+    const fencePacket = compileContext({
+      projectDir,
+      query: "ignored_fence_heading_token",
+      profile: "deep",
+    });
+    const fencePaths = fencePacket.manifest.included_documents.map((d) => d.path);
+    const fenceOverviewIdx = fencePaths.indexOf("brain/architecture/overview.md");
+    const res3Idx = fencePaths.indexOf("brain/research/RES-0003-fence-check.md");
+    assert.ok(res3Idx !== -1 && fenceOverviewIdx !== -1);
+    assert.ok(
+      res3Idx < fenceOverviewIdx,
+      "Expected real title match RES-0003 to rank above fenced # code comment in overview.md"
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
