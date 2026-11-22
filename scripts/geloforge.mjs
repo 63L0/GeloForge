@@ -37,6 +37,8 @@ import { createCheckpoint, getCheckpoint, listCheckpoints } from "../core/checkp
 import { startMcpStdioServer } from "../core/mcp-server.mjs";
 import { initMcpClients } from "../core/mcp-init.mjs";
 import { checkMcpLock, lockMcpServers } from "../core/mcp-lock.mjs";
+import { runProjectDoctor } from "../core/doctor.mjs";
+import { HOOK_TARGETS, initProjectHooks } from "../core/hooks-init.mjs";
 import { getCodingLoopStatus, runCodingLoop } from "../core/coding-loop.mjs";
 import {
   discoverSkills,
@@ -89,6 +91,8 @@ Commands:
   proposal   Review, sign, or promote a canonical-document proposal
   worktree   Add, list, or remove isolated local Git worktrees
   status     Inspect project health, operational task state, leases, and Git status
+  doctor     Run one-command diagnostics across setup, compatibility, MCP locks, skills, and hooks
+  hooks      Install or preview opt-in Git pre-commit, Claude Code, and Gemini CLI hooks (hooks init)
   mcp        Start stdio MCP server, configure clients (mcp init), or pin tools (mcp lock)
 
 Global Options:
@@ -99,6 +103,38 @@ Global Options:
 
 function printSubHelp(cmd) {
   switch (cmd) {
+    case "doctor":
+      console.log(`Usage: geloforge doctor [options]
+
+Checks Node.js runtime, Second Brain validation, harness compatibility, Git status,
+cooperative task leases, skill lint health, MCP tool lockfiles, and ambient hooks.
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  --global-dir <path>     Override global skills directory (default: GELOFORGE_SKILLS_DIR or ~/.geloforge/skills)
+  --include-drafts        Include quarantined drafts when running skills lint
+  --skip-mcp-check        Skip probing stdio MCP servers when .geloforge/mcp-lock.json exists
+  --timeout-ms <ms>       MCP probe timeout in ms (500-30000)
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+`);
+      break;
+    case "hooks":
+      console.log(`Usage: geloforge hooks init [options]
+
+Installs or previews lightweight, opt-in local checks without background daemons:
+  git      .git/hooks/pre-commit (runs geloforge validate + mcp lock --check if locked)
+  claude   .claude/settings.json hooks.Stop (advisory doctor reminder)
+  gemini   .gemini/settings.json hooks.AfterAgent (preserves existing mcpServers)
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  --target <list>         Targets: git, claude, gemini (comma-separated or repeatable; default: all)
+  --dry-run               Preview file changes without writing disk
+  --json                  Emit structured JSON output
+  -h, --help              Show help
+`);
+      break;
     case "autonomous":
       console.log(`Usage: geloforge autonomous <status|on|off|audit|authorize|watch|progress|learn> [options]
 
@@ -2697,6 +2733,106 @@ async function handleSkills(args) {
   return report.passed ? 0 : 1;
 }
 
+async function handleDoctor(args) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      project: { type: "string", short: "p" },
+      "global-dir": { type: "string" },
+      "include-drafts": { type: "boolean", default: false },
+      "skip-mcp-check": { type: "boolean", default: false },
+      "timeout-ms": { type: "string" },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (values.help) {
+    printSubHelp("doctor");
+    return 0;
+  }
+  const timeoutMs = values["timeout-ms"] !== undefined ? parseCheckTimeout(values["timeout-ms"]) : undefined;
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const res = await runProjectDoctor({
+    projectDir,
+    harnessDir: HARNESS_DIR,
+    globalSkillsDir: values["global-dir"],
+    includeDrafts: values["include-drafts"],
+    checkMcp: !values["skip-mcp-check"],
+    timeoutMs,
+  });
+  if (values.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return res.healthy ? 0 : 1;
+  }
+  console.log(`GeloForge Doctor : ${res.projectDir} (${res.projectId || "project"}) | harness v${res.harnessVersion}`);
+  console.log(`Health Status    : ${res.healthy ? "HEALTHY" : "ISSUES FOUND"} (pass=${res.counts.pass} | warn=${res.counts.warn} | fail=${res.counts.fail})`);
+  console.log("");
+  for (const chk of res.checks) {
+    const tag = chk.status === "pass" ? "[PASS]" : chk.status === "warn" ? "[WARN]" : "[FAIL]";
+    console.log(`  ${tag} ${chk.id}: ${chk.summary}`);
+    for (const d of chk.details || []) {
+      console.log(`      - ${d}`);
+    }
+    if (chk.fix) {
+      console.log(`      Fix: ${chk.fix}`);
+    }
+  }
+  if (res.nextActions.length > 0) {
+    console.log("");
+    console.log("Recommended Next Actions:");
+    for (const cmd of res.nextActions) {
+      console.log(`  - ${cmd}`);
+    }
+  }
+  return res.healthy ? 0 : 1;
+}
+
+function handleHooks(args) {
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+    printSubHelp("hooks");
+    return 0;
+  }
+  const [subcmd, ...rest] = args;
+  if (subcmd !== "init") {
+    throw new Error(`Unknown hooks subcommand "${subcmd}". Expected: init.`);
+  }
+  const { values } = parseArgs({
+    args: rest,
+    options: {
+      project: { type: "string", short: "p" },
+      target: { type: "string", multiple: true },
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (values.help) {
+    printSubHelp("hooks");
+    return 0;
+  }
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const res = initProjectHooks({
+    projectDir,
+    harnessDir: HARNESS_DIR,
+    targets: values.target?.length ? values.target : HOOK_TARGETS,
+    dryRun: values["dry-run"],
+  });
+  if (values.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return 0;
+  }
+  console.log(res.dryRun ? `Hooks setup preview for ${res.projectDir}` : `Hooks setup for ${res.projectDir}`);
+  for (const file of res.files) {
+    const extra = file.reason ? ` (${file.reason})` : "";
+    console.log(`  ${file.target.padEnd(7)} ${file.action.padEnd(10)} ${file.path}${extra}`);
+  }
+  return 0;
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === "-h" || argv[0] === "--help") {
@@ -2744,6 +2880,12 @@ async function main() {
         break;
       case "recommend":
         code = handleRecommend(rest);
+        break;
+      case "doctor":
+        code = await handleDoctor(rest);
+        break;
+      case "hooks":
+        code = handleHooks(rest);
         break;
       case "autonomous":
         code = await handleAutonomous(rest);
