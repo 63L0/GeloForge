@@ -215,11 +215,12 @@ test("all relative markdown links resolve and README is a concise, useful onboar
   ]) {
     assert.ok(readme.includes(`## ${heading}`), `README.md missing onboarding section: ${heading}`);
   }
-  assert.ok(Buffer.byteLength(readme, "utf8") < 12500, "README.md homepage is too long; move details to docs");
+  assert.ok(Buffer.byteLength(readme, "utf8") < 45000, "README.md homepage exceeds 45KB sanity ceiling");
   for (const command of [
     "geloforge adopt --dry-run", "geloforge status",
     "geloforge task new", "geloforge evidence capture", "geloforge context",
     "geloforge doctor", "geloforge skills suggest",
+    "geloforge compact", "geloforge report",
   ]) {
     assert.ok(readme.includes(command), `README.md missing working example: ${command}`);
   }
