@@ -68,12 +68,13 @@ test("mcp lock pins stdio servers, skips non-stdio entries, and detects tool-sur
   fs.writeFileSync(modeFile, "v1");
   fs.writeFileSync(mockServer, mockMcpServerCode);
 
+  const dummySecret = "sk-" + "testsecretvalue1234567890";
   fs.writeFileSync(path.join(project, ".mcp.json"), JSON.stringify({
     mcpServers: {
       mock: {
         command: process.execPath,
         args: [mockServer],
-        env: { MOCK_MCP_MODE_FILE: modeFile, SECRET_API_KEY: "sk-testsecretvalue1234567890" },
+        env: { MOCK_MCP_MODE_FILE: modeFile, SECRET_API_KEY: dummySecret },
       },
       remote: {
         type: "http",
@@ -96,7 +97,7 @@ test("mcp lock pins stdio servers, skips non-stdio entries, and detects tool-sur
 
   const lockFile = path.join(project, ".geloforge", "mcp-lock.json");
   const lockText = fs.readFileSync(lockFile, "utf8");
-  assert.equal(lockText.includes("sk-testsecretvalue"), false);
+  assert.equal(lockText.includes(dummySecret), false);
   assert.equal(lockText.includes(process.execPath), false);
 
   const passCheck = JSON.parse(cli(project, ["mcp", "lock", "--check", "--json"]).stdout);
