@@ -130,10 +130,11 @@ function buildImplementPrompt({ stage, round, task, contextMarkdown, feedback })
 function buildReviewPrompt({ round, task, evidence, diffText }) {
   const checkSummary = evidence.record?.checks?.[0]?.summary ?? "";
   return [
-    "Perform an independent read-only code review against the task contract and acceptance criteria.",
+    "Perform an independent read-only code review against the task contract, scope boundaries, and acceptance criteria.",
+    "Verify scope_out, secret/PII safety, and acceptance criteria in policy_checks before setting verdict to approve.",
     "Do not modify files, run external network calls, or override deterministic test results.",
     "Return ONLY valid JSON with format:",
-    '{ "verdict": "approve" | "request_changes", "summary": "...", "findings": [{ "severity": "blocking" | "minor", "file": "...", "message": "..." }] }',
+    '{ "verdict": "approve" | "request_changes", "summary": "...", "policy_checks": [{ "rule": "...", "passed": true | false }], "findings": [{ "severity": "blocking" | "minor", "file": "...", "message": "..." }] }',
     JSON.stringify({
       taskId: task.id,
       round,
@@ -162,6 +163,25 @@ function validateReviewResponse(output) {
   if (typeof output.summary !== "string" || !output.summary.trim()) {
     throw new Error("Reviewer response requires a non-empty summary.");
   }
+  let policyChecks = [];
+  if (output.policy_checks !== undefined) {
+    if (!Array.isArray(output.policy_checks) || output.policy_checks.length > 20) {
+      throw new Error("Reviewer policy_checks must be an array of at most 20 entries.");
+    }
+    policyChecks = output.policy_checks.map((item) => {
+      if (!item || typeof item !== "object" || typeof item.rule !== "string" || !item.rule.trim() ||
+          typeof item.passed !== "boolean") {
+        throw new Error("Each reviewer policy check requires non-empty rule and boolean passed.");
+      }
+      return {
+        rule: redactSecretContent(item.rule.trim()).slice(0, 300),
+        passed: item.passed,
+      };
+    });
+  }
+  if (output.verdict === "approve" && policyChecks.some((item) => !item.passed)) {
+    throw new Error('Reviewer cannot return verdict "approve" with a failed policy check.');
+  }
   if (!Array.isArray(output.findings) || output.findings.length > 50) {
     throw new Error("Reviewer findings must be an array of at most 50 entries.");
   }
@@ -182,6 +202,7 @@ function validateReviewResponse(output) {
   return {
     verdict: output.verdict,
     summary: redactSecretContent(output.summary.trim()).slice(0, 600),
+    policy_checks: policyChecks,
     findings,
   };
 }
@@ -238,6 +259,7 @@ export async function runCodingLoop({
     harnessDir,
     taskId: initialTask.id,
     profile: "working",
+    includeMap: true,
     includeSkills: true,
     globalSkillsDir: null,
   });
@@ -321,6 +343,8 @@ export async function runCodingLoop({
       harnessDir,
       taskId: task.id,
       profile: "working",
+      includeMap: true,
+      fromDiff: stage === "fix",
       includeSkills: true,
       globalSkillsDir: null,
     });
