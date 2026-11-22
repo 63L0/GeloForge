@@ -113,6 +113,10 @@ export const MCP_TOOLS = [
         excludeUnverified: { type: "boolean" },
       },
     },
+    input_examples: [
+      { task: "TASK-0001", profile: "working", map: true, skills: true },
+      { query: "authentication flow", profile: "quick", fromDiff: true },
+    ],
   },
   {
     name: "geloforge_task",
@@ -153,6 +157,10 @@ export const MCP_TOOLS = [
         dryRun: { type: "boolean" },
       },
     },
+    input_examples: [
+      { action: "list" },
+      { action: "claim", task: "TASK-0001", tool: "cursor", sessionId: "sess-1", scopes: ["src/"] },
+    ],
   },
   {
     name: "geloforge_checkpoint",
@@ -180,6 +188,10 @@ export const MCP_TOOLS = [
         dryRun: { type: "boolean" },
       },
     },
+    input_examples: [
+      { action: "list" },
+      { action: "create", summary: "Verification checks passed", evidenceRef: "EVID-0001" },
+    ],
   },
   {
     name: "geloforge_skills",
@@ -217,6 +229,10 @@ export const MCP_TOOLS = [
         dryRun: { type: "boolean" },
       },
     },
+    input_examples: [
+      { action: "list", includeDrafts: false },
+      { action: "lint", strict: true },
+    ],
   },
 ];
 
@@ -509,6 +525,27 @@ function invokeSkillsTool(args, ctx) {
   throw new Error(`Unsupported skills action "${action}".`);
 }
 
+function formatToolErrorWithHint(toolName, toolArgs, err, ctx) {
+  const base = redactSecretContent(err?.message || "Tool execution failed");
+  const tool = MCP_TOOLS.find((t) => t.name === toolName);
+  const hints = [];
+  if (ctx.readOnly && /read-only/i.test(base) && tool?.annotations?.readOnlyActions?.length) {
+    hints.push(`Read-only actions allowed: ${tool.annotations.readOnlyActions.join(", ")}.`);
+  } else if (tool?.inputSchema?.properties?.action?.enum) {
+    const validActions = tool.inputSchema.properties.action.enum;
+    const passedAction = String(toolArgs?.action ?? "").trim().toLowerCase();
+    if (!passedAction || !validActions.includes(passedAction) || /^(Unknown|Unsupported|Missing).*action/i.test(base)) {
+      hints.push(`Valid actions: ${validActions.join(", ")}.`);
+    }
+  } else if (toolName === "geloforge_context" && !toolArgs?.task && !toolArgs?.query && !toolArgs?.fromDiff) {
+    hints.push('Pass at least one target: "task" ("TASK-NNNN"), "query" ("..."), or "fromDiff": true.');
+  }
+  if (hints.length > 0 && Array.isArray(tool?.input_examples) && tool.input_examples.length > 0 && !(ctx.readOnly && /read-only/i.test(base))) {
+    hints.push(`Example: ${JSON.stringify(tool.input_examples[0])}`);
+  }
+  return redactSecretContent(hints.length > 0 ? `${base}\nHint: ${hints.join(" ")}` : base);
+}
+
 function executeToolCall(name, args, ctx) {
   switch (name) {
     case "geloforge_status": {
@@ -662,7 +699,7 @@ export function handleMcpMessage(
           jsonrpc: "2.0",
           id: msg.id,
           result: {
-            content: [{ type: "text", text: redactSecretContent(err.message || "Tool execution failed") }],
+            content: [{ type: "text", text: formatToolErrorWithHint(toolName, toolArgs, err, ctx) }],
             isError: true,
           },
         };

@@ -1079,6 +1079,35 @@ test("MCP stdio enforces framing size bounds, malformed frame recovery, root con
     );
     assert.equal(roMutate.result.isError, true);
     assert.match(roMutate.result.content[0].text, /--read-only/i);
+    assert.match(roMutate.result.content[0].text, /Hint: Read-only actions allowed: list, show, leases\./);
+
+    for (const toolName of ["geloforge_context", "geloforge_task", "geloforge_checkpoint", "geloforge_skills"]) {
+      const def = MCP_TOOLS.find((t) => t.name === toolName);
+      assert.ok(Array.isArray(def?.input_examples) && def.input_examples.length >= 1, `${toolName} should expose input_examples`);
+    }
+    const invalidTaskAction = handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: { name: "geloforge_task", arguments: { action: "bogus" } },
+      },
+      { defaultProjectDir: projectA }
+    );
+    assert.equal(invalidTaskAction.result.isError, true);
+    assert.match(invalidTaskAction.result.content[0].text, /Hint: Valid actions: .* Example:/);
+
+    const missingContextTarget = handleMcpMessage(
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "geloforge_context", arguments: {} },
+      },
+      { defaultProjectDir: projectA }
+    );
+    assert.equal(missingContextTarget.result.isError, true);
+    assert.match(missingContextTarget.result.content[0].text, /Hint: Pass at least one target:/);
 
     // Stdio framing bounds & recovery test: oversized Content-Length + negative Content-Length + multi-header valid ping
     const inLsp = new PassThrough();

@@ -295,16 +295,28 @@ test("compileContext produces deterministic task packet, valid CPACK manifest, a
       )
     );
 
-    // Stale research must be flagged and quarantined in non-authoritative section
+    // Stale research must be flagged and quarantined in non-authoritative section,
+    // and the 3-zone layout keeps policies + authoritative knowledge at the top and operational recency at the bottom.
     assert.deepEqual(r1.manifest.unresolved_conflicts, ["CONF-0001"]);
     assert.ok(r1.manifest.freshness_warnings.some((w) => /RES-0001/.test(w)));
+    const policySecIdx = r1.markdown.indexOf("## Mandatory Governance & Safety Policies (A0)");
     const authSecIdx = r1.markdown.indexOf("## Authoritative Project Knowledge (A1-A2)");
     const nonAuthSecIdx = r1.markdown.indexOf(
       "## Non-Authoritative / Unverified Context (A5-A6 & Drafts — Do Not Treat as Approved Project Truth)"
     );
     const resIdx = r1.markdown.indexOf('<<<GELOFORGE_DOC path="brain/research/RES-0001-jwt-stale.md"');
     const traceIdx = r1.markdown.indexOf("## Context Selection Trace");
-    assert.ok(authSecIdx !== -1 && nonAuthSecIdx > authSecIdx && resIdx > nonAuthSecIdx && resIdx < traceIdx);
+    const confSecIdx = r1.markdown.indexOf("## Unresolved Conflicts (Action Required)");
+    const opSecIdx = r1.markdown.indexOf("## Operational State, Tasks & Verified Evidence (A3-A4)");
+    assert.ok(
+      policySecIdx !== -1 &&
+        authSecIdx > policySecIdx &&
+        nonAuthSecIdx > authSecIdx &&
+        resIdx > nonAuthSecIdx &&
+        resIdx < traceIdx &&
+        confSecIdx > traceIdx &&
+        opSecIdx > confSecIdx
+    );
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
   }

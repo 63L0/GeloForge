@@ -250,6 +250,7 @@ async function probeStdioServer(server, projectDir, timeoutMs) {
           inputSchema: tool.inputSchema ?? null,
           ...(tool.outputSchema !== undefined ? { outputSchema: tool.outputSchema } : {}),
           ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
+          ...(tool.input_examples !== undefined ? { input_examples: tool.input_examples } : {}),
         };
       })
       .sort((a, b) => compareCodepoints(a.name, b.name));
