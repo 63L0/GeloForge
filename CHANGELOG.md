@@ -2,6 +2,10 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.10.1] — 2026-11-22
+
+- Expand `README.md` into a complete, self-contained beginner-friendly and power-user reference for both GitHub and npmjs.com, adding a copy-paste Beginner AI Prompts table, full 11-pillar feature guide with working examples, all 5 Starter Skill Templates table, full 5-client & 6-tool MCP reference tables, complete 19-command CLI quick reference table, and Second Brain architecture overview (`L1`–`L4` memory layers, `A0`–`A6` authority tiers, 12 JSON Schemas, and 5 agent roles).
+
 ## [0.10.0] — 2026-11-22
 
 - Add 1-command long-session compaction (`geloforge compact` / `geloforge checkpoint compact` + MCP `geloforge_checkpoint` `compact` and `resume` actions) in `core/checkpoint.mjs`, saving `CHKPT-NNNN`, compiling a slim diff-focused resume packet, and generating a fresh-chat resume prompt.
