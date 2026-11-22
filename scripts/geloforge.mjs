@@ -42,6 +42,7 @@ import {
   discoverSkills,
   resolveProjectForSkills,
 } from "../core/skills.mjs";
+import { suggestProjectSkills } from "../core/skills-advisor.mjs";
 import { STATIC_LINT_DISCLAIMER, lintDiscoveredSkills, lintSkill } from "../core/skills-lint.mjs";
 import {
   draftSkillFromExperience,
@@ -419,11 +420,12 @@ Safety & Accuracy Notes:
     case "skills":
       console.log(`Usage: geloforge skills <subcommand> [options]
 
-Discovery & Static Checks:
+Discovery, Static Checks & Advisor:
   list            List discovered portable skills across project (.agents/skills) and global dirs
   show            Inspect one skill's metadata, supporting resources, and instructions
   validate        Validate SKILL.md frontmatter, path/symlink/secret safety, and local links
   lint            Run static security and quality lint checks across discovered skills
+  suggest         Analyze project signals & goal to rank existing skills, detect gaps, or scaffold drafts
 
 Adaptive Skills Lifecycle (Evidence-Backed & Human-Authorized):
   draft           Draft a quarantined skill in proposals/skills/ from verified EVID/HANDOFF records
@@ -433,6 +435,14 @@ Adaptive Skills Lifecycle (Evidence-Backed & Human-Authorized):
   promote         Promote a validated quarantined proposal after genuine authorization
   history         Inspect append-only revision ledger and snapshot integrity for a skill
   rollback        Restore an authorized verified snapshot revision (never bypasses approval)
+
+Advisor Options ('suggest'):
+  --goal <text>           Target goal description to rank existing skills and detect gaps
+  --query <text>          Alias for --goal
+  --task <TASK-NNNN>      Analyze a specific task's scope and acceptance criteria
+  --limit <1..20>         Max existing skills to recommend (default: 5)
+  --scaffold-draft        Stage a quarantined SKILL.md draft under proposals/skills/ (never active)
+  --name <skill-slug>     Custom skill slug when used with --scaffold-draft
 
 Authorization Options for 'promote' & 'rollback':
   --approval <APPR-NNNN>  Verify cryptographic Ed25519 signature (recommended)
@@ -2348,6 +2358,128 @@ async function handleSkillsLifecycle(subcmd, rest) {
   throw new Error(`Unknown skills subcommand "${subcmd}".`);
 }
 
+async function handleSkillsSuggest(rest) {
+  const parsed = parseArgs({
+    args: rest,
+    options: {
+      project: { type: "string", short: "p" },
+      task: { type: "string" },
+      goal: { type: "string" },
+      query: { type: "string" },
+      "global-dir": { type: "string" },
+      "include-drafts": { type: "boolean", default: false },
+      limit: { type: "string" },
+      "scaffold-draft": { type: "boolean", default: false },
+      name: { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      "created-at": { type: "string" },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (parsed.values.help) {
+    printSubHelp("skills");
+    return 0;
+  }
+  let limit;
+  if (parsed.values.limit !== undefined) {
+    if (!/^\d+$/.test(parsed.values.limit.trim())) {
+      throw new Error("--limit must be a positive integer (1..20).");
+    }
+    limit = Number(parsed.values.limit.trim());
+  }
+  const scaffoldDraft = Boolean(parsed.values["scaffold-draft"]);
+  if (parsed.values.name && !scaffoldDraft) {
+    throw new Error("--name is only supported with '--scaffold-draft' on 'geloforge skills suggest'.");
+  }
+  if (parsed.values["dry-run"] && !scaffoldDraft) {
+    throw new Error("--dry-run is only supported with '--scaffold-draft' on 'geloforge skills suggest'.");
+  }
+
+  const loc = resolveProjectForSkills({
+    project: parsed.values.project,
+    harnessDir: HARNESS_DIR,
+  });
+  if (!loc.projectDir) {
+    throw new Error("'geloforge skills suggest' requires a GeloForge project directory (--project <path> or inside a project).");
+  }
+
+  const res = suggestProjectSkills({
+    projectDir: loc.projectDir,
+    harnessDir: HARNESS_DIR,
+    globalSkillsDir: parsed.values["global-dir"],
+    taskId: parsed.values.task || null,
+    goal: parsed.values.goal || null,
+    query: parsed.values.query || null,
+    includeDrafts: Boolean(parsed.values["include-drafts"]),
+    limit,
+    scaffoldDraft,
+    skillName: parsed.values.name || null,
+    dryRun: Boolean(parsed.values["dry-run"]),
+    createdAt: parsed.values["created-at"],
+  });
+
+  if (parsed.values.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return 0;
+  }
+
+  console.log(`Skills Advisor : ${res.projectDir} (${res.projectId || "project"})`);
+  if (res.goal) console.log(`Goal           : ${res.goal}`);
+  if (res.taskId) console.log(`Task           : ${res.taskId}`);
+  console.log(`Detected Stack : ${res.detectedSignals.stacks.join(", ") || "(none)"}`);
+  console.log(
+    `Repo Commands  : ${res.detectedSignals.commands.map((c) => c.command).join(" | ") || "(none detected)"}`
+  );
+  console.log(
+    `Skill Pool     : ${res.activeSkillCount} active | ${res.quarantinedDraftCount} quarantined draft(s) | ${res.detectedSignals.verifiedEvidenceIds.length} verified EVID-*`
+  );
+  console.log("");
+  console.log("Recommended Existing Skills:");
+  if (res.recommendedSkills.length === 0) {
+    console.log("  (no matching active skills discovered for this project/goal)");
+  } else {
+    for (const item of res.recommendedSkills) {
+      console.log(`  - ${item.name} [${item.source}, score=${item.score}] — ${item.reasons.join("; ")}`);
+      console.log(`      Use: ${item.command}`);
+    }
+  }
+  console.log("");
+  console.log("Detected Skill Gaps:");
+  if (res.skillGaps.length === 0) {
+    console.log("  (none detected)");
+  } else {
+    for (const gap of res.skillGaps) {
+      const draftTag = gap.existingQuarantinedDraft ? " [quarantined draft exists]" : "";
+      const promoTag = gap.promotableAfterReview
+        ? "evidence-backed (promotable after review)"
+        : "repo/goal scaffold (needs EVID-* before promotion)";
+      console.log(`  - [${gap.kind}] ${gap.suggestedName}${draftTag} — ${promoTag}`);
+      console.log(`      Reason : ${gap.reason}`);
+      console.log(`      Action : ${gap.recommendedCommand}`);
+    }
+  }
+  if (res.scaffoldResult) {
+    const sr = res.scaffoldResult;
+    console.log("");
+    console.log(
+      sr.dryRun
+        ? `DRY RUN — Quarantined scaffold "${sr.skillName}" (${sr.mode}) not written.`
+        : `Quarantined draft created (${sr.mode}): ${sr.proposalDir}/SKILL.md`
+    );
+    console.log(`Candidate SHA  : ${sr.candidateDigest}`);
+    console.log(
+      `Promotable Now : ${sr.promotable ? "yes (after human approval/signature)" : "no (capture verified EVID-* first)"}`
+    );
+    for (const step of sr.nextSteps || []) {
+      console.log(`  - Next: ${step}`);
+    }
+  }
+  return 0;
+}
+
 async function handleSkills(args) {
   if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
     printSubHelp("skills");
@@ -2357,9 +2489,12 @@ async function handleSkills(args) {
   if (["draft", "propose-update", "keygen", "sign", "promote", "history", "rollback"].includes(subcmd)) {
     return handleSkillsLifecycle(subcmd, rest);
   }
+  if (subcmd === "suggest") {
+    return handleSkillsSuggest(rest);
+  }
   if (!["list", "show", "validate", "lint"].includes(subcmd)) {
     throw new Error(
-      `Unknown skills subcommand "${subcmd}". Expected: list, show, validate, lint, draft, propose-update, keygen, sign, promote, history, or rollback.`
+      `Unknown skills subcommand "${subcmd}". Expected: list, show, validate, lint, suggest, draft, propose-update, keygen, sign, promote, history, or rollback.`
     );
   }
 

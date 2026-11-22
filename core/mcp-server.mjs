@@ -24,6 +24,7 @@ import {
 } from "./task-manager.mjs";
 import { createCheckpoint, getCheckpoint, listCheckpoints } from "./checkpoint.mjs";
 import { discoverSkills, resolveProjectForSkills } from "./skills.mjs";
+import { suggestProjectSkills } from "./skills-advisor.mjs";
 import { lintDiscoveredSkills, lintSkill } from "./skills-lint.mjs";
 import { draftSkillFromExperience, getSkillHistory, proposeSkillUpdate } from "./skills-lifecycle.mjs";
 import { redactSecretContent } from "./path-safety.mjs";
@@ -39,7 +40,7 @@ export const MAX_MCP_HEADER_BYTES = 4096;
 
 const MUTATING_TASK_ACTIONS = new Set(["new", "update", "done", "claim", "release"]);
 const MUTATING_CHECKPOINT_ACTIONS = new Set(["create"]);
-const MUTATING_SKILLS_ACTIONS = new Set(["draft", "propose", "propose-update"]);
+const MUTATING_SKILLS_ACTIONS = new Set(["draft", "propose", "propose-update", "scaffold"]);
 
 function getHarnessVersion(harnessDir) {
   try {
@@ -196,12 +197,12 @@ export const MCP_TOOLS = [
   {
     name: "geloforge_skills",
     description:
-      "[READ + QUARANTINED-DRAFT ONLY] Inspect, lint, view history, or stage quarantined skill drafts/updates from verified evidence. Read-only actions: list, show, validate, lint, history. Mutating (quarantine-only, disabled in --read-only): draft, propose. Refused: promote, rollback, keygen, sign.",
+      "[READ + QUARANTINED-DRAFT ONLY] Inspect, lint, suggest, view history, or stage quarantined skill drafts/updates from verified evidence or repository signals. Read-only actions: list, show, validate, lint, suggest, history. Mutating (quarantine-only, disabled in --read-only): draft, propose, scaffold. Refused: promote, rollback, keygen, sign.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
-      readOnlyActions: ["list", "show", "validate", "lint", "history"],
-      mutatingActions: ["draft", "propose"],
+      readOnlyActions: ["list", "show", "validate", "lint", "suggest", "history"],
+      mutatingActions: ["draft", "propose", "scaffold"],
       refusedActions: ["promote", "rollback", "keygen", "sign"],
     },
     inputSchema: {
@@ -211,10 +212,14 @@ export const MCP_TOOLS = [
       properties: {
         action: {
           type: "string",
-          enum: ["list", "show", "validate", "lint", "draft", "propose", "history"],
+          enum: ["list", "show", "validate", "lint", "suggest", "scaffold", "draft", "propose", "history"],
         },
         project: { type: "string" },
         name: { type: "string" },
+        goal: { type: "string" },
+        query: { type: "string" },
+        task: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 20 },
         includeDrafts: { type: "boolean" },
         strict: { type: "boolean" },
         evidenceIds: { type: "array", items: { type: "string" } },
@@ -231,6 +236,7 @@ export const MCP_TOOLS = [
     },
     input_examples: [
       { action: "list", includeDrafts: false },
+      { action: "suggest", goal: "verify database migrations" },
       { action: "lint", strict: true },
     ],
   },
@@ -429,6 +435,25 @@ function invokeSkillsTool(args, ctx) {
 
   const projectDir = resolveTargetProject(args, ctx);
   const { harnessDir } = ctx;
+
+  if (action === "suggest" || action === "scaffold") {
+    return suggestProjectSkills({
+      projectDir,
+      harnessDir,
+      taskId: args.task || null,
+      goal: args.goal || null,
+      query: args.query || null,
+      limit: args.limit,
+      includeDrafts: Boolean(args.includeDrafts),
+      scaffoldDraft: action === "scaffold",
+      skillName: args.name || null,
+      title: args.title || null,
+      description: args.description || null,
+      tags: args.tags,
+      triggers: args.triggers,
+      dryRun: Boolean(args.dryRun),
+    });
+  }
 
   if (action === "draft") {
     return draftSkillFromExperience({
