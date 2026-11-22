@@ -38,5 +38,5 @@ Check the registry and CLI from a separate directory after publication:
 
 ```bash
 npm view geloforge version
-npx --yes geloforge@0.6.0 --version
+npx --yes geloforge@latest --version
 ```

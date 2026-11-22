@@ -1,0 +1,28 @@
+{
+  "workflowId": "furniture-staging",
+  "revision": "published-stage-r7",
+  "areas": {
+    "Inquiry routing": ["Resolve Messenger page", "Validate inquiry"],
+    "Quotation handoff": ["Validate confirmation", "Create staff handoff"]
+  },
+  "cases": [
+    {
+      "executionId": "231",
+      "failedNode": "Validate inquiry",
+      "executed": ["Resolve Messenger page", "Validate inquiry"],
+      "expected": {
+        "supported": ["Validate inquiry"],
+        "omitted": ["Create staff handoff"]
+      }
+    },
+    {
+      "executionId": "232",
+      "failedNode": "Validate inquiry",
+      "executed": ["Resolve Messenger page", "Validate inquiry"],
+      "expected": {
+        "supported": ["Validate inquiry"],
+        "omitted": ["Create staff handoff"]
+      }
+    }
+  ]
+}

@@ -57,6 +57,7 @@ try {
       npm, "pack", "--json", "--offline", "--ignore-scripts", "--cache", cache,
       "--pack-destination", packDir,
     ], ROOT));
+    assert.ok(pack.files.some(({ path }) => path === "adapters/n8n/staging-audit-error-workflow.json"));
     cliPrefix = [
       npm, "exec", "--yes", "--offline", "--ignore-scripts", "--cache", cache,
       "--package", path.join(packDir, pack.filename), "--", "geloforge",
@@ -111,6 +112,14 @@ try {
   const checkpoints = cliJson(["checkpoint", "list", "--project", newProject]);
   assert.ok(checkpoints.checkpoints.some((x) => x.id === cp.checkpointId));
 
+  assert.equal(cliJson(["autonomous", "status"], newProject).mode, "off");
+  const local = cliJson(["checkpoint", "create", "--local", "--resume", "Check staged results."], newProject);
+  const recovered = cliJson(["checkpoint", "resume", "--id", local.checkpointId], newProject);
+  assert.equal(recovered.nextAction, "Check staged results.");
+  const cached = ["context", "--query", "staged results", "--cache"];
+  assert.equal(cliJson(cached, newProject).diskCache, "miss");
+  assert.equal(cliJson(cached, newProject).diskCache, "hit");
+
   const finalValidation = cliJson(["validate", "--project", newProject]);
   assert.equal(finalValidation.valid, true,
     "Generated project with task/evidence/checkpoint must remain schema-valid");
@@ -158,7 +167,7 @@ try {
   assert.equal(cliJson(["validate"], existing).valid, true);
 
   console.log(`PASS: v${expected} ${options.packed ? "npm tarball" : "source"} smoke ` +
-    "(CLI, init, task, context, verify, checkpoint, adopt, validate, MCP setup and stdio)");
+    "(CLI, init, task, context, verify, checkpoint, adopt, validate, staging switch, local recovery, disk cache, MCP setup and stdio)");
 } finally {
   fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 3 });
 }

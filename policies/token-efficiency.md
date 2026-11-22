@@ -1,6 +1,6 @@
 # Token Efficiency Policy
 
-> **Status:** Foundation structural optimizations (`AGENTS.md`/`GEMINI.md` minimal entrypoints, `brain/INDEX.md`, compact handoff/context schemas) are **Implemented**; automated runtime enforcement, token counters, and provider routing are **NOT IMPLEMENTED**.
+> **Status:** Context budgets are estimated by the compiler. The staging worker limits launches and retries under owner approval. Provider token usage is measured separately.
 > **Measurement Rule:** **No token savings percentages are claimed without empirical measurement** from future provider execution logs.
 
 ## Structural Efficiencies Established in Phase 1.2
@@ -18,13 +18,13 @@
 - **Context Compaction:** Summarize completed milestones into `brain/state/current.yaml`, `HANDOFF-NNNN`, and `CHKPT-NNNN` instead of carrying growing chat transcripts.
 - **Model / Task Routing & Usage Measurement:** Route narrow edits/checks to lighter models where verified and record per-task input/cached/output token counts before claiming efficiency gains.
 
-## Starting Context Budget Targets & Proposed Defaults (Policy Targets Only)
+## Starting Context Budget Targets
 
-| Control / Target | Starting Target | Phase 1 Status |
+| Control / Target | Starting Target | Scope |
 | :--- | :--- | :--- |
-| `quick` context pack | ~2,000 tokens (starting target, not hard truncation) | **Documented only** (**NOT IMPLEMENTED**) |
-| `working` context pack | ~8,000 tokens (starting target, not hard truncation) | **Documented only** (**NOT IMPLEMENTED**) |
-| `deep` context pack | Task-driven expansion per requirements | **Documented only** (**NOT IMPLEMENTED**) |
-| Concurrent specialist agents | Max 2 active specialists; no unlimited nested delegation | **Documented only** (**NOT IMPLEMENTED**) |
-| Automatic repair retries | Max 2 automatic retries before escalating | **Documented only** (**NOT IMPLEMENTED**) |
-| Paid API / external spend | Disabled without explicit owner `APPR-NNNN` | **Documented only** (**NOT IMPLEMENTED**) |
+| `quick` context pack | ~2,000 tokens (starting target, not hard truncation) | Context Compiler |
+| `working` context pack | ~8,000 tokens (starting target, not hard truncation) | Context Compiler |
+| `deep` context pack | Task-driven expansion per requirements | Context Compiler |
+| Concurrent specialist agents | Max 2 active specialists | Staging audit worker |
+| Automatic report repair retries | Max 2 retries per audit | Staging audit worker |
+| Provider launches | Signed owner `APPR-NNNN` with counted launches | Staging audit worker |

@@ -1,6 +1,6 @@
 {
   "name": "geloforge",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Local, provider-neutral CLI for AI coding project memory, command-backed evidence, portable skills, and cross-agent handoffs.",
   "license": "MIT",
   "type": "module",
@@ -29,6 +29,7 @@
   },
   "files": [
     "core/",
+    "adapters/n8n/staging-audit-error-workflow.json",
     "policies/",
     "schemas/",
     "scripts/bootstrap-project.mjs",
@@ -44,6 +45,8 @@
     "bootstrap": "node scripts/bootstrap-project.mjs",
     "geloforge": "node scripts/geloforge.mjs",
     "benchmark": "node scripts/benchmark-context.mjs",
-    "smoke:package": "node scripts/smoke-fresh-install.mjs --packed"
+    "smoke:package": "node scripts/smoke-fresh-install.mjs --packed",
+    "benchmark:cache": "node scripts/benchmark-context-cache.mjs",
+    "benchmark:audits": "node --test tests/staging-audit-worker.test.mjs"
   }
 }

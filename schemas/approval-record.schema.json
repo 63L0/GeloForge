@@ -95,6 +95,15 @@
         "signature_base64": { "type": ["string", "null"] }
       }
     },
+    "operation_authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "signature_base64"],
+      "properties": {
+        "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "signature_base64": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$" }
+      }
+    },
     "is_example": { "type": "boolean" },
     "example_notice": { "type": "string" }
   }

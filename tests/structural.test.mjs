@@ -65,7 +65,7 @@ test("workspace and harness structural boundaries are clean", () => {
   }
   assert.equal(fs.existsSync(path.join(HARNESS_DIR, ".git")), true, "harness/.git must exist");
 
-  for (const obsolete of ["skills", "evaluations", "validators"]) {
+  for (const obsolete of ["skills", "validators"]) {
     assert.equal(fs.existsSync(path.join(HARNESS_DIR, obsolete)), false, `Obsolete folder still present: ${obsolete}`);
   }
 

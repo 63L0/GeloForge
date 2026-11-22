@@ -314,8 +314,10 @@ export function scopesOverlap(scopeA, scopeB) {
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
+export const TASK_LEASES_PATH = ".geloforge/task-leases.yaml";
+
 function readLeasesFile(projectDir) {
-  const leasesRelPath = ".geloforge/task-leases.yaml";
+  const leasesRelPath = TASK_LEASES_PATH;
   const leasesAbs = assertSafeWithinRoot(projectDir, leasesRelPath);
   if (!fs.existsSync(leasesAbs)) {
     return { leasesRelPath, leasesAbs, exists: false, leases: [] };

@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { findBlockedAudit, readAutonomousMode } from "./autonomous-audit.mjs";
 import { parseYaml, extractFrontmatter } from "./yaml-subset.mjs";
 import { validateProject } from "./project-validator.mjs";
 import { getGitStatusScoped } from "./git-utils.mjs";
@@ -68,6 +69,14 @@ export function getProjectStatus(rawProjectDir, options = {}) {
 
   const vcs = inspectGitState(projectDir);
   const advisoryWarnings = [...validation.warnings];
+  let autonomousMode = "off";
+  let blockedAudit = null;
+  try {
+    autonomousMode = readAutonomousMode(projectDir);
+    blockedAudit = findBlockedAudit(projectDir, state?.blocked_tasks ?? []);
+  } catch (err) {
+    advisoryWarnings.push(`Could not inspect autonomous audit state: ${err.message}`);
+  }
 
   const pendingApprovalsInbox = manifest
     ? scanPendingApprovalsInbox({ projectDir, projectPaths, state, warnings: advisoryWarnings })
@@ -103,6 +112,7 @@ export function getProjectStatus(rawProjectDir, options = {}) {
     pendingApprovalsInbox,
     activeLeases,
     leaseOverlaps,
+    blockedAudit,
   });
 
   const nextSteps = [];
@@ -141,6 +151,7 @@ export function getProjectStatus(rawProjectDir, options = {}) {
 
   return {
     projectDir,
+    autonomousMode,
     valid: validation.valid,
     compatibilityStatus: validation.compatibilityStatus,
     project: manifest
@@ -195,6 +206,7 @@ export function getProjectRecommendations(projectDir) {
   const status = getProjectStatus(projectDir);
   return {
     projectDir: status.projectDir,
+    autonomousMode: status.autonomousMode,
     valid: status.valid,
     project: status.project,
     operationalState: status.operationalState,
@@ -416,6 +428,7 @@ function buildRecommendations({
   pendingApprovalsInbox,
   activeLeases,
   leaseOverlaps,
+  blockedAudit,
 }) {
   const recs = [];
 
@@ -494,6 +507,19 @@ function buildRecommendations({
       ],
       command: `geloforge task show --task ${state.blocked_tasks[0]}`,
       requiresHumanApproval: true,
+    });
+  }
+
+  if (blockedAudit) {
+    recs.push({
+      rank: 81,
+      priority: "high",
+      category: "autonomous_audit",
+      title: `Review the blocked staging audit in ${blockedAudit.id}`,
+      reason: blockedAudit.resume_instructions,
+      options: ["Inspect the checkpoint and verify the missing or mismatched evidence"],
+      command: `geloforge checkpoint show --id ${blockedAudit.id}`,
+      requiresHumanApproval: false,
     });
   }
 

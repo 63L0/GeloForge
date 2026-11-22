@@ -1,9 +1,5 @@
-# Gemini CLI Adapter Specification
+# Gemini CLI
 
-> **Status:** **NOT IMPLEMENTED** — Gemini CLI is not configured, invoked, or connected in Phase 1.
+Run `geloforge mcp init --client gemini --read-only` in the GeloForge project. This adds the server to `.gemini/settings.json` and updates the selected instructions file. The default guide is [GEMINI.md](../../templates/project-starter/GEMINI.md).
 
-## Planned Integration Boundary
-
-- **Project Entrypoint:** Generated projects include a concise [GEMINI.md](../../templates/project-starter/GEMINI.md) pointing to `AGENTS.md` and `brain/INDEX.md`. Creating `GEMINI.md` does **not** automatically configure Gemini CLI.
-- **Zero Duplication Rule:** `GEMINI.md` must never duplicate requirements, constraints, or ADRs; Gemini CLI reads the same shared `brain/` and `tasks/` files as every other provider.
-- **Isolation Rule:** Any Gemini CLI settings, command definitions, or MCP bindings verified in a later phase belong strictly under `adapters/gemini/`.
+For staging audits, configure `"provider": "gemini"` with the absolute path to the installed CLI or its Node.js entry point. The worker uses plan mode and reads the JSON response envelope. [Gemini CLI plan mode](https://geminicli.com/docs/cli/plan-mode/) · [Headless mode](https://geminicli.com/docs/cli/headless/)

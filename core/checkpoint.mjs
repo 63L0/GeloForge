@@ -12,6 +12,7 @@ import { validateAgainstSchema } from "./json-schema-lite.mjs";
 import { checkRecordSchemaVersion } from "./compatibility.mjs";
 import {
   assertSafeWithinRoot,
+  atomicWriteFile,
   hasSecretContent,
   isForbiddenSecretPath,
   walkNonSymlinkFiles,
@@ -25,6 +26,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_HARNESS_DIR = path.resolve(__dirname, "..");
 
+const LOCAL_CHECKPOINTS = "local-runtime/checkpoints";
 const ALLOWED_CHECKPOINT_STATUSES = new Set([
   "created",
   "verified",
@@ -178,7 +180,7 @@ export function createCheckpoint(options = {}) {
   }
 
   const explicitId = options.id ? String(options.id).trim().toUpperCase() : null;
-  const searchDirs = Array.from(new Set([projectPaths.handoffs_dir, projectPaths.tasks_dir]));
+  const searchDirs = Array.from(new Set([projectPaths.handoffs_dir, projectPaths.tasks_dir, LOCAL_CHECKPOINTS]));
   const { id } = scanAndAllocateRecordId({
     projectDir,
     searchDirs,
@@ -186,7 +188,7 @@ export function createCheckpoint(options = {}) {
     explicitId,
   });
 
-  const relPath = `${projectPaths.handoffs_dir}/${id}-checkpoint.yaml`;
+  const relPath = `${options.local ? LOCAL_CHECKPOINTS : projectPaths.handoffs_dir}/${id}-checkpoint.yaml`;
   if (isForbiddenSecretPath(relPath)) {
     throw new Error(`Refusing checkpoint destination path: ${relPath}`);
   }
@@ -195,7 +197,7 @@ export function createCheckpoint(options = {}) {
     throw new Error(`Checkpoint file already exists: ${relPath}`);
   }
 
-  const nextStateRevision = (typeof state.state_revision === "number" ? state.state_revision : 0) + 1;
+  const nextStateRevision = (state.state_revision ?? 0) + (options.local ? 0 : 1);
   const stateRelPath = String(projectPaths.state || "brain/state/current.yaml").replace(/\\/g, "/");
 
   const checkpointSchema = loadCheckpointSchema(schemasDir);
@@ -242,7 +244,9 @@ export function createCheckpoint(options = {}) {
     throw new Error(`Updated state failed schema validation: ${stateCheck.errors.join("; ")}`);
   }
 
-  if (!options.dryRun) {
+  if (!options.dryRun && options.local) {
+    atomicWriteFile(targetAbs, yamlText, { allowOverwrite: false });
+  } else if (!options.dryRun) {
     const stateAbs = assertSafeWithinRoot(projectDir, stateRelPath);
     runMultiFileTransaction(
       [
@@ -284,15 +288,15 @@ export function createCheckpoint(options = {}) {
   });
 }
 
-function scanCheckpointsInternal({ projectDir, schemasDir, compatConfig, projectPaths }) {
+function scanCheckpointsInternal({ projectDir, schemasDir, compatConfig, projectPaths, projectId }) {
   const schema = loadCheckpointSchema(schemasDir);
-  const searchDirs = Array.from(new Set([projectPaths.handoffs_dir, projectPaths.tasks_dir]));
+  const searchDirs = Array.from(new Set([projectPaths.handoffs_dir, projectPaths.tasks_dir, LOCAL_CHECKPOINTS]));
   const warnings = [];
   const checkpoints = [];
   const seenFiles = new Set();
 
   for (const relDir of searchDirs) {
-    const absDir = path.join(projectDir, relDir);
+    const absDir = assertSafeWithinRoot(projectDir, relDir);
     const files = walkNonSymlinkFiles(
       projectDir,
       absDir,
@@ -327,6 +331,10 @@ function scanCheckpointsInternal({ projectDir, schemasDir, compatConfig, project
         warnings.push(`Checkpoint ${rel} failed schema check: ${res.errors.join("; ")}`);
         continue;
       }
+      if (data.project_id !== projectId) {
+        warnings.push(`Checkpoint ${rel} belongs to a different project.`);
+        continue;
+      }
       checkpoints.push({ relPath: rel, record: data });
     }
   }
@@ -349,7 +357,7 @@ export function listCheckpoints(options = {}) {
   if (typeof options.projectDir !== "string" || options.projectDir.trim().length === 0) {
     throw new Error("Missing required project directory (--project <dir>).");
   }
-  const { projectDir, schemasDir, compatConfig, state, projectPaths } = loadProjectManifestAndState(
+  const { projectDir, schemasDir, compatConfig, manifest, state, projectPaths } = loadProjectManifestAndState(
     options.projectDir,
     harnessDir
   );
@@ -358,6 +366,7 @@ export function listCheckpoints(options = {}) {
     schemasDir,
     compatConfig,
     projectPaths,
+    projectId: manifest.project_id,
   });
 
   const statusFilter = options.status ? String(options.status).trim() : null;
@@ -399,7 +408,7 @@ export function getCheckpoint(options = {}) {
   if (typeof options.projectDir !== "string" || options.projectDir.trim().length === 0) {
     throw new Error("Missing required project directory (--project <dir>).");
   }
-  const { projectDir, schemasDir, compatConfig, state, projectPaths } = loadProjectManifestAndState(
+  const { projectDir, schemasDir, compatConfig, manifest, state, projectPaths } = loadProjectManifestAndState(
     options.projectDir,
     harnessDir
   );
@@ -408,6 +417,7 @@ export function getCheckpoint(options = {}) {
     schemasDir,
     compatConfig,
     projectPaths,
+    projectId: manifest.project_id,
   });
 
   let found = null;
@@ -417,7 +427,7 @@ export function getCheckpoint(options = {}) {
     if (!found) {
       throw new Error(`Checkpoint "${targetId}" was not found or failed validation.`);
     }
-  } else if (state?.last_checkpoint) {
+  } else if (state?.last_checkpoint && !options.newest) {
     found = checkpoints.find((c) => c.record.id === state.last_checkpoint) || checkpoints[0] || null;
   } else {
     found = checkpoints[0] || null;

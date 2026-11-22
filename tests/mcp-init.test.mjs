@@ -48,6 +48,7 @@ test("mcp init previews and installs all four project clients with an executable
     for (const tool of ["recommend", "context", "task", "checkpoint"]) {
       assert.match(rules, new RegExp(`geloforge_${tool}`));
     }
+    assert.match(rules, /`geloforge_context`[^\r\n]*`skills: true`/);
     const server = spawnSync(entry.command, entry.args, {
       cwd: path.dirname(root), encoding: "utf8", timeout: 10_000,
       input: '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n',
