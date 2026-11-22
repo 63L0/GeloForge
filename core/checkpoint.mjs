@@ -15,8 +15,10 @@ import {
   atomicWriteFile,
   hasSecretContent,
   isForbiddenSecretPath,
+  validateOutputFilePath,
   walkNonSymlinkFiles,
 } from "./path-safety.mjs";
+import { compileContext } from "./context-compiler.mjs";
 import { getGitStatusScoped } from "./git-utils.mjs";
 import { loadProjectManifestAndState, scanAndAllocateRecordId } from "./project-locator.mjs";
 import { runMultiFileTransaction, withProjectLock } from "./project-lock.mjs";
@@ -444,5 +446,88 @@ export function getCheckpoint(options = {}) {
     record: found.record,
     isLastCheckpoint: state?.last_checkpoint === found.record.id,
     warnings,
+  };
+}
+
+/**
+ * Compacts long-session state in one operation: creates a recovery checkpoint,
+ * compiles a slim resume context packet, and builds a ready-to-paste fresh-chat prompt.
+ */
+export function compactSession(options = {}) {
+  const harnessDir = path.resolve(options.harnessDir || DEFAULT_HARNESS_DIR);
+  let outAbs = null;
+  if (options.out !== undefined && options.out !== null && String(options.out).trim() !== "") {
+    outAbs = validateOutputFilePath(String(options.out), {
+      harnessDir,
+      workspaceRoot: options.workspaceRoot ?? null,
+    });
+  }
+
+  const chk = createCheckpoint({
+    projectDir: options.projectDir,
+    harnessDir,
+    summary: options.summary || "Session compaction checkpoint",
+    resumeInstructions: options.resumeInstructions,
+    evidenceRef: options.evidenceRef,
+    createdBy: options.createdBy || "geloforge-compact",
+    role: options.role,
+    status: options.status,
+    id: options.id,
+    createdAt: options.createdAt,
+    dryRun: options.dryRun,
+    local: options.local,
+    lockTimeoutMs: options.lockTimeoutMs,
+    staleLockMs: options.staleLockMs,
+  });
+
+  const targetTask = options.taskId || chk.record.active_tasks?.[0] || null;
+  const packet = compileContext({
+    projectDir: chk.projectDir,
+    harnessDir,
+    taskId: targetTask || undefined,
+    query: !targetTask ? (options.query || "session resume") : options.query,
+    fromDiff: !targetTask && !options.query ? true : Boolean(options.fromDiff),
+    profile: options.profile || "quick",
+    budget: options.budget,
+    includeMap: options.includeMap !== false,
+    includeSkills: Boolean(options.includeSkills),
+    excludeUnverified: Boolean(options.excludeUnverified),
+    compiledAt: chk.record.created_at,
+  });
+
+  if (outAbs && !options.dryRun) {
+    atomicWriteFile(outAbs, packet.markdown, { allowOverwrite: true });
+  }
+
+  const taskNote = targetTask ? ` (active task: ${targetTask})` : "";
+  const taskFlag = targetTask ? `--task ${targetTask} ` : "";
+  const freshSessionPrompt =
+    `Resume this GeloForge project from compacted checkpoint ${chk.checkpointId}${taskNote}. ` +
+    `First run \`npx geloforge checkpoint resume --id ${chk.checkpointId}\` and ` +
+    `\`npx geloforge context ${taskFlag}--from-diff --map --profile quick\`, ` +
+    `confirm Git status and active leases, then continue: ${chk.record.resume_instructions}`;
+
+  return {
+    dryRun: Boolean(options.dryRun),
+    projectDir: chk.projectDir,
+    checkpointId: chk.checkpointId,
+    recordPath: chk.recordPath,
+    record: chk.record,
+    stateRevision: chk.stateRevision,
+    targetTask,
+    changedFiles: chk.changedFiles,
+    activeLeases: chk.activeLeases,
+    contextPacket: {
+      profile: packet.manifest.profile,
+      effectiveProfile: packet.manifest.effective_profile,
+      estimatedTokens: packet.estimatedTokens ?? packet.manifest.estimated_tokens,
+      includedDocuments: (packet.manifest.included_documents || []).length,
+      omittedDocuments: (packet.manifest.omitted_candidates || []).length,
+      outPath: outAbs || null,
+      markdown: packet.markdown,
+    },
+    freshSessionPrompt,
+    nextCommand: chk.nextCommand,
+    warnings: [...chk.warnings],
   };
 }

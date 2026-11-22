@@ -72,6 +72,69 @@ const NODE_DEP_STACKS = [
 ];
 const SCRIPT_PRIORITY = ["test", "lint", "typecheck", "build", "eval", "check", "verify"];
 
+export const STARTER_SKILL_CATALOG = [
+  {
+    id: "web-ui-verification",
+    title: "Web UI & Frontend Verification",
+    description: "Verify component rendering, form validation, accessibility states, and end-to-end browser checks.",
+    stacks: ["web", "react", "nextjs", "vue", "nuxt", "tailwind", "playwright", "cypress", "typescript"],
+    keywords: ["ui", "frontend", "component", "page", "css", "browser", "accessibility", "form"],
+    checklistSteps: [
+      "Verify component state transitions, empty/error states, and responsive layout assumptions before marking work ready.",
+      "Inspect client/server boundary inputs and form validation rules against project constraints.",
+      "Run typecheck, build, or browser end-to-end test commands via geloforge evidence capture.",
+    ],
+  },
+  {
+    id: "backend-api-contracts",
+    title: "Backend API & Data Contract Guardrails",
+    description: "Validate API request/response schemas, transactional writes, migrations, and fail-closed error handling.",
+    stacks: ["node", "express", "fastify", "python", "go", "rust", "prisma", "drizzle", "postgres", "stripe"],
+    keywords: ["api", "endpoint", "database", "migration", "schema", "webhook", "query", "transaction", "backend"],
+    checklistSteps: [
+      "Validate request payloads, schema boundaries, and authentication/permission checks before state mutation.",
+      "Verify transactional integrity, idempotency, and rollback behavior on partial failures or retries.",
+      "Capture integration or unit test output for error codes and migration compatibility via geloforge verify.",
+    ],
+  },
+  {
+    id: "automation-workflow-guardrails",
+    title: "Automation & CI Workflow Guardrails",
+    description: "Guard workflow triggers, retries, idempotency, and staging verification for automation pipelines.",
+    stacks: ["automation", "n8n", "ci", "github-actions", "docker"],
+    keywords: ["workflow", "automation", "n8n", "pipeline", "cron", "webhook", "trigger", "staging", "retry"],
+    checklistSteps: [
+      "Confirm trigger filters, dry-run paths, and explicit failure handling prevent duplicate or partial deliveries.",
+      "Check that secret redaction, timeout bounds, and workflow allowlists stay enforced across retries.",
+      "Verify staged workflow execution logs or offline fixture audits via geloforge evidence capture.",
+    ],
+  },
+  {
+    id: "desktop-mobile-release-check",
+    title: "Desktop & Mobile Packaging Release Check",
+    description: "Verify cross-platform paths, offline persistence, permissions, and packaged installer behavior.",
+    stacks: ["desktop", "mobile", "ai-system"],
+    keywords: ["desktop", "mobile", "packaging", "installer", "offline", "bundle", "release", "cross-platform"],
+    checklistSteps: [
+      "Audit path separators, temporary-file atomicity, and offline behavior across Windows/POSIX targets.",
+      "Verify packaged binary/bundle entrypoints cleanly handle clean-room startup without missing local assets.",
+      "Capture smoke-install or packaging verification receipts before releasing changes.",
+    ],
+  },
+  {
+    id: "security-and-regression-gate",
+    title: "Security & Regression Evidence Gate",
+    description: "Prevent secret leakage, path traversal, and unverified bug fixes through fail-closed regression tests.",
+    stacks: ["node", "python", "go", "rust", "ci"],
+    keywords: ["security", "auth", "secret", "regression", "bug", "fix", "audit", "validation", "test", "permission"],
+    checklistSteps: [
+      "Reproduce the bug or security boundary with a failing deterministic test case before modifying code.",
+      "Check input validation, path confinement, and secret redaction on error paths and persisted artifacts.",
+      "Prove the fix holds with zero regressions using geloforge verify --task <TASK-NNNN> -- <test-command>.",
+    ],
+  },
+];
+
 function readSmallNonSymlinkText(projectDir, relPath, maxBytes = MAX_READ_BYTES) {
   if (typeof relPath !== "string" || relPath.trim().length === 0) {
     return null;
@@ -654,7 +717,41 @@ function detectSkillGaps(signals, discovery) {
   return gaps.slice(0, 3);
 }
 
-function buildRepoScaffoldMarkdown({ skillName, title, description, gap, signals, tags, triggers }) {
+function matchStarterCatalog(signals, discovery) {
+  const activeNames = new Set((discovery.activeSkills || []).map((s) => s.name));
+  const quarantinedNames = new Set((discovery.quarantinedSkills || []).map((s) => s.name));
+  const projectStackSet = new Set(signals.stacks || []);
+
+  const ranked = STARTER_SKILL_CATALOG.map((entry, idx) => {
+    const matchedStacks = entry.stacks.filter((st) => projectStackSet.has(st));
+    const goalMatched = entry.keywords.filter((kw) => signals.goalKeywords.has(kw));
+    const projMatched = entry.keywords.filter((kw) => signals.projectKeywords.has(kw) && !signals.goalKeywords.has(kw));
+    const matchedKeywords = Array.from(new Set([...goalMatched, ...projMatched]));
+    const score = matchedStacks.length * 3 + goalMatched.length * 2 + projMatched.length;
+    return {
+      idx,
+      id: entry.id,
+      title: entry.title,
+      description: entry.description,
+      score,
+      matchedStacks,
+      matchedKeywords,
+      checklistSteps: [...entry.checklistSteps],
+      alreadyActive: activeNames.has(entry.id),
+      alreadyQuarantined: quarantinedNames.has(entry.id),
+      scaffoldCommand: `geloforge skills suggest --template ${entry.id} --scaffold-draft`,
+    };
+  });
+
+  ranked.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.idx - b.idx;
+  });
+
+  return ranked.map(({ idx, ...rest }) => rest);
+}
+
+function buildRepoScaffoldMarkdown({ skillName, title, description, gap, signals, tags, triggers, starterTemplate }) {
   const mergedTags = Array.from(new Set(["repo-scaffold", ...signals.stacks.slice(0, 4), ...tags])).join(", ");
   const mergedTriggers = Array.from(
     new Set(triggers.length > 0 ? triggers : [skillName.replace(/-/g, " "), ...signals.stacks.slice(0, 3)])
@@ -665,7 +762,7 @@ function buildRepoScaffoldMarkdown({ skillName, title, description, gap, signals
     description,
     license: "MIT",
     metadata: {
-      geloforge_origin: "repo_scaffold",
+      geloforge_origin: gap.kind === "starter_template" ? `starter_template:${gap.templateId}` : "repo_scaffold",
       geloforge_promotion_status: "requires_verified_evidence",
       geloforge_tags: mergedTags,
       geloforge_triggers: mergedTriggers,
@@ -673,6 +770,7 @@ function buildRepoScaffoldMarkdown({ skillName, title, description, gap, signals
   };
 
   const groundingLines = [
+    ...(gap.kind === "starter_template" ? [`- **Starter Template:** \`${gap.templateId}\``] : []),
     `- **Detected Stack:** ${signals.stacks.join(", ") || "none detected"}`,
     ...(gap.commands.length > 0
       ? [`- **Detected Repository Commands:** ${gap.commands.map((c) => `\`${c}\``).join(", ")}`]
@@ -695,6 +793,12 @@ function buildRepoScaffoldMarkdown({ skillName, title, description, gap, signals
     procSteps.push(`Review goal scope and repository constraints for: ${redactSecretContent(signals.goal)}.`);
   } else {
     procSteps.push("Review repository constraints and active task scope before modifying code.");
+  }
+  const templateSteps = Array.isArray(gap.checklistSteps) && gap.checklistSteps.length > 0
+    ? gap.checklistSteps
+    : (starterTemplate?.score > 0 ? starterTemplate.checklistSteps : []);
+  for (const stepText of templateSteps.slice(0, 4)) {
+    procSteps.push(stepText);
   }
   if (gap.commands.length > 0) {
     for (const cmd of gap.commands.slice(0, 4)) {
@@ -733,7 +837,7 @@ function buildRepoScaffoldMarkdown({ skillName, title, description, gap, signals
   return redactSecretContent(mdLines.join("\n"));
 }
 
-function scaffoldFromGap({ targetGap, signals, options }) {
+function scaffoldFromGap({ targetGap, signals, options, starterTemplate = null }) {
   const createdAt = validateCreatedAt(options.createdAt);
   const skillName = validateSkillSlugName(options.skillName || targetGap.suggestedName, targetGap.suggestedName);
 
@@ -791,6 +895,7 @@ function scaffoldFromGap({ targetGap, signals, options }) {
   // Day-1 repo/goal scaffold (quarantined ONLY; intentionally lacks .proposals/<name>.yaml so promotion stays fail-closed)
   const rawDesc =
     options.description ||
+    targetGap.description ||
     `Apply verified project checks and constraints for ${title} grounded in local repository signals (${signals.stacks.join(", ") || "project rules"}).`;
   let description = redactSecretContent(validateScalarText("description", rawDesc));
   if (description.length < 20) {
@@ -811,6 +916,7 @@ function scaffoldFromGap({ targetGap, signals, options }) {
     signals,
     tags: extraTags,
     triggers: extraTriggers,
+    starterTemplate,
   });
   if (hasSecretContent(markdown)) {
     throw new Error("Refusing scaffold draft because generated SKILL.md triggered secret-content detection.");
@@ -908,18 +1014,51 @@ export function suggestProjectSkills(options = {}) {
 
   const recommendedSkills = scoreAndRankSkills(discovery, signals, limitRaw);
   const skillGaps = detectSkillGaps(signals, discovery);
+  const starterCatalog = matchStarterCatalog(signals, discovery);
+
+  let selectedTemplate = null;
+  if (options.templateId !== undefined && options.templateId !== null && String(options.templateId).trim() !== "") {
+    const reqTemplate = String(options.templateId).trim().toLowerCase();
+    selectedTemplate = STARTER_SKILL_CATALOG.find((t) => t.id === reqTemplate) || null;
+    if (!selectedTemplate) {
+      throw new Error(
+        `Unknown starter skill template "${options.templateId}". Available templates: ${STARTER_SKILL_CATALOG.map((t) => t.id).join(", ")}`
+      );
+    }
+  }
 
   let scaffoldResult = null;
   if (scaffoldDraft) {
-    const requestedName = options.skillName ? validateSkillSlugName(options.skillName) : null;
-    const candidateGap =
-      (requestedName ? skillGaps[0] : skillGaps.find((g) => g.scaffoldable)) || null;
+    let candidateGap = null;
+    if (selectedTemplate) {
+      candidateGap = {
+        kind: "starter_template",
+        templateId: selectedTemplate.id,
+        suggestedName: selectedTemplate.id,
+        title: selectedTemplate.title,
+        description: selectedTemplate.description,
+        checklistSteps: selectedTemplate.checklistSteps,
+        evidenceIds: [],
+        commands: signals.commands.map((c) => c.command),
+        constraints: signals.constraintBullets.slice(0, 4),
+        promotableAfterReview: false,
+        scaffoldable: true,
+      };
+    } else {
+      const requestedName = options.skillName ? validateSkillSlugName(options.skillName) : null;
+      candidateGap = (requestedName ? skillGaps[0] : skillGaps.find((g) => g.scaffoldable)) || null;
+    }
     if (!candidateGap) {
       throw new Error(
-        "No grounded, un-scaffolded skill gap was detected for this project/goal. Capture verified EVID-NNNN or specify an explicit --goal and unused --name."
+        "No grounded, un-scaffolded skill gap was detected for this project/goal. Capture verified EVID-NNNN, choose a --template <id>, or specify an explicit --goal and unused --name."
       );
     }
-    scaffoldResult = scaffoldFromGap({ targetGap: candidateGap, signals, options });
+    scaffoldResult = scaffoldFromGap({
+      targetGap: candidateGap,
+      signals,
+      options,
+      starterTemplate: selectedTemplate ? null : starterCatalog[0] || null,
+    });
   }
 
   return {
@@ -927,6 +1066,7 @@ export function suggestProjectSkills(options = {}) {
     projectId: signals.manifest?.project_id || null,
     goal: signals.goal,
     taskId: signals.taskId,
+    selectedTemplate: selectedTemplate ? selectedTemplate.id : null,
     detectedSignals: {
       stacks: signals.stacks,
       commands: signals.commands,
@@ -939,6 +1079,7 @@ export function suggestProjectSkills(options = {}) {
     quarantinedDraftCount: (discovery.quarantinedSkills || []).length,
     recommendedSkills,
     skillGaps,
+    starterCatalog: starterCatalog.map(({ checklistSteps, ...pub }) => pub),
     scaffoldResult,
   };
 }

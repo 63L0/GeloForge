@@ -13,9 +13,13 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { compileCachedContext } from "../core/context-cache.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
+import { compactSession } from "../core/checkpoint.mjs";
 import { runCodingLoop } from "../core/coding-loop.mjs";
+import { runProjectDoctor } from "../core/doctor.mjs";
+import { captureEvidence } from "../core/evidence-capture.mjs";
 import { checkMcpLock, lockMcpServers, MCP_LOCK_PATH } from "../core/mcp-lock.mjs";
 import { handleMcpMessage } from "../core/mcp-server.mjs";
+import { generateProjectReport } from "../core/project-report.mjs";
 import { withProjectLock } from "../core/project-lock.mjs";
 import { discoverSkills } from "../core/skills.mjs";
 import { suggestProjectSkills } from "../core/skills-advisor.mjs";
@@ -461,6 +465,81 @@ function runSkillsGuardrailsEval(spec) {
   }
 }
 
+async function runSessionHygieneEval(spec) {
+  const ws = makeWorkspace("gf-eval-compact-");
+  try {
+    const { root, projectDir } = ws;
+    const isolatedGlobal = path.join(root, "empty-global");
+    fs.mkdirSync(isolatedGlobal, { recursive: true });
+    for (let i = 1; i <= spec.input.activeTaskCount; i += 1) {
+      createTask({ projectDir, harnessDir: HARNESS_DIR, title: `Stream task ${i}`, activate: true });
+    }
+    const beforeDoc = await runProjectDoctor({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      globalSkillsDir: isolatedGlobal,
+      checkMcp: false,
+    });
+    assert.equal(beforeDoc.checks.find((c) => c.id === "session_hygiene").status, spec.expected.initialHygieneStatus);
+
+    const compacted = compactSession({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      summary: spec.input.summary,
+    });
+    assert.equal(compacted.checkpointId, spec.expected.checkpointId);
+    assert.equal(compacted.contextPacket.profile, spec.expected.profile);
+    assert.match(compacted.freshSessionPrompt, /CHKPT-0001/);
+
+    return {
+      checkpointId: compacted.checkpointId,
+      estimatedTokens: compacted.contextPacket.estimatedTokens,
+    };
+  } finally {
+    ws.cleanup();
+  }
+}
+
+async function runReportAndCatalogEval(spec) {
+  const ws = makeWorkspace("gf-eval-report-");
+  try {
+    const { root, projectDir } = ws;
+    const isolatedGlobal = path.join(root, "empty-global");
+    fs.mkdirSync(isolatedGlobal, { recursive: true });
+    const advised = suggestProjectSkills({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      globalSkillsDir: isolatedGlobal,
+      templateId: spec.input.templateId,
+      scaffoldDraft: true,
+    });
+    assert.equal(advised.scaffoldResult.quarantined, spec.expected.quarantined);
+    assert.equal(advised.scaffoldResult.promotable, spec.expected.promotable);
+
+    const task = createTask({ projectDir, harnessDir: HARNESS_DIR, title: spec.input.taskTitle, activate: true });
+    captureEvidence({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      taskId: task.id,
+      name: "eval-node-pass",
+      commandArgv: [process.execPath, "-e", "process.exit(0)"],
+    });
+    const report = await generateProjectReport({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      globalSkillsDir: isolatedGlobal,
+      taskId: task.id,
+      checkMcp: false,
+    });
+    assert.equal(report.summary.verifiedEvidenceCount, spec.expected.verifiedEvidenceCount);
+    assert.equal(report.healthy, spec.expected.healthy);
+    assert.match(report.markdown, /## Verified & Draft Evidence Receipts/);
+    return { templateId: advised.selectedTemplate, verifiedEvidenceCount: report.summary.verifiedEvidenceCount };
+  } finally {
+    ws.cleanup();
+  }
+}
+
 const EVAL_RUNNERS = {
   retrieval: runRetrievalEval,
   context_layout: runLayoutEval,
@@ -469,6 +548,8 @@ const EVAL_RUNNERS = {
   coding_loop: runCodingLoopEval,
   lock_safety: runLockSafetyEval,
   skills_guardrails: runSkillsGuardrailsEval,
+  session_hygiene: runSessionHygieneEval,
+  report_and_catalog: runReportAndCatalogEval,
 };
 
 async function main() {

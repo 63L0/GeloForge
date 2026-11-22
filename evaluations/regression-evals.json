@@ -154,6 +154,35 @@
         "promotable": false,
         "lintPassed": true
       }
+    },
+    {
+      "id": "eval-009-session-compaction-bootstrap",
+      "category": "session_hygiene",
+      "title": "geloforge compact captures CHKPT-0001, emits fresh-chat resume prompt, and doctor session_hygiene clears",
+      "input": {
+        "activeTaskCount": 4,
+        "summary": "Long session ready for fresh context handoff"
+      },
+      "expected": {
+        "initialHygieneStatus": "warn",
+        "checkpointId": "CHKPT-0001",
+        "profile": "quick"
+      }
+    },
+    {
+      "id": "eval-010-starter-catalog-and-report",
+      "category": "report_and_catalog",
+      "title": "Starter skill catalog stages lint-clean quarantined draft and report summarizes verified evidence",
+      "input": {
+        "templateId": "automation-workflow-guardrails",
+        "taskTitle": "Verify eval check for PR summary"
+      },
+      "expected": {
+        "quarantined": true,
+        "promotable": false,
+        "verifiedEvidenceCount": 1,
+        "healthy": true
+      }
     }
   ]
 }

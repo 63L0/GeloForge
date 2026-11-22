@@ -612,6 +612,21 @@ function buildRecommendations({
         requiresHumanApproval: false,
       });
     }
+
+    const activeCount = (state.active_tasks || []).length;
+    const revNum = typeof state.state_revision === "number" ? state.state_revision : 0;
+    if (activeCount > 3 || (revNum >= 8 && !state.last_checkpoint)) {
+      recs.push({
+        rank: 78,
+        priority: "medium",
+        category: "session_compaction",
+        title: "Compact session state and rotate to a fresh context window",
+        reason: `Project shows accumulated session state (active_tasks=${activeCount}, state_revision=${revNum}, last_checkpoint=${state.last_checkpoint || "none"}).`,
+        options: ["Save a recovery checkpoint, compile a slim quick resume packet, and generate a fresh-chat prompt"],
+        command: "geloforge compact",
+        requiresHumanApproval: false,
+      });
+    }
   }
 
   if (activeLeases.length === 0 && state && (state.active_tasks || []).length > 0 && vcs.available && vcs.dirtyCount > 0) {
