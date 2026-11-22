@@ -433,13 +433,14 @@ test("status & recommend aggregate approval inbox (skill draft, APPR, ADR) and o
 
     // Claim overlapping leases with --force to verify overlap recommendation
     createTask({ projectDir, title: "Parallel module work", createdAt: "2026-11-20T09:08:30Z" });
+    const leaseCreatedAt = new Date().toISOString();
     claimTaskLease({
       projectDir,
       taskId: "TASK-0001",
       tool: "gemini",
       role: "developer",
       scopes: ["src/core"],
-      createdAt: "2026-11-20T09:09:00Z",
+      createdAt: leaseCreatedAt,
     });
     claimTaskLease({
       projectDir,
@@ -448,7 +449,7 @@ test("status & recommend aggregate approval inbox (skill draft, APPR, ADR) and o
       role: "qa-security-reviewer",
       scopes: ["src/core/engine.mjs"],
       force: true,
-      createdAt: "2026-11-20T09:09:30Z",
+      createdAt: leaseCreatedAt,
     });
 
     const status = getProjectStatus(projectDir);

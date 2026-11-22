@@ -11,6 +11,12 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { bootstrapProject, DEFAULT_INIT_LOCATION } from "./bootstrap-project.mjs";
 import { adoptProject } from "../core/adopt-project.mjs";
+import { auditStagingFailure, readAutonomousMode, setAutonomousMode, stagingProgressPath } from "../core/autonomous-audit.mjs";
+import { authorizeStagingWorker, watchStagingAudits } from "../core/staging-audit.mjs";
+import { learnFromStagingAudits } from "../core/audit-learning.mjs";
+import { manageWorktrees } from "../core/worktrees.mjs";
+import { promoteProjectProposal } from "../core/promotion.mjs";
+import { compileCachedContext } from "../core/context-cache.mjs";
 import { validateProject } from "../core/project-validator.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectStatus, getProjectRecommendations } from "../core/project-status.mjs";
@@ -45,7 +51,8 @@ import {
   signSkillApproval,
 } from "../core/skills-lifecycle.mjs";
 import { atomicWriteFile, redactSecretContent, validateOutputFilePath } from "../core/path-safety.mjs";
-import { resolveProjectDir } from "../core/project-locator.mjs";
+import { loadProjectManifestAndState, resolveProjectDir } from "../core/project-locator.mjs";
+import { readRuntimeJson } from "../core/runtime-files.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,6 +81,9 @@ Commands:
   handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
   checkpoint Create, list, or inspect session recovery checkpoints (CHKPT-NNNN)
   recommend  Show ranked Human-in-the-Loop Co-Pilot recommendations & approval inbox
+  autonomous Run opt-in staging audits, review progress, and learn from completed audits
+  proposal   Review, sign, or promote a canonical-document proposal
+  worktree   Add, list, or remove isolated local Git worktrees
   status     Inspect project health, operational task state, leases, and Git status
   mcp        Start the stdio MCP server or configure MCP clients with mcp init
 
@@ -85,6 +95,44 @@ Global Options:
 
 function printSubHelp(cmd) {
   switch (cmd) {
+    case "autonomous":
+      console.log(`Usage: geloforge autonomous <status|on|off|audit|authorize|watch|progress|learn> [options]
+
+  status | on | off     Inspect or set this project's switch (default OFF)
+  audit                 Verify one saved local failure with --event and --execution
+  authorize             Sign a staging --config with --key (optional --expires-at)
+  watch                 Process staging deliveries using --config, --approval and --owner-key
+                        Use --once to process the inbox and exit
+  progress              Show the saved audit stage and remaining work with --task
+  learn                 List recurring failures, or draft with --pattern and --skill
+                        Use --step to provide a reviewed checklist step
+
+Paths for --event, --execution and --config are relative to the project.
+Use --project <path> to select the project and --json for machine-readable output.
+`);
+      break;
+    case "proposal":
+      console.log(`Usage: geloforge proposal <preview|sign|promote> --proposal <file.md> --target <file.md> --evidence EVID-NNNN [options]
+
+  sign       Use --key <private PEM> and optional --expires-at <ISO timestamp>
+  promote    Use --approval APPR-NNNN and --owner-key <pinned public PEM>
+  --project  Project path (auto-detected when omitted)
+  --json     Emit structured output
+
+Paths are project-relative. Repeat --evidence to bind multiple verified records.
+`);
+      break;
+    case "worktree":
+      console.log(`Usage: geloforge worktree <list|add|remove> [name] [options]
+
+  --project <path>     Git project root (auto-detected when omitted)
+  --workspace <path>   Workspace containing worktrees/ (defaults to project parent)
+  --ref <ref>          Commit or ref for add (defaults to HEAD)
+  --json               Emit structured output
+
+Removal delegates to Git's clean-worktree check and preserves the branch.
+`);
+      break;
     case "init":
       console.log(`Usage: geloforge init --name "<Project Name>" [options]
 
@@ -148,6 +196,7 @@ Options:
   --skill <name>          Explicitly pin a trusted skill into Tier 1 (repeatable; implies --skills)
   --skills-budget <int>   Override portable skills estimated-token budget (>= 100)
   --exclude-unverified    Omit A5-A6, draft, and unverified records/skills completely
+  --cache                 Reuse an unchanged query packet from the project disk cache
   --format <type>         Output format: markdown (default) or json
   -o, --out <file>        Write output atomically to a safe file path
   --compiled-at <iso>     ISO-8601 timestamp for deterministic manifest
@@ -174,12 +223,13 @@ Options:
 `);
       break;
     case "checkpoint":
-      console.log(`Usage: geloforge checkpoint <create|list|show> [options]
+      console.log(`Usage: geloforge checkpoint <create|list|show|resume> [options]
 
 Subcommands:
   create                  Capture a CHKPT-NNNN session recovery checkpoint
   list                    List recovery checkpoints ordered newest first
-  show                    Inspect a specific checkpoint (or latest if ID omitted)
+  show                    Inspect a specific checkpoint (or last project checkpoint)
+  resume                  Read a checkpoint, compare current state, and show the next action
 
 Options:
   -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
@@ -192,6 +242,7 @@ Options:
   --id <CHKPT-NNNN>       Explicit checkpoint ID ('create' or 'show')
   --created-at <iso>      ISO-8601 timestamp override ('create')
   --dry-run               Preview checkpoint without writing disk ('create')
+  --local                 Save in local-runtime/checkpoints/ without updating project state ('create')
   --json                  Emit structured JSON output
   -h, --help              Show help
 `);
@@ -213,7 +264,7 @@ Options:
   -h, --help              Show help
 
 Init options:
-  --client <name>         cursor, vscode, claude, or gemini (repeatable, defaults to all four)
+  --client <name>         cursor, vscode, claude, gemini, or antigravity (default: first four)
   --dry-run               Preview project configuration and rule updates
   --json                  Emit the list of planned or written files
 `);
@@ -526,6 +577,7 @@ function handleContext(args) {
       skill: { type: "string", multiple: true },
       "skills-budget": { type: "string" },
       "exclude-unverified": { type: "boolean", default: false },
+      cache: { type: "boolean" },
       "from-diff": { type: "boolean", default: false },
       "include-completed": { type: "boolean", default: false },
       format: { type: "string", default: "markdown" },
@@ -587,7 +639,8 @@ function handleContext(args) {
   }
 
   const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
-  const result = compileContext({
+  const compile = parsed.values.cache ? compileCachedContext : compileContext;
+  const result = compile({
     projectDir,
     taskId: parsed.values.task,
     query: parsed.values.query,
@@ -636,6 +689,146 @@ function handleContext(args) {
   return 0;
 }
 
+async function handleAutonomous(args) {
+  const [subcommand, ...rest] = args;
+  if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+    printSubHelp("autonomous");
+    return 0;
+  }
+  const specific = {
+    status: {}, on: {}, off: {},
+    audit: { event: { type: "string" }, execution: { type: "string" } },
+    authorize: { config: { type: "string" }, key: { type: "string" }, "expires-at": { type: "string" } },
+    watch: { config: { type: "string" }, approval: { type: "string" }, "owner-key": { type: "string" }, once: { type: "boolean" } },
+    progress: { task: { type: "string" } },
+    learn: { pattern: { type: "string" }, skill: { type: "string" }, step: { type: "string" } },
+  };
+  if (!Object.hasOwn(specific, subcommand)) throw new Error("Unknown autonomous subcommand. See autonomous --help.");
+  const { values } = parseArgs({
+    args: rest,
+    options: {
+      ...specific[subcommand], project: { type: "string", short: "p" },
+      json: { type: "boolean" }, help: { type: "boolean", short: "h" },
+    },
+  });
+  if (values.help) {
+    printSubHelp("autonomous");
+    return 0;
+  }
+
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const options = { projectDir, harnessDir: HARNESS_DIR };
+  let result;
+  if (subcommand === "audit") {
+    result = auditStagingFailure({ ...options, eventFile: values.event, executionFile: values.execution });
+  } else if (subcommand === "status") {
+    loadProjectManifestAndState(projectDir, HARNESS_DIR);
+    result = { mode: readAutonomousMode(projectDir) };
+  } else if (subcommand === "authorize") {
+    result = authorizeStagingWorker({ ...options, configFile: values.config, privateKeyPath: values.key,
+      expiresAt: values["expires-at"] });
+  } else if (subcommand === "watch") {
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    const signals = ["SIGINT", "SIGTERM"];
+    for (const signal of signals) process.on(signal, stop);
+    try {
+      result = await watchStagingAudits({
+        ...options, configFile: values.config, approvalId: values.approval, publicKeyPath: values["owner-key"],
+        once: values.once, signal: controller.signal,
+        onResult: values.once ? undefined : (outcome) => {
+          console.log(values.json ? JSON.stringify(outcome) :
+            `${outcome.taskId ?? outcome.file} ${outcome.status}. ${outcome.nextAction}`);
+        },
+      });
+    } finally {
+      for (const signal of signals) process.removeListener(signal, stop);
+    }
+  } else if (subcommand === "progress") {
+    loadProjectManifestAndState(projectDir, HARNESS_DIR);
+    const progress = readRuntimeJson(projectDir, stagingProgressPath(values.task));
+    if (!progress) throw new Error("No staging audit progress found for this task.");
+    const stepStatus = (step) => ({ attempts: step.attempts, saved: Boolean(step.result), issue: step.error ?? null });
+    const nextAction = progress.nextAction ?? progress.stopReason ?? "Resume the same inbox delivery with the audit worker. Completed steps will be reused.";
+    result = {
+      taskId: values.task, runs: progress.runs, repairRetries: progress.repairs,
+      specialists: progress.specialists.map(stepStatus), reviewer: progress.reviewer && stepStatus(progress.reviewer), nextAction,
+    };
+  } else if (subcommand === "learn") {
+    result = learnFromStagingAudits({ ...options, patternId: values.pattern, skillName: values.skill, step: values.step });
+  } else {
+    result = { mode: setAutonomousMode({ ...options, enabled: subcommand === "on" }) };
+  }
+
+  if (values.json) console.log(JSON.stringify({ projectDir, ...result }, null, 2));
+  else if (["status", "on", "off", "audit"].includes(subcommand)) {
+    console.log(`Autonomous mode: ${result.mode.toUpperCase()}`);
+    if (subcommand === "audit") {
+      console.log(`Audit ${result.status}: workflow ${result.workflowId}, execution ${result.executionId}${result.reused ? " (existing task)" : ""}`);
+      if (result.taskId) console.log(`Task: ${result.taskId}`);
+      if (result.checkpointId) console.log(`Checkpoint: ${result.checkpointId}`);
+      if (result.evidenceId) console.log(`Evidence: ${result.evidenceId}`);
+      console.log(`Next step: ${result.nextAction}`);
+    }
+  } else console.log(JSON.stringify(result, null, 2));
+  return 0;
+}
+
+function handleProposal(args) {
+  const [action, ...rest] = args;
+  if (!action || ["--help", "-h"].includes(action)) {
+    printSubHelp("proposal");
+    return 0;
+  }
+  if (!["preview", "sign", "promote"].includes(action)) throw new Error("Use proposal preview, sign, or promote.");
+  const { values } = parseArgs({
+    args: rest,
+    options: {
+      project: { type: "string", short: "p" }, proposal: { type: "string" }, target: { type: "string" },
+      evidence: { type: "string", multiple: true }, approval: { type: "string" }, key: { type: "string" },
+      "owner-key": { type: "string" }, "expires-at": { type: "string" }, json: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  if (values.help) {
+    printSubHelp("proposal");
+    return 0;
+  }
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const result = promoteProjectProposal({
+    projectDir, harnessDir: HARNESS_DIR, action, proposal: values.proposal, target: values.target,
+    evidenceIds: values.evidence, approvalId: values.approval, privateKeyPath: values.key,
+    publicKeyPath: values["owner-key"], expiresAt: values["expires-at"],
+  });
+  console.log(JSON.stringify(result, null, 2));
+  return 0;
+}
+
+function handleWorktree(args) {
+  const [action, ...rest] = args;
+  if (!action || ["--help", "-h"].includes(action)) {
+    printSubHelp("worktree");
+    return 0;
+  }
+  if (!["list", "add", "remove"].includes(action)) throw new Error("Use worktree list, add, or remove.");
+  const { values, positionals } = parseArgs({
+    args: rest, allowPositionals: true,
+    options: {
+      project: { type: "string", short: "p" }, workspace: { type: "string" }, ref: { type: "string" },
+      json: { type: "boolean" }, help: { type: "boolean", short: "h" },
+    },
+  });
+  if (values.help) {
+    printSubHelp("worktree");
+    return 0;
+  }
+  if (positionals.length !== (action === "list" ? 0 : 1)) throw new Error("Supply one worktree name for add or remove.");
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const result = manageWorktrees({ projectDir, action, name: positionals[0], workspace: values.workspace, ref: values.ref });
+  console.log(JSON.stringify(result, null, 2));
+  return 0;
+}
+
 function handleStatus(args) {
   const parsed = parseArgs({
     args,
@@ -670,6 +863,7 @@ function handleStatus(args) {
       `Operational    : phase=${s.currentPhase} | active=${s.activeTasks.length} | blocked=${s.blockedTasks.length} | approvals=${s.pendingApprovals.length} | conflicts=${s.openConflicts.length}`
     );
   }
+  console.log(`Autonomous mode: ${status.autonomousMode.toUpperCase()}`);
   console.log(
     `Git            : ${
       status.vcs.available
@@ -723,6 +917,7 @@ function handleRecommend(args) {
     return 0;
   }
   console.log(`Co-Pilot Recommend : ${rec.project ? `${rec.project.name} (${rec.project.id})` : rec.projectDir}`);
+  console.log(`Autonomous mode    : ${rec.autonomousMode.toUpperCase()}`);
   console.log(
     `Approval Inbox     : ${rec.pendingApprovalsInbox.length} pending item(s) | Active Leases: ${rec.activeLeases.length}`
   );
@@ -770,6 +965,7 @@ function handleCheckpoint(args) {
         id: { type: "string" },
         "created-at": { type: "string" },
         "dry-run": { type: "boolean", default: false },
+        local: { type: "boolean" },
         json: { type: "boolean", default: false },
         help: { type: "boolean", short: "h", default: false },
       },
@@ -793,6 +989,7 @@ function handleCheckpoint(args) {
       id: parsed.values.id,
       createdAt: parsed.values["created-at"],
       dryRun: parsed.values["dry-run"],
+      local: parsed.values.local,
     });
     if (parsed.values.json) {
       console.log(JSON.stringify(res, null, 2));
@@ -833,7 +1030,7 @@ function handleCheckpoint(args) {
     return 0;
   }
 
-  if (subcmd === "show") {
+  if (subcmd === "show" || subcmd === "resume") {
     const parsed = parseArgs({
       args: rest,
       options: {
@@ -851,7 +1048,22 @@ function handleCheckpoint(args) {
     }
     const targetId = parsed.values.id || parsed.positionals[0] || null;
     const { projectDir } = resolveProjectDir({ project: parsed.values.project, harnessDir: HARNESS_DIR });
-    const res = getCheckpoint({ projectDir, checkpointId: targetId, harnessDir: HARNESS_DIR });
+    const res = getCheckpoint({ projectDir, checkpointId: targetId, harnessDir: HARNESS_DIR, newest: subcmd === "resume" });
+    if (subcmd === "resume") {
+      const { state } = loadProjectManifestAndState(projectDir, HARNESS_DIR);
+      const advanced = state.state_revision !== res.record.state_revision;
+      const unavailable = ["expired", "invalidated"].includes(res.record.status);
+      const resume = {
+        ...res, stateAdvanced: advanced,
+        nextAction: unavailable ? "Use a current checkpoint or run geloforge recommend." : res.record.resume_instructions,
+        reason: unavailable ? "This checkpoint is expired or invalidated." : advanced
+          ? "Project state differs from the saved checkpoint. Confirm the current task before applying the saved instructions."
+          : "The checkpoint matches the current project state revision.",
+      };
+      if (parsed.values.json) console.log(JSON.stringify(resume, null, 2));
+      else console.log(`${res.checkpointId} — ${resume.reason}\n${resume.nextAction}`);
+      return 0;
+    }
     if (parsed.values.json) {
       console.log(JSON.stringify(res, null, 2));
       return 0;
@@ -864,7 +1076,7 @@ function handleCheckpoint(args) {
     return 0;
   }
 
-  throw new Error(`Unknown checkpoint subcommand "${subcmd}". Expected: create, list, or show.`);
+  throw new Error(`Unknown checkpoint subcommand "${subcmd}". Expected: create, list, show, or resume.`);
 }
 
 function handleMcpInit(args) {
@@ -2264,6 +2476,15 @@ async function main() {
         break;
       case "recommend":
         code = handleRecommend(rest);
+        break;
+      case "autonomous":
+        code = await handleAutonomous(rest);
+        break;
+      case "proposal":
+        code = handleProposal(rest);
+        break;
+      case "worktree":
+        code = handleWorktree(rest);
         break;
       case "status":
         code = handleStatus(rest);

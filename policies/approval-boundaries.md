@@ -1,18 +1,18 @@
 # Security and Approval Boundaries Policy
 
-> **Honesty Boundary:** This policy defines `A0` rules and owner approval gates. **Technically enforced checks** live in `core/` and `scripts/` (covered by `tests/security.test.mjs`). **Runtime approval interceptors, OS ACL write restrictions, and automated agent sandboxes are NOT IMPLEMENTED in Phase 1.**
+> **Enforcement scope:** GeloForge enforces the CLI checks listed below. OS permissions and provider sandbox settings govern other processes and their access.
 
 ## Technically Enforced Controls vs. Documented-Only Safeguards
 
-| Control | Phase 1 Status | Mechanism / Scope |
+| Control | Status | Mechanism / Scope |
 | :--- | :--- | :--- |
 | Traversal, UNC, Windows reserved names, trailing dot/space refusal | **Technically enforced** | [core/path-safety.mjs](../core/path-safety.mjs) |
 | Symbolic link / NTFS junction ancestor refusal | **Technically enforced** | [core/path-safety.mjs](../core/path-safety.mjs) (`lstatSync` + `realpathSync`) |
 | Overwrite refusal & transactional staging rollback | **Technically enforced** | [scripts/bootstrap-project.mjs](../scripts/bootstrap-project.mjs) |
 | Single-pass placeholder substitution (no double-interpolation) | **Technically enforced** | [scripts/bootstrap-project.mjs](../scripts/bootstrap-project.mjs) |
 | Secret & `.env` `.gitignore` rules + zero-network tooling | **Technically enforced** | [.gitignore](../.gitignore), verified by `tests/security.test.mjs` |
-| `APPR-NNNN` owner approval gates & role write limits | **Documented only** | Relies on operator discipline until Phase 3 controller exists |
-| Max-2 concurrency / max-2 retry / spend limits | **Documented only** | Runtime orchestrator not implemented |
+| `APPR-NNNN` owner approval gates | **Technically enforced for signed operations** | Canonical promotion and staging worker launches verify an owner key. See [setup](../docs/advanced-usage.md). |
+| Specialist and retry limits | **Technically enforced for staging audits** | Up to two concurrent specialists and two report repair retries per task. Owner approval caps provider launches. |
 
 ## Authority Level `A0` — Global Harness Security Rules
 

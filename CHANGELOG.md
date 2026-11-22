@@ -2,6 +2,17 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.7.0] — 2026-11-22
+
+- Add opt-in staging audits that load task context and skills, deduplicate deliveries, resume after interruption, and record evidence-backed findings and checkpoints.
+- Ship an n8n staging delivery workflow and bounded audit adapters for Codex CLI, Gemini CLI, and Antigravity CLI.
+- Learn from recurring verified failures and draft skill updates for owner review.
+- Gate requirements and ADR promotion on verified evidence and signed owner approval.
+- Add local checkpoint recovery, isolated Git worktrees, and an opt-in disk cache for query context.
+- Configure project-scoped MCP for Antigravity with `mcp init --client antigravity`.
+
+[Release notes](./docs/release-notes-v0.7.0.md)
+
 ## [0.6.0] — 2026-11-20
 
 - Package the CLI for npm and test installation from the release tarball on Linux, macOS, and Windows.

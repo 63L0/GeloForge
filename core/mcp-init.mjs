@@ -5,6 +5,7 @@ import { assertSafeWithinRoot, isForbiddenSecretPath } from "./path-safety.mjs";
 import { loadProjectManifestAndState } from "./project-locator.mjs";
 import { runMultiFileTransaction, withProjectLock } from "./project-lock.mjs";
 
+const DEFAULT_CLIENTS = ["cursor", "vscode", "claude", "gemini"];
 const CLIENTS = {
   cursor: {
     config: ".cursor/mcp.json", key: "mcpServers",
@@ -17,7 +18,8 @@ const CLIENTS = {
   claude: {
     config: ".mcp.json", key: "mcpServers", type: "stdio", rules: ".claude/rules/geloforge.md",
   },
-  gemini: { config: ".gemini/settings.json", key: "mcpServers", rules: "GEMINI.md" },
+  gemini: { config: ".gemini/settings.json", key: "mcpServers", rules: "GEMINI.md", appendRules: true },
+  antigravity: { config: ".agents/mcp_config.json", key: "mcpServers", rules: "AGENTS.md", appendRules: true },
 };
 
 const START = "<!-- geloforge:mcp-init:start -->";
@@ -150,7 +152,7 @@ function updateServer(file, client, server) {
   return { data, content };
 }
 
-function updateRules(file, { frontmatter = "", gemini = false, readOnly }) {
+function updateRules(file, { frontmatter = "", appendRules = false, readOnly }) {
   const original = file.original ?? "";
   const eol = original.includes("\r\n") ? "\r\n" : "\n";
   const block = [
@@ -158,7 +160,8 @@ function updateRules(file, { frontmatter = "", gemini = false, readOnly }) {
     "## GeloForge workflow",
     "",
     "- At the start of project work, call `geloforge_recommend` and review pending approvals.",
-    "- Before making changes, call `geloforge_context` with the task ID or a short query.",
+    "- Before auditing, debugging, or making changes, call `geloforge_context` with the task ID or a short query and `skills: true`.",
+    "- Follow relevant skills returned with the context. If none match, continue with the project rules. Record any skills used in the handoff.",
     ...(readOnly ? [
       "- Use `geloforge_task` and `geloforge_checkpoint` to read task and checkpoint history.",
     ] : [
@@ -170,7 +173,7 @@ function updateRules(file, { frontmatter = "", gemini = false, readOnly }) {
   const start = original.indexOf(START);
   const end = original.indexOf(END);
   if (start === -1 && end === -1) {
-    if (original && !gemini) throw new Error(`Existing rule ${file.relativePath} has no GeloForge section.`);
+    if (original && !appendRules) throw new Error(`Existing rule ${file.relativePath} has no GeloForge section.`);
     return original ? `${original}${eol}${eol}${block}${eol}` : `${frontmatter}${block}${eol}`;
   }
   if (start === -1 || end < start || original.lastIndexOf(START) !== start || original.lastIndexOf(END) !== end) {
@@ -204,9 +207,9 @@ function launchCommand({ projectDir, harnessDir, readOnly }) {
 }
 
 export function initMcpClients({ projectDir, harnessDir, clients, dryRun = false, readOnly = false }) {
-  const names = clients?.length ? [...new Set(clients)] : Object.keys(CLIENTS);
+  const names = clients?.length ? [...new Set(clients)] : DEFAULT_CLIENTS;
   for (const name of names) {
-    if (!Object.hasOwn(CLIENTS, name)) throw new Error(`Unknown MCP client "${name}". Use cursor, vscode, claude, or gemini.`);
+    if (!Object.hasOwn(CLIENTS, name)) throw new Error(`Unknown MCP client "${name}". Use cursor, vscode, claude, gemini, or antigravity.`);
   }
   const run = () => {
     loadProjectManifestAndState(projectDir, harnessDir);
@@ -226,7 +229,7 @@ export function initMcpClients({ projectDir, harnessDir, clients, dryRun = false
       const rules = readConfigFile(projectDir, rulesPath);
       return [
         { ...config, content },
-        { ...rules, content: updateRules(rules, { frontmatter: client.frontmatter, gemini, readOnly }) },
+        { ...rules, content: updateRules(rules, { frontmatter: client.frontmatter, appendRules: client.appendRules, readOnly }) },
       ];
     });
     const destinations = edits.map(({ filePath }) => process.platform === "win32" ? filePath.toLowerCase() : filePath);

@@ -6,12 +6,15 @@
  */
 
 import fs from "node:fs";
+import { readRegularFile } from "./runtime-files.mjs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   assertSafeWithinRoot,
+  isForbiddenSecretPath,
   deriveSlug,
   hasSecretContent,
   redactSecretContent,
@@ -117,6 +120,17 @@ export function captureEvidence(options = {}) {
   };
   const initial = dryRun ? prepareTarget() : withProjectLock(options.projectDir, prepareTarget);
   const { projectDir } = initial;
+  const readArtifacts = () => (options.artifactPaths || []).map((relativePath) => {
+    if (path.isAbsolute(relativePath) || isForbiddenSecretPath(relativePath) || hasSecretContent(relativePath)) {
+      throw new Error("Use a safe, project-relative evidence artifact path.");
+    }
+    const bytes = readRegularFile(assertSafeWithinRoot(projectDir, relativePath));
+    if (!bytes || hasSecretContent(bytes.toString("utf8"))) throw new Error("Evidence artifact is missing or unsafe.");
+    return {
+      path: relativePath, description: "Verified command input",
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  });
   const gitInfo = getGitRepoInfo(projectDir);
   const sourceRevision = !gitInfo.available ? "no-git-repo" : gitInfo.unborn ? "git-unborn-head" : gitInfo.head;
   const environment = {
@@ -172,6 +186,7 @@ export function captureEvidence(options = {}) {
     };
   }
 
+  const artifacts = readArtifacts();
   const [exe, ...cmdArgs] = commandArgv;
   const startedAt = Date.now();
   const proc = spawnSync(exe, cmdArgs, {
@@ -227,6 +242,9 @@ export function captureEvidence(options = {}) {
   // Run the command outside the project lock, then allocate and link against current state.
   return withProjectLock(projectDir, () => {
     const { schemasDir, state, stateSchema, stateFilePath, targetTask, id, title, relPath, filePath } = prepareTarget();
+    if (artifacts.length && JSON.stringify(artifacts) !== JSON.stringify(readArtifacts())) {
+      throw new Error("Evidence artifact changed during verification. Retry with a stable copy.");
+    }
     const record = {
       schema_version: "1.1",
       id,
@@ -248,8 +266,8 @@ export function captureEvidence(options = {}) {
           summary: redactSecretContent(summary),
         },
       ],
-      artifacts: [],
-      limitations: limitations.map((l) => redactSecretContent(l)),
+      artifacts,
+      limitations: [...limitations, ...(options.limitations || [])].map((l) => redactSecretContent(l)),
     };
 
     const evidSchema = JSON.parse(fs.readFileSync(path.join(schemasDir, "evidence-manifest.schema.json"), "utf8"));

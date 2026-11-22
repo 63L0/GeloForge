@@ -1,6 +1,6 @@
 # AGENTS.md — Project Agent Entrypoint
 
-> **Configuration Notice:** Creating this file does **not** automatically configure Codex, Google Antigravity, or any autonomous subagent runtime. It is a concise, provider-independent entrypoint to shared project memory.
+> Use this guide in each connected coding assistant. Set up MCP clients separately with `geloforge mcp init --help`.
 
 ## Start Here (Do Not Duplicate the Second Brain)
 
@@ -22,5 +22,6 @@ Read shared project memory in priority order before proposing or implementing ch
 ## Human-in-the-Loop Co-Pilot Protocol
 
 - **Recommend, don't assume:** When multiple architectural or product approaches exist, present options + trade-offs and run `geloforge recommend` to check pending human approvals.
-- **Prevent context rot:** Start focused tasks with `geloforge context --task TASK-NNNN --from-diff --map --profile quick`, mark finished tasks `done`, and save state with `geloforge checkpoint create` before switching sessions.
-- **Coordinate across IDEs:** Claim a cooperative lease (`geloforge task claim --task TASK-NNNN --tool <ide> --role <role> --scopes "..."`) before concurrent editing, and release it when finished.
+- **Load task context and skills:** Before auditing, debugging, or changing the project, call `geloforge_context` with `skills: true` and the task ID or a short query. If MCP is unavailable, use `geloforge context --query "<task description>" --skills --profile quick`, or pass `--task TASK-NNNN` in place of `--query`. Follow relevant skills from the returned context. If none match, continue with the project rules. In the handoff, record which skills you used or that none matched.
+- **Prevent context rot:** Mark finished tasks `done` and save state with `geloforge checkpoint create` before switching sessions.
+- **Coordinate across IDEs:** Claim a cooperative lease (`geloforge task claim --task TASK-NNNN --tool <ide> --session <id> --role <role> --scope "<path>"`) before concurrent editing, and release it when finished.

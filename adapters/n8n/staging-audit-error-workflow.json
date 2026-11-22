@@ -1,0 +1,132 @@
+{
+  "name": "GeloForge Staging Failure Delivery",
+  "active": false,
+  "nodes": [
+    {
+      "id": "11c36462-4033-40dd-8557-7f4f9c7ad010",
+      "name": "Staging Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        280
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "11c36462-4033-40dd-8557-7f4f9c7ad011",
+      "name": "Select staging failure IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        230,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const valid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value);\nconst event = $input.first().json;\nconst workflowId = String(event.workflow?.id ?? '');\nconst executionId = String(event.execution?.id ?? '');\nif (!valid(workflowId) || !valid(executionId)) return [];\nreturn [{ json: { workflowId, executionId } }];"
+      }
+    },
+    {
+      "id": "11c36462-4033-40dd-8557-7f4f9c7ad012",
+      "name": "Get saved staging execution",
+      "type": "n8n-nodes-base.n8n",
+      "typeVersion": 1,
+      "position": [
+        460,
+        280
+      ],
+      "parameters": {
+        "resource": "execution",
+        "operation": "get",
+        "executionId": "={{ $json.executionId }}",
+        "options": {
+          "activeWorkflows": true
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "11c36462-4033-40dd-8557-7f4f9c7ad013",
+      "name": "Project audit evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        690,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const ids = $('Select staging failure IDs').first().json;\nconst raw = $input.first().json;\nconst revision = raw.workflowVersionId ?? raw.workflowData?.versionId;\nconst result = raw.data?.resultData;\nconst runData = result?.runData;\nconst workflowNodes = raw.workflowData?.nodes;\nconst nodes = Array.isArray(workflowNodes) ? workflowNodes.map(node => node?.name ?? null) : null;\nconst matches = String(raw.id ?? '') === ids.executionId &&\n  String(raw.workflowId ?? '') === ids.workflowId && raw.status === 'error';\nconst delivery = {\n  environment: 'staging',\n  ...ids,\n  execution: matches ? {\n    id: ids.executionId,\n    workflowId: ids.workflowId,\n    revision,\n    status: raw.status,\n    nodes,\n    executed: runData && typeof runData === 'object' && !Array.isArray(runData) ? Object.keys(runData) : null,\n    failedNode: result?.lastNodeExecuted ?? null,\n  } : null,\n};\nconst deliveryId = String($execution.id ?? '');\nif (!/^[A-Za-z0-9_-]{1,64}$/.test(deliveryId)) throw new Error('Expected a saved delivery ID.');\nconst fileName = `failure-${ids.workflowId}-${ids.executionId}-${deliveryId}.json`;\nreturn [{\n  json: { fileName },\n  binary: { data: {\n    data: Buffer.from(JSON.stringify(delivery), 'utf8').toString('base64'),\n    mimeType: 'application/json',\n    fileName,\n  } },\n}];"
+      }
+    },
+    {
+      "id": "11c36462-4033-40dd-8557-7f4f9c7ad014",
+      "name": "Write audit delivery",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        920,
+        280
+      ],
+      "parameters": {
+        "operation": "write",
+        "dataPropertyName": "data",
+        "fileName": "={{ '/files/geloforge-inbox/' + $json.fileName }}",
+        "options": {}
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Staging Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Select staging failure IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select staging failure IDs": {
+      "main": [
+        [
+          {
+            "node": "Get saved staging execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get saved staging execution": {
+      "main": [
+        [
+          {
+            "node": "Project audit evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project audit evidence": {
+      "main": [
+        [
+          {
+            "node": "Write audit delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false
+  }
+}

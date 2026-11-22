@@ -38,7 +38,7 @@ GeloForge deliberately favors a small, auditable core:
 - **Evidence over claims.** A process exit code of zero shows a command completed successfully, not that the entire application is correct.
 - **Fail closed on unsafe inputs.** Protect paths, untrusted skill content, private keys, and security-sensitive data.
 - **Preserve compatibility.** Keep supported project schema versions `1.0` and `1.1` working. Read [versioning and upgrades](./docs/versioning-and-upgrades.md).
-- **Do not overclaim agent integrations.** GeloForge generates files and CLIs; it does not automatically operate external models or IDEs.
+- **Describe agent integrations precisely.** Interactive clients use project-scoped MCP. The opt-in staging worker invokes separately installed provider CLIs under owner approval.
 
 Tests should operate on isolated fixtures and never modify unrelated user projects or contact real external services. For trust-boundary changes, document the actual guarantees and remaining limits.
 

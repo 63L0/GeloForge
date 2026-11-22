@@ -154,19 +154,11 @@ GeloForge works identically whether you use a single coding assistant across ses
 
 ---
 
-## 8. What Requires Manual Work & What Is Not Implemented Yet
+## 8. Owner Review
 
-**Still Requires Manual Action:**
-- Running your verification command explicitly (`geloforge evidence capture --task TASK-NNNN -- <cmd>`) or authoring/reviewing `evidence/EVID-NNNN-*.yaml` manifests (exit code `0` confirms command execution succeeded, not full application correctness — review tool output and untested paths carefully).
-- Authorizing skill promotions/rollbacks (`geloforge skills sign` / `promote` / `rollback`), configuring GitHub branch protection & `CODEOWNERS` for team repos, promoting canonical `brain/decisions/` or `brain/requirements/`, and resolving `CONF-NNNN` conflicts.
-- Invoking your chosen AI coding assistant CLI or IDE with compiled packets or handoffs.
+Owner review is required for canonical document changes, skill promotion and rollback, and release decisions. Use the signed gates in [Canonical proposal promotion](#canonical-proposal-promotion) and [Portable Skills](./portable-skills.md). For a repair task, use `geloforge verify --task TASK-NNNN -- <test-command>` and check what the command actually verified.
 
-**Not Implemented Yet:**
-- Automatic skill self-modification daemons or remote skill marketplaces.
-- Live multi-agent orchestrators, autonomous agent runners, or background daemons.
-- Automated promotion of non-skill `proposals/` into canonical `brain/decisions/` or `brain/requirements/` (`APPR-*` for canonical ADRs/PRDs remains manual).
-- OS/Git pre-commit write-ownership enforcement or runtime spend interceptors (`policies/` ownership rules remain documented governance only).
-- On-disk compiled context caching (`<workspace-root>/local-runtime/context-cache/`), automated `CHKPT-NNNN` checkpoint tooling, vector databases, RAG pipelines, or paid API integrations.
+See [Known Limitations](./known-limitations.md) for runner and evidence boundaries.
 
 ---
 
@@ -261,3 +253,84 @@ Supports JSON-RPC 2.0 stdin/stdout (`\n`-delimited JSON or `Content-Length:` LSP
 - **Read-only tools:** `geloforge_status`, `geloforge_recommend`, `geloforge_context`, plus read actions (`list`/`show`/`leases`/`validate`/`lint`/`history`) on `geloforge_task`, `geloforge_checkpoint`, and `geloforge_skills`.
 - **State-mutating tools (disabled under `--read-only`):** `geloforge_task` (`new`, `update`, `done`, `claim`, `release`), `geloforge_checkpoint` (`create`), and quarantined `geloforge_skills` (`draft`, `propose`).
 - **Strictly refused over MCP:** `geloforge_skills` `promote`, `rollback`, `keygen`, and `sign` so human authorization remains under local CLI / Git control.
+
+## Autonomous Mode staging pilot
+
+Use the GeloForge source checkout or a package built from it and a separate, adopted staging project. Autonomous Mode defaults to OFF for each project. A staging delivery starts an audit automatically while its worker is running.
+
+### Configure the worker
+
+1. Install and authenticate one of the [supported provider CLIs](../adapters/README.md) on the staging worker host. Run it under a dedicated OS account or container with staging inputs, staging-only credentials, and access limited to the selected provider. Keep the owner's private signing key outside that account.
+2. Save a project-relative worker configuration such as `local-runtime/staging-audit.json`. The workflow IDs are an explicit allowlist. The example uses one Codex specialist.
+
+```json
+{
+  "version": 1,
+  "workflowIds": ["staging-workflow"],
+  "timeoutMs": 45000,
+  "maxRuns": 3,
+  "maxTotalRuns": 20,
+  "specialists": [
+    {
+      "area": "Inquiry routing",
+      "provider": "codex",
+      "executable": "/absolute/path/to/codex"
+    }
+  ]
+}
+```
+
+Use a native executable path or the provider's Node.js entry point on Windows. The other provider values are `gemini` and `antigravity`. For parallel audits, configure exactly two specialists with disjoint, nonempty `nodes` lists, then add `reviewer` with its own `provider` and `executable`. Choose one of the two profiles before signing. The run cap includes specialists, the reviewer, and any report repair retries. A parallel audit needs at least three launches to finish.
+
+3. Sign the configuration using the owner's Ed25519 private key. An existing [GeloForge approver key](./portable-skills.md) works. Keep a pinned public PEM for the worker. The default approval lasts 24 hours and binds the project checkout, workflow allowlist, executable bytes, and run limits.
+
+```shell
+geloforge autonomous authorize --config local-runtime/staging-audit.json --key "<owner-private.pem>"
+geloforge autonomous on
+geloforge autonomous watch --config local-runtime/staging-audit.json --approval APPR-NNNN --owner-key "<owner-public.pem>"
+```
+
+Run these commands from the staging project. Alternatively, pass `--project "<staging-project>"`. Keep the public pin and watcher launch settings under operator control. For supervised jobs, use `watch --once` to process the inbox and exit. Run `geloforge autonomous off` to pause new audit runs.
+
+### Deliver n8n staging failures
+
+1. Start the worker once to create `local-runtime/n8n-audit/inbox/` under the staging project. Mount that inbox as `/files/geloforge-inbox` in the staging n8n service, or change the export's **Write audit delivery** path to match the shared directory. Give n8n permission to write and the worker permission to read and acknowledge files.
+2. Import the [staging delivery workflow](../adapters/n8n/staging-audit-error-workflow.json). In **Get saved staging execution**, select a credential for the staging n8n instance scoped to execution reads. Select this error workflow in the settings of a staging workflow on the allowlist. Enable saving failed executions for the audited workflow. [Error Trigger](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.errortrigger/) · [File node](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.readwritefile/)
+3. Trigger one controlled automatic staging failure. The error workflow delivers IDs, the executed revision, and node metadata. Confirm the task, report, evidence, and checkpoint in the worker output. If the saved record is inaccessible or the API omits the trace, restore the staging evidence and redeliver. Trigger failures that have no saved execution ID require operator review.
+
+Completed deliveries are acknowledged. An interrupted run keeps the inbox entry and resumes from the saved specialist results when the worker restarts. Use `geloforge autonomous progress --task TASK-NNNN`, `geloforge checkpoint resume --id CHKPT-NNNN`, or `geloforge recommend` to see the next action. Audit reports record evidence coverage and suggested next actions. Root cause and customer-facing behavior require direct staging verification.
+
+For an offline check without a provider, save an Error Trigger object as `failure.json` and a separate saved execution JSON with matching `id`, `workflowId`, and `status: "error"`. Run `geloforge autonomous on` and `geloforge autonomous audit --event failure.json --execution execution.json`. This verifies the local failure metadata.
+
+### Learn from verified runs
+
+```shell
+geloforge autonomous learn
+geloforge autonomous learn --pattern <pattern-id> --skill n8n-staging-review
+```
+
+A recurring pattern requires matching failed-node observations from at least two distinct, verified executions. The second command drafts a quarantined skill or proposes an update. Review and [sign the skill](./portable-skills.md) before promotion.
+
+## Canonical proposal promotion
+
+Put the candidate Markdown file in `proposals/`. For an ADR, give it `status: proposed` and match the intended `ADR-NNNN` and project owner. Preview the source, target, and verified evidence before signing.
+
+```shell
+geloforge proposal preview --proposal proposals/constraints.md --target brain/requirements/constraints.md --evidence EVID-NNNN
+geloforge proposal sign --proposal proposals/constraints.md --target brain/requirements/constraints.md --evidence EVID-NNNN --key "<owner-private.pem>"
+geloforge proposal promote --proposal proposals/constraints.md --target brain/requirements/constraints.md --evidence EVID-NNNN --approval APPR-NNNN --owner-key "<owner-public.pem>"
+```
+
+Changes to the draft, current target, or evidence require a new review and signature. Promoting a new ADR records the approval in its frontmatter and archives the reviewed draft in the local promotion receipt directory.
+
+## Local recovery tools
+
+```shell
+geloforge checkpoint create --local --resume "Review the saved staging result."
+geloforge checkpoint resume
+geloforge worktree add routing-review --workspace "<workspace-root>"
+geloforge worktree list --workspace "<workspace-root>"
+geloforge context --query "quotation handoff" --cache --json
+```
+
+Local checkpoints stay under the project's `local-runtime/checkpoints/`. Worktrees get their own branches. Removal checks for pending changes and ignored files before Git removes the checkout and preserves the branch. The query cache is opt-in and uses one packet per project under `local-runtime/context-cache/`. Requests with tasks, maps, diffs, skills, or a lease registry use a fresh compile.

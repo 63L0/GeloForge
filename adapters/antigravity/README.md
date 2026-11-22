@@ -1,13 +1,5 @@
-# Google Antigravity Adapter Specification
+# Google Antigravity
 
-> **Status:** Documented only — No multi-agent workflow or automated adapter runtime is configured in Phase 1.
+From the GeloForge project root, run `geloforge mcp init --client antigravity --read-only`. GeloForge adds the server to `.agents/mcp_config.json` and updates a managed block in `AGENTS.md`. Reload MCP in Antigravity to verify the server. [Antigravity MCP settings](https://antigravity.google/docs/ide-mcp)
 
-## Role in Phase 1
-
-Google Antigravity serves solely as the human-supervised setup and audit agent for establishing and hardening the harness foundation.
-
-## Future Integration Boundary (Not Implemented)
-
-- Reads project Second Brain via [AGENTS.md](../../templates/project-starter/AGENTS.md) and `brain/INDEX.md` without duplicating project knowledge.
-- Future Antigravity skills or subagent workflows must treat harness `A0` policies (`policies/approval-boundaries.md`, `policies/memory-policy.md`) and JSON schemas (`schemas/`) as authoritative contracts.
-- Antigravity's native skill/subagent conventions must remain isolated inside this adapter directory and never overwrite or alter Codex or Gemini CLI conventions.
+For background staging audits, configure `"provider": "antigravity"` with the absolute path to the installed `agy` CLI. The worker invokes plan mode with sandboxing and reads the JSON response envelope. [Antigravity headless mode](https://antigravity.google/docs/cli/headless/)
