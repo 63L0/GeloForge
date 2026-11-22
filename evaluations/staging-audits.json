@@ -1,5 +1,5 @@
 {
-  "workflowId": "furniture-staging",
+  "workflowId": "sample-staging-workflow",
   "revision": "published-stage-r7",
   "areas": {
     "Inquiry routing": ["Resolve Messenger page", "Validate inquiry"],

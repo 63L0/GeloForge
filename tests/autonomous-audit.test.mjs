@@ -14,8 +14,8 @@ const exec = promisify(execFile);
 function makeProject(t) {
   const temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "geloforge-autonomous-"));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true, maxRetries: 3 }));
-  const root = path.join(temp, "Furniture Bot staging");
-  bootstrapProject({ name: "Furniture Bot staging", dest: root, profile: "automation" });
+  const root = path.join(temp, "Sample Staging Project");
+  bootstrapProject({ name: "Sample Staging Project", dest: root, profile: "automation" });
   return root;
 }
 

@@ -1,11 +1,11 @@
-# GeloForge commands for Furniture Bot v4
+# GeloForge commands for Windows PowerShell
 
 ## Start in the project folder
 
 Open PowerShell. The `gf` function below is a shortcut for the published GeloForge v0.7.0 CLI. Run these lines again in a new PowerShell window.
 
 ```powershell
-$projectPath = Read-Host 'Paste the full path to furniture-bot-v4-baseline'
+$projectPath = Read-Host 'Paste the full path to my-staging-project'
 Set-Location -LiteralPath $projectPath
 function gf { npx --yes geloforge@0.7.0 @args }
 gf --version
@@ -22,12 +22,12 @@ gf validate
 For Antigravity, keep the existing `geloforge` entry in its MCP config. Its launch arguments should end with:
 
 ```text
-geloforge mcp --project "<full path to furniture-bot-v4-baseline>" --read-only
+geloforge mcp --project "<full path to my-staging-project>" --read-only
 ```
 
 This is the server command your IDE launches over stdio. Use `gf mcp init --client gemini --read-only --dry-run` and then `gf mcp init --client gemini --read-only` only for Gemini CLI configuration. Built-in client names also include `cursor`, `vscode`, and `claude`.
 
-In Antigravity or Codex, ask: “Call `geloforge_context` with `skills: true` for the active Furniture Bot workflows. Tell me which skill matches.” Both agents should point to the same project folder. The MCP read-only flag applies to GeloForge's tools. n8n access is configured separately.
+In Antigravity or Codex, ask: “Call `geloforge_context` with `skills: true` for the active staging workflows. Tell me which skill matches.” Both agents should point to the same project folder. The MCP read-only flag applies to GeloForge's tools. n8n access is configured separately.
 
 ## Find the next task and load context
 
@@ -35,7 +35,7 @@ In Antigravity or Codex, ask: “Call `geloforge_context` with `skills: true` fo
 |---|---|
 | `gf recommend` | Shows suggested next actions and pending approvals. |
 | `gf task list` | Lists saved project tasks. |
-| `gf task new --title 'Audit Furniture Bot staging workflow' --activate` | Creates and activates a task. Use the ID it prints in later commands. |
+| `gf task new --title 'Audit staging workflow' --activate` | Creates and activates a task. Use the ID it prints in later commands. |
 | `gf task show --task TASK-0001` | Shows the task and its linked evidence. |
 | `gf context --task TASK-0001 --skills --profile quick` | Loads focused task context and matching project skills. |
 | `gf context --query 'Trace the quotation handoff' --skills --profile working` | Loads context for a question before a task exists. |
