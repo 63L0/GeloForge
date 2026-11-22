@@ -2,6 +2,17 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.8.0] — 2026-11-22
+
+- Add MCP tool-surface pinning (`geloforge mcp lock [--check]`) to `.geloforge/mcp-lock.json` over stdio JSON-RPC 2.0 (zero network calls) with canonical SHA-256 drift detection.
+- Add bounded coding loop orchestrator (`geloforge loop run|status`) implementing `implement -> verify -> review -> fix`, upfront hierarchical codebase localization (`includeMap: true`, `fromDiff: true` on fix rounds), fail-closed reviewer `policy_checks`, and verified-evidence completion gates.
+- Upgrade context compilation (`core/context-compiler.mjs`, `core/text-utils.mjs`) with an edge-anchored 3-zone layout (contiguous `A0`/`A1-A2` prefix, middle reference/trace, bottom recency anchor for conflicts and operational tasks) and zero-dependency Contextual BM25 retrieval ranking.
+- Add concrete `input_examples` and self-correcting error hints to multi-action MCP tools (`core/mcp-server.mjs`).
+- Add an offline regression evaluation suite and runner (`npm run eval`, `evaluations/regression-evals.json`).
+- Fix Windows headless audit provider stdin EOF handling and Gemini CLI temp-dir workspace trust (`core/audit-provider.mjs`), and bypass query disk caching only while active task leases exist (`core/context-cache.mjs`).
+- Harden Windows `.geloforge/.state.lock` contention handling by retrying transient `EPERM`/`EACCES`/`EBUSY` errors during lock inspection, reclamation, and release (`core/project-lock.mjs`).
+- Overhaul `README.md` for beginner-friendly onboarding and showcase new MCP locking and bounded loop workflows.
+
 ## [0.7.0] — 2026-11-22
 
 - Add opt-in staging audits that load task context and skills, deduplicate deliveries, resume after interruption, and record evidence-backed findings and checkpoints.
