@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "description": "Deterministic anonymized regression evaluation cases covering retrieval ranking, 3-zone context layout, query cache, MCP guardrails, and coding loop safety.",
+  "cases": [
+    {
+      "id": "eval-001-bm25-rare-term-ranking",
+      "category": "retrieval",
+      "title": "Contextual BM25 ranks concise rare-term constraints above verbose common-term logs",
+      "input": {
+        "query": "workflow preflight quotation",
+        "budget": 4800,
+        "rareDoc": {
+          "relPath": "brain/decisions/ADR-0001-preflight-quotation.md",
+          "id": "ADR-0001",
+          "title": "Preflight Quotation Guard",
+          "body": "Run connection preflight checks before generating customer quotation replies."
+        },
+        "noisyDoc": {
+          "relPath": "brain/research/RES-0001-verbose-workflow-log.md",
+          "id": "RES-0001",
+          "title": "Verbose Workflow Observations",
+          "repeatedWord": "workflow",
+          "repeatCount": 45
+        },
+        "unrelatedDoc": {
+          "relPath": "brain/decisions/ADR-0002-vacuum-schedule.md",
+          "id": "ADR-0002",
+          "title": "Vacuum Maintenance",
+          "body": "Schedule weekly postgres storage compaction during low traffic hours."
+        }
+      },
+      "expected": {
+        "mustInclude": "brain/decisions/ADR-0001-preflight-quotation.md",
+        "mustOmit": "brain/decisions/ADR-0002-vacuum-schedule.md",
+        "mustOutrank": "brain/research/RES-0001-verbose-workflow-log.md"
+      }
+    },
+    {
+      "id": "eval-002-context-three-zone-layout",
+      "category": "context_layout",
+      "title": "Context compiler orders A0 + A1-A2 prefix before trace and anchors conflicts + operational state at the end",
+      "input": {
+        "orderedHeadings": [
+          "## Mandatory Governance & Safety Policies (A0)",
+          "## Authoritative Project Knowledge (A1-A2)",
+          "## Non-Authoritative / Unverified Context",
+          "## Context Selection Trace",
+          "## Unresolved Conflicts (Action Required)",
+          "## Operational State, Tasks & Verified Evidence (A3-A4)"
+        ]
+      }
+    },
+    {
+      "id": "eval-003-cache-after-lease-release",
+      "category": "context_cache",
+      "title": "Query cache bypasses only while an active lease exists and recovers after task release",
+      "input": {
+        "query": "quotation preflight workflow",
+        "tool": "codex",
+        "sessionId": "eval-lease-sess",
+        "scope": "src/"
+      },
+      "expected": {
+        "whileLeased": "bypassed",
+        "afterReleaseRun1": "miss",
+        "afterReleaseRun2": "hit"
+      }
+    },
+    {
+      "id": "eval-004-mcp-lock-and-hints",
+      "category": "mcp_guardrails",
+      "title": "MCP lock detects canonical tool drift and invalid MCP arguments emit actionable Hint text",
+      "input": {
+        "invalidTaskAction": "bogus-action",
+        "mutatedToolName": "mock_ping",
+        "addedToolName": "mock_added"
+      }
+    },
+    {
+      "id": "eval-005-coding-loop-policy-fail-closed",
+      "category": "coding_loop",
+      "title": "Coding loop rejects reviewer approve with failed policy check and completes cleanly after fix round",
+      "input": {
+        "maxFixRounds": 1,
+        "policyRule": "Respect scope_out",
+        "expectedOutcome": "completed",
+        "expectedRoundsUsed": 1,
+        "expectedAttempts": 2
+      }
+    }
+  ]
+}

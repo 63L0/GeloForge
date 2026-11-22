@@ -681,3 +681,88 @@ test("compileContext reports exact budget_breakdown, supports excludeUnverified,
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
   }
 });
+
+test("Contextual BM25 ranks concise rare-term constraints above verbose common-term logs", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gf-ctx-bm25-"));
+  try {
+    const projectDir = path.join(tmp, "bm25-app");
+    bootstrapProject({ name: "BM25 Retrieval App", dest: projectDir, git: false });
+    fs.mkdirSync(path.join(projectDir, "brain", "research"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(projectDir, "brain", "decisions", "ADR-0001-preflight-quotation.md"),
+      [
+        "---",
+        'schema_version: "1.1"',
+        'id: "ADR-0001"',
+        'title: "Preflight Quotation Rule"',
+        'status: "accepted"',
+        'memory_layer: "L1_AUTHORITATIVE"',
+        'authority_level: "A2"',
+        'owner: "Project Owner"',
+        'proposed_by: "software-architect"',
+        'approved_by: "Project Owner"',
+        'created_at: "2026-10-01T00:00:00Z"',
+        'updated_at: "2026-10-01T00:00:00Z"',
+        'decided_at: "2026-10-01T00:00:00Z"',
+        'review_by: "2027-10-01"',
+        "supersedes: []",
+        "superseded_by: null",
+        "related_requirements: []",
+        "related_research: []",
+        "approval_ref: null",
+        'tags: ["preflight", "quotation"]',
+        "---",
+        "",
+        "Run connection preflight checks before generating customer quotation replies.",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+
+    const verboseSteps = Array.from({ length: 45 }, (_, idx) => `workflow log entry ${idx + 1}`).join(" ");
+    fs.writeFileSync(
+      path.join(projectDir, "brain", "research", "RES-0001-workflow-log.md"),
+      [
+        "---",
+        'schema_version: "1.1"',
+        'id: "RES-0001"',
+        'title: "Verbose Workflow Log"',
+        'status: "draft"',
+        'memory_layer: "L3_RESEARCH_EVIDENCE"',
+        'authority_level: "A5"',
+        'author_role: "researcher"',
+        'created_at: "2026-10-01T00:00:00Z"',
+        'updated_at: "2026-10-01T00:00:00Z"',
+        'valid_until: "2027-10-01"',
+        'question: "Verbose workflow observations"',
+        'confidence: "low"',
+        "sources: []",
+        "related_tasks: []",
+        "related_adrs: []",
+        "contradicts: []",
+        'tags: ["workflow"]',
+        "---",
+        "",
+        verboseSteps,
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+
+    const packet = compileContext({
+      projectDir,
+      query: "workflow preflight quotation",
+      budget: 4800,
+    });
+    const includedPaths = packet.manifest.included_documents.map((doc) => doc.path);
+    const rareIdx = includedPaths.indexOf("brain/decisions/ADR-0001-preflight-quotation.md");
+    const noiseIdx = includedPaths.indexOf("brain/research/RES-0001-workflow-log.md");
+    assert.ok(rareIdx !== -1, "Expected concise rare-term ADR to be included");
+    if (noiseIdx !== -1) {
+      assert.ok(rareIdx < noiseIdx, "Expected concise rare-term ADR to rank before verbose log");
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
