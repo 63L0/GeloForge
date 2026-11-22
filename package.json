@@ -1,6 +1,6 @@
 {
   "name": "geloforge",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Local, provider-neutral CLI for AI coding project memory, command-backed evidence, portable skills, and cross-agent handoffs.",
   "license": "MIT",
   "type": "module",
