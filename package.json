@@ -1,7 +1,7 @@
 {
   "name": "geloforge",
-  "version": "0.9.0",
-  "description": "Local, provider-neutral CLI for AI coding project memory, command-backed evidence, portable skills, and cross-agent handoffs.",
+  "version": "0.9.1",
+  "description": "Zero-dependency local CLI & MCP server for AI coding agents — shared project memory, verified test evidence, skill advisor, MCP tool pinning, and cross-agent handoffs.",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -15,10 +15,18 @@
   "keywords": [
     "ai-coding",
     "ai-harness",
+    "mcp",
+    "mcp-server",
     "agent-skills",
+    "coding-agent",
+    "claude-code",
+    "cursor",
+    "codex",
+    "gemini-cli",
     "context-engineering",
     "project-memory",
     "cross-agent-handoff",
+    "zero-dependency",
     "developer-tools"
   ],
   "engines": {
