@@ -74,8 +74,8 @@ log("end");
 function setup(t, { parallel = false, maxRuns = 5, maxTotalRuns = 20, timeoutMs = 1800 } = {}) {
   const temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "geloforge-stage-"));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true, maxRetries: 3 }));
-  const project = path.join(temp, "furniture project");
-  bootstrapProject({ name: "Furniture Staging Fixture", dest: project, profile: "automation", git: false });
+  const project = path.join(temp, "sample staging project");
+  bootstrapProject({ name: "Sample Staging Fixture", dest: project, profile: "automation", git: false });
   const { privateKey, publicKey } = generateKeyPairSync("ed25519", {
     publicKeyEncoding: { type: "spki", format: "pem" },
     privateKeyEncoding: { type: "pkcs8", format: "pem" },

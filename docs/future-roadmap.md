@@ -1,6 +1,6 @@
 # Harness Roadmap and Implementation Status
 
-The source checkout includes the staging audit worker, approved proposal promotion, checkpoint recovery, worktrees, and the provider adapters below. The Furniture Bot staging pilot has been exercised with simulated executions and provider responses. VPS delivery and authenticated provider runs are deployment checks.
+The source checkout includes the staging audit worker, approved proposal promotion, checkpoint recovery, worktrees, and the provider adapters below. The staging audit pilot has been exercised with simulated executions and provider responses. VPS delivery and authenticated provider runs are deployment checks.
 
 ## Event-Triggered Staging Audits
 
@@ -23,4 +23,4 @@ One task is assigned per workflow and execution. Verified reports link to eviden
 
 [Codex CLI, Gemini CLI and Antigravity CLI](../adapters/README.md) receive scoped audit packets from the same project memory. Interactive clients can use the same project through GeloForge MCP. Reusable project skills live under `.agents/skills/`.
 
-The parallel [Furniture Bot staging evaluation](../evaluations/staging-audits.json) runs two specialists for inquiry routing and quotation handoff, then a separate reviewer. The worker enforces at most two concurrent specialists and two report repair retries per audit. The signed approval also caps launches across audits. Run `npm run benchmark:audits` to compare the single and parallel paths against the expected observations. Run `npm run benchmark:cache` to check cache invalidation across projects.
+The parallel [staging evaluation](../evaluations/staging-audits.json) runs two specialists for inquiry routing and quotation handoff, then a separate reviewer. The worker enforces at most two concurrent specialists and two report repair retries per audit. The signed approval also caps launches across audits. Run `npm run benchmark:audits` to compare the single and parallel paths against the expected observations. Run `npm run benchmark:cache` to check cache invalidation across projects.
