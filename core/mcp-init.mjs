@@ -6,7 +6,7 @@ import { loadProjectManifestAndState } from "./project-locator.mjs";
 import { runMultiFileTransaction, withProjectLock } from "./project-lock.mjs";
 
 const DEFAULT_CLIENTS = ["cursor", "vscode", "claude", "gemini"];
-const CLIENTS = {
+export const MCP_CLIENTS = {
   cursor: {
     config: ".cursor/mcp.json", key: "mcpServers",
     rules: ".cursor/rules/geloforge.mdc", frontmatter: "---\nalwaysApply: true\n---\n\n",
@@ -21,6 +21,7 @@ const CLIENTS = {
   gemini: { config: ".gemini/settings.json", key: "mcpServers", rules: "GEMINI.md", appendRules: true },
   antigravity: { config: ".agents/mcp_config.json", key: "mcpServers", rules: "AGENTS.md", appendRules: true },
 };
+const CLIENTS = MCP_CLIENTS;
 
 const START = "<!-- geloforge:mcp-init:start -->";
 const END = "<!-- geloforge:mcp-init:end -->";
@@ -33,7 +34,7 @@ function readConfigFile(projectDir, relativePath) {
   return { filePath, relativePath, original: stat ? fs.readFileSync(filePath, "utf8") : null, mode: stat ? stat.mode & 0o777 : undefined };
 }
 
-function parseConfig(source, filename) {
+export function parseConfig(source, filename) {
   // Keep source offsets so we can edit server fields without rewriting comments and other settings.
   const lexemes = [...source.matchAll(/"(?:[^"\\]|\\[\s\S])*"|\/\/[^\r\n]*|\/\*[\s\S]*?\*\/|[^\s]/g)];
   const tokens = lexemes.filter(([token]) => !token.startsWith("//") && !token.startsWith("/*"));

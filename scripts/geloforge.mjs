@@ -36,6 +36,8 @@ import { verifyTask } from "../core/verify-task.mjs";
 import { createCheckpoint, getCheckpoint, listCheckpoints } from "../core/checkpoint.mjs";
 import { startMcpStdioServer } from "../core/mcp-server.mjs";
 import { initMcpClients } from "../core/mcp-init.mjs";
+import { checkMcpLock, lockMcpServers } from "../core/mcp-lock.mjs";
+import { getCodingLoopStatus, runCodingLoop } from "../core/coding-loop.mjs";
 import {
   discoverSkills,
   resolveProjectForSkills,
@@ -82,10 +84,11 @@ Commands:
   checkpoint Create, list, or inspect session recovery checkpoints (CHKPT-NNNN)
   recommend  Show ranked Human-in-the-Loop Co-Pilot recommendations & approval inbox
   autonomous Run opt-in staging audits, review progress, and learn from completed audits
+  loop       Run bounded implement -> verify -> review -> fix coding loop for a task
   proposal   Review, sign, or promote a canonical-document proposal
   worktree   Add, list, or remove isolated local Git worktrees
   status     Inspect project health, operational task state, leases, and Git status
-  mcp        Start the stdio MCP server or configure MCP clients with mcp init
+  mcp        Start stdio MCP server, configure clients (mcp init), or pin tools (mcp lock)
 
 Global Options:
   -h, --help     Show help (use "geloforge <command> --help" for command options)
@@ -250,6 +253,7 @@ Options:
     case "mcp":
       console.log(`Usage: geloforge mcp [serve] [--project <path>] [--read-only]
        geloforge mcp init [--project <path>] [--client <name>] [--read-only] [--dry-run] [--json]
+       geloforge mcp lock [--project <path>] [--client <name>] [--check] [--dry-run] [--timeout-ms <ms>] [--json]
 
 Runs GeloForge's zero-dependency JSON-RPC 2.0 MCP server on stdin/stdout.
 Pins operations to the configured/current project root (when present).
@@ -263,10 +267,30 @@ Options:
   --read-only             Refuse all state-mutating MCP actions
   -h, --help              Show help
 
-Init options:
-  --client <name>         cursor, vscode, claude, gemini, or antigravity (default: first four)
-  --dry-run               Preview project configuration and rule updates
-  --json                  Emit the list of planned or written files
+Init / Lock options:
+  --client <name>         cursor, vscode, claude, gemini, or antigravity
+  --check                 Compare live stdio MCP tool definitions against .geloforge/mcp-lock.json
+  --timeout-ms <ms>       Probe timeout per stdio server (100-60000, default: 8000)
+  --dry-run               Preview changes without writing files
+  --json                  Emit structured JSON output
+`);
+      break;
+    case "loop":
+      console.log(`Usage: geloforge loop run --config <relpath> [--task TASK-NNNN] [options]
+       geloforge loop status [--task TASK-NNNN] [--project <path>] [--json]
+
+Run a bounded implement -> verify -> review -> fix loop for one open task.
+Deterministic command verification gates task completion; LLM review never overrides a failing gate.
+
+Options:
+  -p, --project <path>    Target project directory (auto-detected from CWD if omitted)
+  --config <relpath>      Project-relative JSON config file (required for 'run')
+  -t, --task <TASK-NNNN>  Target task ID (defaults to sole active task)
+  --tool <name>           Cooperative lease tool label
+  --session <id>          Cooperative lease session label
+  --dry-run               Validate config, executables, task, and context without running providers
+  --json                  Emit structured JSON output
+  -h, --help              Show help
 `);
       break;
     case "handoff":
@@ -1109,8 +1133,117 @@ function handleMcpInit(args) {
   return 0;
 }
 
+async function handleMcpLock(args) {
+  const { values } = parseArgs({
+    args,
+    options: {
+      project: { type: "string", short: "p" },
+      client: { type: "string", multiple: true },
+      check: { type: "boolean", default: false },
+      "dry-run": { type: "boolean", default: false },
+      "timeout-ms": { type: "string" },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (values.help) {
+    printSubHelp("mcp");
+    return 0;
+  }
+  if (values.check && values["dry-run"]) {
+    throw new Error("--dry-run only applies when writing .geloforge/mcp-lock.json.");
+  }
+  const timeoutMs = values["timeout-ms"] !== undefined ? parseCheckTimeout(values["timeout-ms"]) : undefined;
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const result = values.check
+    ? await checkMcpLock({ projectDir, harnessDir: HARNESS_DIR, clients: values.client, timeoutMs })
+    : await lockMcpServers({
+      projectDir,
+      harnessDir: HARNESS_DIR,
+      clients: values.client,
+      timeoutMs,
+      dryRun: values["dry-run"],
+    });
+  if (values.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else if (values.check) {
+    console.log(
+      result.passed
+        ? `MCP lock verified (${result.checkedCount} stdio server(s)): ${result.lockPath}`
+        : `MCP lock check failed (${result.driftedServers.length} drifted, ${result.addedServers.length} added, ${result.removedServers.length} removed, ${result.errors.length} errors)`
+    );
+  } else {
+    console.log(
+      `${result.dryRun ? "DRY RUN — " : ""}Pinned ${result.serverCount} stdio MCP server(s) to ${result.lockPath} (${result.skippedCount} non-stdio skipped)`
+    );
+  }
+  return values.check && !result.passed ? 1 : 0;
+}
+
+async function handleLoop(args) {
+  if (!args.length || args[0] === "-h" || args[0] === "--help") {
+    printSubHelp("loop");
+    return 0;
+  }
+  const [subcmd, ...rest] = args;
+  if (!["run", "status"].includes(subcmd)) {
+    throw new Error(`Unknown loop subcommand "${subcmd}". Expected: run or status.`);
+  }
+  const { values } = parseArgs({
+    args: rest,
+    options: {
+      project: { type: "string", short: "p" },
+      config: { type: "string" },
+      task: { type: "string", short: "t" },
+      tool: { type: "string" },
+      session: { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+    allowPositionals: false,
+  });
+  if (values.help) {
+    printSubHelp("loop");
+    return 0;
+  }
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  if (subcmd === "status") {
+    const res = getCodingLoopStatus({ projectDir, harnessDir: HARNESS_DIR, taskId: values.task });
+    if (values.json) console.log(JSON.stringify(res, null, 2));
+    else console.log(`${res.taskId} loop status: ${res.status} (rounds=${res.roundsUsed}/${res.maxFixRounds}, attempts=${res.implementAttempts})`);
+    return 0;
+  }
+  if (!values.config) {
+    throw new Error("Missing required --config <relpath> for 'geloforge loop run'.");
+  }
+  const res = await runCodingLoop({
+    projectDir,
+    harnessDir: HARNESS_DIR,
+    configFile: values.config,
+    taskId: values.task,
+    tool: values.tool,
+    sessionId: values.session,
+    dryRun: values["dry-run"],
+  });
+  if (values.json) {
+    console.log(JSON.stringify(res, null, 2));
+  } else if (res.status === "dry_run") {
+    console.log(`DRY RUN — Loop ready for ${res.taskId} (maxFixRounds=${res.maxFixRounds}, verify=${res.verifyCommand.join(" ")})`);
+  } else if (res.status === "completed") {
+    console.log(`${res.taskId} completed (${res.evidenceId}, ${res.checkpointId}) in ${res.roundsUsed} fix round(s)`);
+  } else {
+    console.error(`${res.taskId} blocked (${res.reason}, ${res.checkpointId})`);
+  }
+  return ["completed", "dry_run"].includes(res.status) ? 0 : 1;
+}
+
 async function handleMcp(args) {
   if (args[0] === "init") return handleMcpInit(args.slice(1));
+  if (args[0] === "lock") return handleMcpLock(args.slice(1));
   let effectiveArgs = args;
   if (args.length > 0 && (args[0] === "-h" || args[0] === "--help")) {
     printSubHelp("mcp");
@@ -2479,6 +2612,9 @@ async function main() {
         break;
       case "autonomous":
         code = await handleAutonomous(rest);
+        break;
+      case "loop":
+        code = await handleLoop(rest);
         break;
       case "proposal":
         code = handleProposal(rest);

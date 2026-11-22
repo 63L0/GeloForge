@@ -18,6 +18,8 @@ One task is assigned per workflow and execution. Verified reports link to eviden
 - `geloforge proposal preview|sign|promote` binds a requirements update or new ADR to verified evidence, exact document bytes, and a signed owner approval.
 - `geloforge checkpoint create --local` and `checkpoint resume` keep machine-local recovery instructions under `local-runtime/checkpoints/`. Audit steps use the same runtime directory.
 - `geloforge worktree add|list|remove` manages isolated checkouts under the selected workspace's `worktrees/`.
+- `geloforge mcp lock [--check]` pins configured stdio MCP servers' canonical JSON-RPC tool definitions to `.geloforge/mcp-lock.json` and detects tool-surface drift.
+- `geloforge loop run --config <relpath> [--task TASK-NNNN]` and `geloforge loop status` run a bounded `implement -> verify -> review -> fix` loop gated by deterministic command verification (`captureEvidence`) and completion checkpoints.
 
 ## Provider Adapters and Evaluation
 
