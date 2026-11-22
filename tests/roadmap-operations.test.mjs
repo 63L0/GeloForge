@@ -138,7 +138,9 @@ test("worktrees use dedicated branches and refuse to remove a dirty checkout", a
   assert.equal(worktree.branch, "geloforge/routing-review");
   assert.equal(worktree.commit, git("rev-parse", "HEAD"));
   const relevant = (await cli(root, "worktree", "list")).worktrees;
-  assert.equal(relevant[0].path, worktree.path);
+  assert.equal(relevant[0]?.path, worktree.path, JSON.stringify({
+    expected: worktree.path, registered: git("worktree", "list", "--porcelain", "-z"),
+  }));
   assert.equal(git("branch", "--show-current"), "main");
   const uncommitted = path.join(worktree.path, "keep-me.md");
   fs.writeFileSync(uncommitted, "Pending independent work.");

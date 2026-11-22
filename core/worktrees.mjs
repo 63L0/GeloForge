@@ -18,14 +18,26 @@ export function manageWorktrees({ projectDir, workspace = path.dirname(projectDi
   const info = getGitRepoInfo(projectDir);
   if (!info.isRepoRoot || info.unborn) throw new Error("Use an initialized Git project root with at least one commit.");
 
-  const list = () => git(projectDir, "worktree", "list", "--porcelain", "-z").split("\0\0").flatMap((block) => {
-    const [entry, head, branch, ...flags] = block.split("\0");
-    if (!entry.startsWith("worktree ") || !head?.startsWith("HEAD ") || !branch?.startsWith("branch refs/heads/geloforge/")) return [];
-    const target = path.resolve(entry.slice(9));
-    if (path.relative(worktreesDir, path.dirname(target)) !== "" || isSameOrInside(projectDir, target)) return [];
-    const name = path.basename(target);
-    return [{ path: path.join(worktreesDir, name), name, commit: head.slice(5), branch: branch.slice(18), locked: flags.some((flag) => flag.startsWith("locked")) }];
-  });
+  const list = () => {
+    if (!fs.existsSync(worktreesDir)) return [];
+    const canonicalDir = fs.realpathSync.native(worktreesDir);
+    const entries = git(projectDir, "worktree", "list", "--porcelain", "-z").split("\0\0");
+    return entries.flatMap((block) => {
+      const [entry, head, branch, ...flags] = block.split("\0");
+      if (!entry.startsWith("worktree ") || !head?.startsWith("HEAD ") || !branch?.startsWith("branch refs/heads/geloforge/")) return [];
+      const target = path.resolve(entry.slice(9));
+      try {
+        // Git for Windows may report a long path even when the workspace uses a short alias.
+        const canonicalParent = fs.realpathSync.native(path.dirname(target));
+        if (path.relative(canonicalDir, canonicalParent) !== "" || isSameOrInside(projectDir, target)) return [];
+      } catch (error) {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      }
+      const name = path.basename(target);
+      return [{ path: path.join(worktreesDir, name), name, commit: head.slice(5), branch: branch.slice(18), locked: flags.some((flag) => flag.startsWith("locked")) }];
+    });
+  };
   if (action === "list") return { worktrees: list() };
 
   validateSlug(name);
