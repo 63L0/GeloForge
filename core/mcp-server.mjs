@@ -698,7 +698,7 @@ function writeFramedResponse(output, responseObj, framing) {
   }
 }
 
-function parseLspContentLength(headersText, maxMessageBytes) {
+export function parseLspContentLength(headersText, maxMessageBytes) {
   const lines = headersText.split(/\r?\n/);
   const contentLengths = [];
   for (const rawLine of lines) {
@@ -737,7 +737,7 @@ function parseLspContentLength(headersText, maxMessageBytes) {
   return { ok: true, contentLength: contentLengths[0] };
 }
 
-function findHeaderSeparator(buffer) {
+export function findHeaderSeparator(buffer) {
   const crlf = buffer.indexOf("\r\n\r\n");
   const lf = buffer.indexOf("\n\n");
   if (crlf !== -1 && (lf === -1 || crlf <= lf)) {
