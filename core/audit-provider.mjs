@@ -44,7 +44,7 @@ export function startAuditProvider({ runner: { provider, executable }, identity 
   const cwd = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "geloforge-audit-"));
   const finalPath = path.join(cwd, "response.json");
   let child;
-  const request = "Read audit-input.txt in the current directory. Follow its reporting format and return only the requested JSON. Use local file reads only.";
+  const request = "Follow the reporting format in the audit input provided on stdin (also saved in audit-input.txt) and return only the requested JSON. Do not run shell commands or modify files.";
   const args = {
     codex: ["--ask-for-approval", "never", "exec", "--sandbox", "read-only", "--skip-git-repo-check",
       "--ephemeral", "--ignore-user-config", "--output-last-message", finalPath, request],
@@ -52,6 +52,7 @@ export function startAuditProvider({ runner: { provider, executable }, identity 
     antigravity: ["--mode=plan", "--sandbox", "--output-format=json", "--print", request],
   }[provider];
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => ENV_KEYS.has(key.toUpperCase())));
+  if (provider === "gemini") env.GEMINI_CLI_TRUST_WORKSPACE = "true";
   const stop = () => child?.kill("SIGKILL");
   const promise = new Promise((resolve, reject) => {
     try {
@@ -76,6 +77,8 @@ export function startAuditProvider({ runner: { provider, executable }, identity 
           reject(err ? error : new Error("Audit provider returned invalid JSON."));
         }
       });
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(prompt, "utf8");
       signal?.addEventListener("abort", stop, { once: true });
     } catch (err) {
       reject(err);
