@@ -24,12 +24,17 @@ const mock = String.raw`
 import fs from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 const inputs = fs.readFileSync("audit-input.txt", "utf8");
+const stdinChunks = [];
+for await (const chunk of process.stdin) stdinChunks.push(chunk);
+const stdinText = Buffer.concat(stdinChunks).toString("utf8");
 const data = JSON.parse(inputs.split("\n").find((line) => line.startsWith('{"taskId"')));
 const args = process.argv.slice(2);
 const provider = args[0] === "--ask-for-approval" ? "codex" : args[0] === "--approval-mode=plan" ? "gemini" : "antigravity";
 if (provider === "codex" && (!args.includes("read-only") || !args.includes("--ignore-user-config"))) process.exit(10);
 if (provider === "antigravity" && (!args.includes("--mode=plan") || !args.includes("--sandbox"))) process.exit(11);
 if (process.env.API_KEY || inputs.includes("PRIVATE RAW DATA")) process.exit(12);
+if (stdinText !== inputs || !stdinText.includes('"taskId"')) process.exit(14);
+if (provider === "gemini" && process.env.GEMINI_CLI_TRUST_WORKSPACE !== "true") process.exit(15);
 const role = data.candidates ? "review" : data.area;
 const id = data.execution.id;
 const output = new URL("./events.jsonl", import.meta.url);

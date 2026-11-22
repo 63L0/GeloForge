@@ -7,7 +7,7 @@ import { compileContext } from "./context-compiler.mjs";
 import { getGitRepoInfo } from "./git-utils.mjs";
 import { assertSafeWithinRoot, hasSecretContent, isForbiddenSecretPath, walkNonSymlinkFiles } from "./path-safety.mjs";
 import { parseYaml } from "./yaml-subset.mjs";
-import { TASK_LEASES_PATH } from "./task-manager.mjs";
+import { listTaskLeases, TASK_LEASES_PATH } from "./task-manager.mjs";
 import { resolveProjectPaths } from "./project-locator.mjs";
 import { readRegularFile, readRuntimeJson, sha256, writeRuntimeJson } from "./runtime-files.mjs";
 
@@ -33,8 +33,9 @@ function fingerprint(options) {
   const harnessDir = path.resolve(options.harnessDir ?? DEFAULT_HARNESS_DIR);
   const manifestFile = assertSafeWithinRoot(root, "brain/manifest.yaml");
   const rawManifest = readRegularFile(manifestFile);
-  if (!rawManifest || fs.lstatSync(root).isSymbolicLink() ||
-      fs.existsSync(assertSafeWithinRoot(root, TASK_LEASES_PATH))) return null;
+  if (!rawManifest || fs.lstatSync(root).isSymbolicLink()) return null;
+  if (fs.existsSync(assertSafeWithinRoot(root, TASK_LEASES_PATH)) &&
+      listTaskLeases({ projectDir: root, harnessDir }).activeLeases.length > 0) return null;
   const manifest = parseYaml(rawManifest.toString("utf8"), "brain/manifest.yaml");
   const projectPaths = resolveProjectPaths(manifest);
   const git = getGitRepoInfo(root);

@@ -173,6 +173,10 @@ test("query cache survives CLI restarts and invalidates on context changes", asy
   const leased = await cli(root, ...args);
   assert.equal(leased.diskCache, "bypassed");
   assert.match(leased.markdown, /Active Multi-IDE Peer Leases/);
+  await cli(root, "task", "release", "--task", id, "--tool", "codex", "--session", "pilot-session");
+  assert.equal(fs.existsSync(path.join(root, ".geloforge", "task-leases.yaml")), true);
+  assert.equal((await cli(root, ...args)).diskCache, "miss");
+  assert.equal((await cli(root, ...args)).diskCache, "hit");
 });
 
 test("Antigravity receives a workspace read-only MCP adapter and keeps other servers", async (t) => {
