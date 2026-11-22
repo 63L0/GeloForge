@@ -16,6 +16,7 @@ import {
   walkNonSymlinkFiles,
 } from "./path-safety.mjs";
 import { listTaskLeases, listTasks, scopesOverlap } from "./task-manager.mjs";
+import { suggestProjectSkills } from "./skills-advisor.mjs";
 
 function inspectGitState(projectDir) {
   const gs = getGitStatusScoped(projectDir);
@@ -624,6 +625,47 @@ function buildRecommendations({
       command: `geloforge task claim --task ${state.active_tasks[0]} --tool <ide> --role developer --scopes "<paths>"`,
       requiresHumanApproval: false,
     });
+  }
+
+  try {
+    if (state && ((state.active_tasks || []).length > 0 || state.last_verified_evidence)) {
+      const advisor = suggestProjectSkills({
+        projectDir,
+        harnessDir,
+        taskId: (state.active_tasks || [])[0] || null,
+        limit: 3,
+        scaffoldDraft: false,
+      });
+      if (advisor.recommendedSkills.length > 0) {
+        const top = advisor.recommendedSkills[0];
+        recs.push({
+          rank: 56,
+          priority: "low",
+          category: "skills",
+          title: `Load matching skill "${top.name}" for current project/task context`,
+          reason: top.reasons.join("; ") || "Relevant active skill matched current project signals.",
+          options: [`Compile focused context with ${top.name}`],
+          command: `geloforge context ${advisor.taskId ? `--task ${advisor.taskId} ` : ""}--skills --skill ${top.name}`,
+          requiresHumanApproval: false,
+        });
+      } else {
+        const evGap = advisor.skillGaps.find((g) => g.kind === "evidence_backed_workflow" && !g.existingQuarantinedDraft);
+        if (evGap) {
+          recs.push({
+            rank: 54,
+            priority: "low",
+            category: "skills",
+            title: `Scaffold quarantined skill draft "${evGap.suggestedName}" from verified evidence`,
+            reason: evGap.reason,
+            options: ["Stage quarantined draft in proposals/skills/ for human review"],
+            command: `geloforge skills suggest --scaffold-draft`,
+            requiresHumanApproval: false,
+          });
+        }
+      }
+    }
+  } catch {
+    // Non-fatal advisory check
   }
 
   recs.sort((a, b) => {
