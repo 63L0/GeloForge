@@ -53,10 +53,15 @@ try {
     const packDir = path.resolve(options["pack-destination"] ?? scratch);
     const cache = path.join(scratch, "npm-cache");
     fs.mkdirSync(packDir, { recursive: true });
-    const [pack] = JSON.parse(runNode([
+    const packOutput = JSON.parse(runNode([
       npm, "pack", "--json", "--offline", "--ignore-scripts", "--cache", cache,
       "--pack-destination", packDir,
     ], ROOT));
+    // npm 10/11 emits an array [pack], whereas npm 12+ emits an object keyed by package name.
+    const pack = Array.isArray(packOutput)
+      ? packOutput[0]
+      : (packOutput?.[pkg.name] ?? Object.values(packOutput ?? {})[0]);
+    assert.ok(pack && typeof pack.filename === "string" && Array.isArray(pack.files), "Expected npm pack --json metadata");
     assert.ok(pack.files.some(({ path }) => path === "adapters/n8n/staging-audit-error-workflow.json"));
     cliPrefix = [
       npm, "exec", "--yes", "--offline", "--ignore-scripts", "--cache", cache,

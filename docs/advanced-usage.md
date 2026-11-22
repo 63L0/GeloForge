@@ -8,9 +8,9 @@ This is the in-depth reference previously presented on the repository homepage. 
 
 **Build with AI coding assistants without losing context, decisions, or verification truth.**
 
-**Version:** `0.4.0` | **License:** [MIT](../LICENSE)
+**Version:** `0.9.1` | **License:** [MIT](../LICENSE)
 
-GeloForge is a zero-dependency, provider-neutral toolkit for organizing projects, managing project memory, compiling bounded prompt context, mapping source symbols, and handing off verified work across coding sessions or different AI assistants.
+GeloForge is a zero-dependency, provider-neutral toolkit for organizing projects, managing project memory, compiling bounded prompt context, mapping source symbols, pinning MCP tool surfaces, recommending/quarantining skills, running bounded coding loops, and handing off verified work across coding sessions or different AI assistants.
 
 It stores persistent project memory in plain Markdown and YAML inside your project's own repository (**Second Brain**) so you are never locked into one AI tool or chat history.
 
@@ -18,14 +18,15 @@ It stores persistent project memory in plain Markdown and YAML inside your proje
 
 ## 1. What GeloForge Does Today
 
-- **Unified CLI ([scripts/geloforge.mjs](../scripts/geloforge.mjs)):** Non-interactive `geloforge` commands (`init`, `adopt`, `task`, `evidence`, `validate`, `context`, `skills`, `handoff`, `status`) with CWD project auto-discovery, `--json` output, and atomic `--out` writes.
+- **Unified CLI ([scripts/geloforge.mjs](../scripts/geloforge.mjs)):** Non-interactive `geloforge` commands (`init`, `adopt`, `task`, `evidence`, `verify`, `validate`, `context`, `skills`, `handoff`, `checkpoint`, `recommend`, `autonomous`, `loop`, `proposal`, `worktree`, `status`, `doctor`, `hooks`, `mcp`) with CWD project auto-discovery, `--json` output, and atomic `--out` writes.
 - **Brownfield Adoption & Greenfield Scaffolding (`adopt`, `init`):** Safely onboard existing repos with `geloforge adopt` without altering existing source files ([adopt-project.mjs](../core/adopt-project.mjs)), or initialize new Second Brain repos ([templates/project-starter/](../templates/project-starter/README.md)) with domain overlays (`web`, `desktop`, `mobile`, `automation`, `ai-system`).
-- **Task Contracts & Command-Backed Evidence (`task`, `evidence`):** Manage schema-strict `TASK-NNNN` contracts ([task-manager.mjs](../core/task-manager.mjs)) and capture real `EVID-NNNN` records via `geloforge evidence capture -- <cmd>` with `shell: false`, secret redaction, and explicit pass/fail/timeout accuracy ([evidence-capture.mjs](../core/evidence-capture.mjs)).
-- **Portable Agent Skills (`skills`, `context --skills`):** Discover, validate, and statically security-lint [agentskills.io](https://agentskills.io)-compatible `SKILL.md` packages in `.agents/skills/` and `~/.geloforge/skills/` (`GELOFORGE_SKILLS_DIR`) with progressive disclosure (`Tier 0` index -> `Tier 1` relevant skills -> `Tier 2` support paths), quarantine for `proposals/skills/`, and evidence-backed drafting, update proposals, Ed25519/PR-branch/TTY-authorized promotion, content-addressed history, and rollback ([skills.mjs](../core/skills.mjs), [skills-lint.mjs](../core/skills-lint.mjs), [skills-lifecycle.mjs](../core/skills-lifecycle.mjs), [Portable Skills Guide](../docs/portable-skills.md), [Example Skill](../examples/skills/evidence-backed-bugfix/SKILL.md)).
-- **Deterministic Context Compiler (`context`):** Assembles trust-tiered `L4` Markdown packets + `CPACK-0001` JSON manifests with explicit `budget_breakdown`, `--exclude-unverified`, open-conflict surfacing, selective `--skills`, and verified `A0` safety preservation ([context-compiler.mjs](../core/context-compiler.mjs)).
+- **Task Contracts & Command-Backed Evidence (`task`, `evidence`, `verify`):** Manage schema-strict `TASK-NNNN` contracts ([task-manager.mjs](../core/task-manager.mjs)) and capture real `EVID-NNNN` records via `geloforge evidence capture -- <cmd>` or `geloforge verify` with `shell: false`, secret redaction, and explicit pass/fail/timeout accuracy ([evidence-capture.mjs](../core/evidence-capture.mjs)).
+- **Portable Agent Skills & Advisor (`skills`, `context --skills`):** Discover, analyze/recommend (`skills suggest` + quarantined `--scaffold-draft`), validate, and statically security-lint [agentskills.io](https://agentskills.io)-compatible `SKILL.md` packages in `.agents/skills/` and `~/.geloforge/skills/` (`GELOFORGE_SKILLS_DIR`) with progressive disclosure (`Tier 0` index -> `Tier 1` relevant skills -> `Tier 2` support paths), quarantine for `proposals/skills/`, and evidence-backed drafting, update proposals, Ed25519/PR-branch/TTY-authorized promotion, content-addressed history, and rollback ([skills.mjs](../core/skills.mjs), [skills-advisor.mjs](../core/skills-advisor.mjs), [skills-lint.mjs](../core/skills-lint.mjs), [skills-lifecycle.mjs](../core/skills-lifecycle.mjs), [Portable Skills Guide](../docs/portable-skills.md), [Example Skill](../examples/skills/evidence-backed-bugfix/SKILL.md)).
+- **Deterministic Context Compiler (`context`):** Assembles edge-anchored 3-zone, trust-tiered `L4` Markdown packets + `CPACK-0001` JSON manifests ranked with Contextual BM25 (including Markdown headings), explicit `budget_breakdown`, `--exclude-unverified`, open-conflict surfacing, selective `--skills`, and verified `A0` safety preservation ([context-compiler.mjs](../core/context-compiler.mjs)).
 - **Selective Codebase Mapping (`context --map`):** Extracts deterministic multi-language symbol outlines, local import boost, and `L<line>` references within `--map-budget`, respecting `.gitignore` and excluding `.env*`, keys, binaries, and build outputs ([codebase-map.mjs](../core/codebase-map.mjs)).
 - **Cross-Agent File-Based Handoffs (`handoff`):** Generates and cross-validates (`--inspect`) schema-strict `HANDOFF-NNNN` transfers that separate audited `verified_evidence` (`EVID-*`) from `unverified_claims`, surface `contradiction_warnings`, and capture project-scoped Git state/drift ([handoff.mjs](../core/handoff.mjs)).
-- **Strict Validation & Health Checks (`validate`, `status`):** Checks 12 JSON Schemas ([schemas/](../schemas/README.md)), `1.0`/`1.1` compatibility ([compatibility.mjs](../core/compatibility.mjs)), duplicate IDs, cross-record references, symlink safety, forged evidence entries, relative Markdown links, and actionable `nextSteps` ([project-validator.mjs](../core/project-validator.mjs)).
+- **Strict Validation, Diagnostics & Ambient Hooks (`validate`, `status`, `doctor`, `hooks`):** Checks 12 JSON Schemas ([schemas/](../schemas/README.md)), `1.0`/`1.1` compatibility ([compatibility.mjs](../core/compatibility.mjs)), duplicate IDs, cross-record references, symlink safety, forged evidence entries, MCP lock drift, relative Markdown links, one-command diagnostics (`doctor`), opt-in ambient hooks (`hooks init`), and actionable `nextSteps` ([project-validator.mjs](../core/project-validator.mjs)).
+- **MCP Server, Tool Pinning & Bounded Workflows (`mcp`, `loop`, `autonomous`, `proposal`, `worktree`):** Zero-dependency stdio MCP server + client installer (`mcp init`) + SHA-256 tool pinning (`mcp lock`), capped coding loops (`loop run`), opt-in staging audits (`autonomous`), Ed25519 canonical proposal promotion (`proposal`), and isolated Git worktrees (`worktree`).
 
 ---
 
@@ -185,7 +186,7 @@ npm run benchmark
 - **Recovery:** Project scaffolding (`bootstrap-project.mjs`) stages into `.harness-stage-*` and CLI `--out` / handoff writes use `.geloforge-tmp-*` atomic temp-file renames without overwriting existing targets unless `--out` explicitly targets a safe non-handoff file. Use standard Git recovery (`git status`, `git diff`, `git revert <commit>`) for repository rollbacks.
 - **Security & Limitations:** See [SECURITY.md](../SECURITY.md), [CONTRIBUTING.md](../CONTRIBUTING.md), and [docs/known-limitations.md](../docs/known-limitations.md).
 - **Third-Party Research Attribution:** Architectural patterns in v0.3 and v0.4 were informed by public open-source tools documented in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) and [docs/research/upstream-patterns-v0.3.md](../docs/research/upstream-patterns-v0.3.md) (NousResearch Hermes Agent `[MIT]`, `agentskills.io`, GitHub Spec Kit `[MIT]`, BMad Method `[MIT]`, OpenHands `[MIT]`, and Aider `[Apache-2.0]` concepts re-implemented cleanly in original zero-dependency Node.js without copying external source files).
-- **License:** Released under the [MIT License](../LICENSE) (`Copyright (c) 2026 63L0`). Note: `"private": true` in [package.json](../package.json) prevents accidental npm registry publishing while keeping this repository open-source under MIT.
+- **License & Distribution:** Released under the [MIT License](../LICENSE) (`Copyright (c) 2026 63L0`) and published publicly to npm (`npx geloforge`) with zero external runtime dependencies.
 
 ## v0.5 Human-in-the-Loop Co-Pilot, Anti-Context-Rot & Multi-IDE Coordination
 
@@ -232,7 +233,7 @@ See [schemas/recovery-checkpoint.schema.json](../schemas/recovery-checkpoint.sch
 
 ### 4. Zero-Dependency MCP Server (`geloforge mcp`)
 
-From an adopted project, run `geloforge mcp init --dry-run` to preview setup, then run `geloforge mcp init` to configure the four project clients. Repeat `--client <name>` to select specific clients. Add `--read-only` to set up read-only servers and guidance.
+From an adopted project, run `geloforge mcp init --dry-run` to preview setup, then run `geloforge mcp init` to configure the four default project clients (`cursor`, `vscode`, `claude`, `gemini`), or add `--client antigravity` for Antigravity. Repeat `--client <name>` to select specific clients. Add `--read-only` to set up read-only servers and guidance.
 
 | Client | MCP config | Project instructions |
 | --- | --- | --- |
@@ -240,6 +241,7 @@ From an adopted project, run `geloforge mcp init --dry-run` to preview setup, th
 | `vscode` | `.vscode/mcp.json` | `.github/instructions/geloforge.instructions.md` |
 | `claude` | `.mcp.json` | `.claude/rules/geloforge.md` |
 | `gemini` | `.gemini/settings.json` | `GEMINI.md` or the configured project context file |
+| `antigravity` | `.agents/mcp_config.json` | `AGENTS.md` |
 
 The setup keeps other server entries and settings, adds a GeloForge rule for each client, and pins the server to the project root. Reload the client and accept its project trust or MCP prompt if shown. Rerun setup after moving a checkout or changing the CLI installation path.
 ```bash
@@ -334,3 +336,66 @@ geloforge context --query "quotation handoff" --cache --json
 ```
 
 Local checkpoints stay under the project's `local-runtime/checkpoints/`. Worktrees get their own branches. Removal checks for pending changes and ignored files before Git removes the checkout and preserves the branch. The query cache is opt-in and uses one packet per project under `local-runtime/context-cache/`. Requests with tasks, maps, diffs, skills, or a lease registry use a fresh compile.
+
+---
+
+## v0.8 & v0.9 Features
+
+### 1. MCP Tool-Surface Pinning (`geloforge mcp lock`)
+
+Pin configured stdio MCP servers to canonical SHA-256 tool-schema digests under `.geloforge/mcp-lock.json` and check for schema drift over JSON-RPC 2.0 (zero network calls):
+
+```bash
+# Snapshot configured stdio MCP server tool schemas
+geloforge mcp lock --project /path/to/your/project --dry-run
+geloforge mcp lock --project /path/to/your/project
+
+# Verify live tool schemas still match the lockfile (optionally scope by --client and --timeout-ms)
+geloforge mcp lock --check --timeout-ms 8000 --json
+```
+
+### 2. Bounded Coding Loop (`geloforge loop`)
+
+Run a capped `implement -> verify -> review -> fix` cycle against one open task ([coding-loop.mjs](../core/coding-loop.mjs)). Deterministic test/evidence verification gates task completion, and fail-closed reviewer `policy_checks` never override a failing test gate:
+
+```bash
+geloforge loop run --config local-runtime/loop.json --task TASK-0001 --dry-run
+geloforge loop run --config local-runtime/loop.json --task TASK-0001 --tool codex
+geloforge loop status --task TASK-0001 --json
+```
+
+### 3. Contextual BM25, 3-Zone Context Layout & Offline Regression Evals
+
+- **Contextual BM25 & 3-Zone Layout:** [context-compiler.mjs](../core/context-compiler.mjs) indexes Markdown headings (`#`–`####`, excluding YAML frontmatter and fenced code blocks) into Contextual BM25 `headerText` and orders compiled packets with edge anchors (contiguous `A0`/`A1`–`A2` prefix, middle reference/trace, bottom recency anchor for conflicts and operational tasks).
+- **Offline Regression Evals:** Run `npm run eval` (backed by [regression-evals.json](../evaluations/regression-evals.json)) to verify retrieval recall, 3-zone ordering, heading indexing, Windows lock retry resilience, and skill quarantine gates offline.
+
+### 4. Project & Goal Skills Advisor (`geloforge skills suggest`)
+
+Inspect project stack markers, active tasks, or an explicit `--goal` to rank matching existing skills, detect coverage gaps, and optionally stage a quarantined draft under `proposals/skills/` without auto-promoting ([skills-advisor.mjs](../core/skills-advisor.mjs)):
+
+```bash
+geloforge skills suggest --goal "Harden checkout webhook validation"
+geloforge skills suggest --task TASK-0001 --limit 5 --json
+geloforge skills suggest --goal "Add CSV invoice exporter" --scaffold-draft --name csv-exporter --dry-run
+```
+
+Also exposed via the `geloforge_skills` MCP tool (`suggest` and `scaffold` actions).
+
+### 5. One-Command Diagnostics (`doctor`) & Opt-In Ambient Hooks (`hooks init`)
+
+Run one-command project health checks across Node.js runtime, Second Brain validation, compatibility, Git state, active leases, skill lint, MCP lock drift, and hooks ([doctor.mjs](../core/doctor.mjs)):
+
+```bash
+geloforge doctor
+geloforge doctor --include-drafts --skip-mcp-check --json
+```
+
+Preview or install opt-in ambient guardrails without background daemons while preserving existing settings and MCP servers ([hooks-init.mjs](../core/hooks-init.mjs)):
+
+```bash
+# Preview all targets (git pre-commit, claude hooks.Stop, gemini hooks.AfterAgent)
+geloforge hooks init --dry-run
+
+# Install selected targets
+geloforge hooks init --target git,claude,gemini
+```

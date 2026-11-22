@@ -2,6 +2,12 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.9.1] — 2026-11-22
+
+- Overhaul `README.md` into a comprehensive public showcase highlighting all major GeloForge features (Contextual BM25 & 3-zone context compiler, 15+ language codebase map, evidence-gated verification, MCP init & SHA-256 tool pinning, `skills suggest` & quarantined scaffolder, bounded coding loops, staging audits, cooperative file leases, Git worktrees, `doctor`, and `hooks init`), using the raw GitHub demo GIF URL so it renders cleanly on both GitHub and npmjs.com.
+- Update `package.json` `description` and `keywords` for clearer npm registry discovery.
+- Update `docs/advanced-usage.md` to sync version metadata, public npm installation via `npx geloforge`, Antigravity MCP setup, and v0.8/v0.9 feature documentation (`mcp lock`, `loop`, `skills suggest`, `doctor`, `hooks init`, and `npm run eval`).
+
 ## [0.9.0] — 2026-11-22
 
 - Add deterministic Project/Goal Skills Advisor and quarantined skill scaffolder (`geloforge skills suggest [--goal|--task|--scaffold-draft]`, `core/skills-advisor.mjs`, MCP `geloforge_skills` `suggest` and `scaffold`, plus `geloforge recommend` integration).
