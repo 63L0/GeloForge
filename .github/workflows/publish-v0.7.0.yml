@@ -1,0 +1,75 @@
+name: Publish GeloForge v0.7.0 on GitHub
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: geloforge-v0.7.0-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.repository == '63L0/GeloForge' &&
+      github.event.workflow_run.head_repository.full_name == '63L0/GeloForge' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      RELEASE_TAG: v0.7.0
+      RELEASE_SHA: e848eb1e7ae2a21162fbcd77e763a4101c9f4cb9
+      RELEASE_CI_RUN: '44969508736'
+      ARCHIVE_SHA512: c3caf2e168576e5ed950f62450d79549493269c6db91c22f120952d2d45c4c5aaebf7aa7c356061e8f052930f39f89ad29aa31b6ecbaf14658d7c74325e1e66e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e848eb1e7ae2a21162fbcd77e763a4101c9f4cb9
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Publish the verified v0.7.0 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$(git ls-remote origin "refs/tags/$RELEASE_TAG")" ]]; then
+            git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_SHA"
+            if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx false; then
+              exit 0
+            fi
+          fi
+
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" FETCH_HEAD
+          test "$(cat VERSION)" = "${RELEASE_TAG#v}"
+          verified_sha=$(gh api "repos/$GH_REPO/actions/runs/$RELEASE_CI_RUN" \
+            --jq 'select(.path == ".github/workflows/ci.yml" and .event == "push" and .head_branch == "main" and .conclusion == "success").head_sha')
+          test "$verified_sha" = "$RELEASE_SHA"
+
+          version=${RELEASE_TAG#v}
+          archive="$RUNNER_TEMP/geloforge-$version.tgz"
+          curl --fail --silent --show-error --retry 2 --max-time 60 \
+            "https://registry.npmjs.org/geloforge/-/geloforge-$version.tgz" --output "$archive"
+          printf '%s  %s\n' "$ARCHIVE_SHA512" "$archive" | sha512sum --check --status
+
+          notes="$RUNNER_TEMP/geloforge-$version-release-notes.md"
+          source_url="https://github.com/$GH_REPO/blob/$RELEASE_SHA"
+          tail -n +3 "docs/release-notes-$RELEASE_TAG.md" | sed \
+            -e "s|](./advanced-usage.md|]($source_url/docs/advanced-usage.md|g" \
+            -e "s|](../adapters/n8n/|]($source_url/adapters/n8n/|g" > "$notes"
+          gh release create "$RELEASE_TAG" "$archive" --target "$RELEASE_SHA" \
+            --title "GeloForge $RELEASE_TAG" --notes-file "$notes" --latest
+          test "$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_SHA"
