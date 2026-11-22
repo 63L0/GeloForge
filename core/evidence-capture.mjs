@@ -92,7 +92,10 @@ export function captureEvidence(options = {}) {
     timeoutMs = num;
   }
 
-  const redactedCommand = redactSecretContent(commandArgv.join(" "));
+  const displayCommand = options.displayCommand === undefined
+    ? commandArgv.join(" ")
+    : validateScalarText("Evidence command display", options.displayCommand);
+  const redactedCommand = redactSecretContent(displayCommand);
   const checkName = validateScalarText("--name", options.name ?? `Command check: ${path.basename(commandArgv[0])}`);
   if (hasSecretContent(checkName)) {
     throw new Error("Refusing credential-like content in --name.");

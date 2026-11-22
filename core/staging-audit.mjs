@@ -357,9 +357,11 @@ async function processAudit(worker, snapshot) {
   if (!raw) writeRuntimeJson(projectDir, reportPath, report, { allowOverwrite: false });
   let evidenceId = evidenceForReport(project, task.id, reportPath);
   if (!evidenceId) {
+    const digest = sha256(text);
     const result = captureEvidence({
       projectDir, harnessDir: options.harnessDir, taskId: task.id, name: "Verify staging audit finding references",
-      commandArgv: [process.execPath, evidenceVerifier, task.id, reportPath, sha256(text)],
+      commandArgv: [process.execPath, evidenceVerifier, task.id, reportPath, digest],
+      displayCommand: `node "<geloforge-install>/core/staging-evidence.mjs" ${task.id} ${JSON.stringify(reportPath)} ${digest}`,
       timeoutMs: 3000, linkVerifiedOnly: true, artifactPaths: [reportPath], verifiedBy: "geloforge-staging-report",
       limitations: report.gaps,
     });

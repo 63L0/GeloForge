@@ -22,8 +22,9 @@ export function manageWorktrees({ projectDir, workspace = path.dirname(projectDi
     const [entry, head, branch, ...flags] = block.split("\0");
     if (!entry.startsWith("worktree ") || !head?.startsWith("HEAD ") || !branch?.startsWith("branch refs/heads/geloforge/")) return [];
     const target = path.resolve(entry.slice(9));
-    if (path.dirname(target) !== worktreesDir || isSameOrInside(projectDir, target)) return [];
-    return [{ path: target, name: path.basename(target), commit: head.slice(5), branch: branch.slice(18), locked: flags.some((flag) => flag.startsWith("locked")) }];
+    if (path.relative(worktreesDir, path.dirname(target)) !== "" || isSameOrInside(projectDir, target)) return [];
+    const name = path.basename(target);
+    return [{ path: path.join(worktreesDir, name), name, commit: head.slice(5), branch: branch.slice(18), locked: flags.some((flag) => flag.startsWith("locked")) }];
   });
   if (action === "list") return { worktrees: list() };
 

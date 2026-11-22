@@ -181,9 +181,15 @@ test("single-agent worker starts from a staging delivery, verifies evidence, ded
   assert.equal(patterns.length, 1);
   assert.equal(patterns[0].executions.length, 2);
   const draft = await cli(f.project, "autonomous", "learn", "--pattern", patterns[0].id, "--skill", "n8n-audit-pattern");
-  assert.ok(fs.existsSync(path.join(f.project, draft.proposalDir, "SKILL.md")));
+  const instructions = fs.readFileSync(path.join(f.project, draft.proposalDir, "SKILL.md"), "utf8");
+  assert.ok(instructions.includes("node \"<geloforge-install>/core/staging-evidence.mjs\""));
+  assert.ok(!instructions.includes(process.execPath));
   assert.equal(fs.existsSync(path.join(f.project, ".agents", "skills", "n8n-audit-pattern")), false);
-  assert.equal((await cli(f.project, "validate")).valid, true);
+  const validation = await cli(f.project, "validate").catch((error) => {
+    if (error.code === 1 && error.stdout) return JSON.parse(error.stdout);
+    throw error;
+  });
+  assert.equal(validation.valid, true, validation.errors.join("\n"));
   fs.appendFileSync(path.join(f.project, done.reportPath), " ");
   assert.deepEqual((await cli(f.project, "autonomous", "learn")).patterns, []);
 });

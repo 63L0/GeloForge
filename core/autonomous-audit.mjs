@@ -173,6 +173,7 @@ export function auditStagingFailure({ projectDir, harnessDir, eventFile, executi
       const evidence = recordPath && captureEvidence({
         ...taskOptions, name: "Verify saved n8n staging execution",
         commandArgv: [process.execPath, MODULE_PATH, recordPath, workflowId, executionId],
+        displayCommand: `node "<geloforge-install>/core/autonomous-audit.mjs" ${JSON.stringify(recordPath)} ${workflowId} ${executionId}`,
         timeoutMs: VERIFICATION_TIMEOUT_MS, linkVerifiedOnly: true,
       });
       const nextAction = evidence?.verified
