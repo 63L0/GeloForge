@@ -2,6 +2,10 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.8.1] — 2026-11-22
+
+- Index Markdown headings (`#`–`####`, excluding YAML frontmatter and fenced code blocks) into Contextual BM25 `headerText` (`core/context-compiler.mjs`) so authoritative Markdown docs such as `brain/architecture/overview.md` rank accurately against shorter research drafts.
+
 ## [0.8.0] — 2026-11-22
 
 - Add MCP tool-surface pinning (`geloforge mcp lock [--check]`) to `.geloforge/mcp-lock.json` over stdio JSON-RPC 2.0 (zero network calls) with canonical SHA-256 drift detection.
