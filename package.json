@@ -45,6 +45,7 @@
     "bootstrap": "node scripts/bootstrap-project.mjs",
     "geloforge": "node scripts/geloforge.mjs",
     "benchmark": "node scripts/benchmark-context.mjs",
+    "eval": "node scripts/run-evals.mjs",
     "smoke:package": "node scripts/smoke-fresh-install.mjs --packed",
     "benchmark:cache": "node scripts/benchmark-context-cache.mjs",
     "benchmark:audits": "node --test tests/staging-audit-worker.test.mjs"

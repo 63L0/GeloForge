@@ -21,7 +21,9 @@ import { listTaskLeases } from "./task-manager.mjs";
 import {
   TOKEN_ESTIMATE_METHOD,
   estimateTokens,
+  scoreBm25Documents,
   tokenizeKeywords,
+  tokenizeTerms,
   sanitizeFenceContent,
 } from "./text-utils.mjs";
 
@@ -630,19 +632,23 @@ export function compileContext(options = {}) {
       });
       return;
     }
-    const titleWords = tokenizeKeywords(`${candidate.title || ""} ${candidate.path} ${(candidate.tags || []).join(" ")}`);
-    const bodyWords = tokenizeKeywords(candidate.text);
+    const headerText = [
+      candidate.path,
+      candidate.authority_level || "",
+      candidate.memory_layer || "",
+      candidate.title || "",
+      ...(candidate.tags || []),
+    ].join(" ");
+    const titleTerms = tokenizeTerms(headerText);
+    const bodyTerms = tokenizeTerms(candidate.text);
+    const titleWords = new Set(titleTerms);
+    const bodyWords = new Set(bodyTerms);
     let titleMatches = 0;
     let bodyMatches = 0;
     for (const kw of queryKeywords) {
       if (titleWords.has(kw)) titleMatches += 1;
       else if (bodyWords.has(kw)) bodyMatches += 1;
     }
-
-    let score = candidate.basePriority;
-    if (candidate.isDirectRef) score += 100;
-    score += titleMatches * 12;
-    score += Math.min(bodyMatches * 3, 24);
 
     if (!candidate.isDirectRef && !candidate.isCoreOrientation && queryKeywords.size > 0 && titleMatches === 0 && bodyMatches === 0) {
       omittedCandidates.push({ path: candidate.path, reason: "Not relevant to task or query keywords" });
@@ -655,7 +661,9 @@ export function compileContext(options = {}) {
 
     optionalCandidates.push({
       ...candidate,
-      score,
+      _titleTerms: titleTerms,
+      _bodyTerms: bodyTerms,
+      score: candidate.basePriority + (candidate.isDirectRef ? 100 : 0),
       matchedKeywords: titleMatches + bodyMatches,
     });
   };
@@ -864,6 +872,23 @@ export function compileContext(options = {}) {
         text: readRes.text,
       });
     }
+  }
+
+  // Rank optional candidates using Contextual BM25 over title/header and body terms, then tie-break by path.
+  const titleBm25 = scoreBm25Documents(
+    queryKeywords,
+    optionalCandidates.map((cand) => ({ id: cand.path, terms: cand._titleTerms }))
+  );
+  const bodyBm25 = scoreBm25Documents(
+    queryKeywords,
+    optionalCandidates.map((cand) => ({ id: cand.path, terms: cand._bodyTerms }))
+  );
+  for (const cand of optionalCandidates) {
+    const tScore = titleBm25.get(cand.path) ?? 0;
+    const bScore = bodyBm25.get(cand.path) ?? 0;
+    cand.score = Math.round((cand.score + tScore * 14 + bScore * 6) * 1e6) / 1e6;
+    delete cand._titleTerms;
+    delete cand._bodyTerms;
   }
 
   // Deterministic sort: highest score first, lexicographical path tie-breaker.

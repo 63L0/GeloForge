@@ -20,9 +20,10 @@ One task is assigned per workflow and execution. Verified reports link to eviden
 - `geloforge worktree add|list|remove` manages isolated checkouts under the selected workspace's `worktrees/`.
 - `geloforge mcp lock [--check]` pins configured stdio MCP servers' canonical JSON-RPC tool definitions to `.geloforge/mcp-lock.json` and detects tool-surface drift.
 - `geloforge loop run --config <relpath> [--task TASK-NNNN]` and `geloforge loop status` run a bounded `implement -> verify -> review -> fix` loop gated by deterministic command verification (`captureEvidence`) and completion checkpoints.
+- `core/context-compiler.mjs` ranks optional documents via zero-dependency **Contextual BM25** (`scoreBm25Documents`) in an edge-anchored 3-zone packet layout.
 
 ## Provider Adapters and Evaluation
 
 [Codex CLI, Gemini CLI and Antigravity CLI](../adapters/README.md) receive scoped audit packets from the same project memory. Interactive clients can use the same project through GeloForge MCP. Reusable project skills live under `.agents/skills/`.
 
-The parallel [staging evaluation](../evaluations/staging-audits.json) runs two specialists for inquiry routing and quotation handoff, then a separate reviewer. The worker enforces at most two concurrent specialists and two report repair retries per audit. The signed approval also caps launches across audits. Run `npm run benchmark:audits` to compare the single and parallel paths against the expected observations. Run `npm run benchmark:cache` to check cache invalidation across projects.
+The parallel [staging evaluation](../evaluations/staging-audits.json) runs two specialists for inquiry routing and quotation handoff, then a separate reviewer. The worker enforces at most two concurrent specialists and two report repair retries per audit. The signed approval also caps launches across audits. Run `npm run benchmark:audits` to compare the single and parallel paths against the expected observations. Run `npm run benchmark:cache` to check cache invalidation across projects. Run `npm run eval` to execute the offline regression evaluation suite ([regression-evals.json](../evaluations/regression-evals.json)) across retrieval, context layout, query cache, MCP pinning/hints, and coding loop policy checks.
