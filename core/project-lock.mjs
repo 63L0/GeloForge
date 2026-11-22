@@ -20,6 +20,11 @@ import { assertSafeWithinRoot, atomicWriteFile } from "./path-safety.mjs";
 
 const ACTIVE_LOCKS = new Set();
 const SLEEP_VIEW = new Int32Array(new SharedArrayBuffer(4));
+const TRANSIENT_LOCK_FS_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+function isTransientLockFsError(err) {
+  return Boolean(err && TRANSIENT_LOCK_FS_CODES.has(err.code));
+}
 
 function sleepSyncMs(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return;
@@ -84,16 +89,24 @@ function isExpectedSameLock(currentMeta, expectedMeta) {
 }
 
 function releaseLockSafe(lockAbs, token) {
-  try {
-    if (!fs.existsSync(lockAbs)) return;
-    const st = fs.lstatSync(lockAbs);
-    if (st.isSymbolicLink() || !st.isFile()) return;
-    const parsed = JSON.parse(fs.readFileSync(lockAbs, "utf8"));
-    if (parsed && parsed.token === token) {
-      fs.unlinkSync(lockAbs);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      if (!fs.existsSync(lockAbs)) return;
+      const st = fs.lstatSync(lockAbs);
+      if (st.isSymbolicLink() || !st.isFile()) return;
+      const parsed = JSON.parse(fs.readFileSync(lockAbs, "utf8"));
+      if (parsed && parsed.token === token) {
+        fs.unlinkSync(lockAbs);
+      }
+      return;
+    } catch (err) {
+      if (isTransientLockFsError(err) && attempt < 4) {
+        sleepSyncMs(10);
+        continue;
+      }
+      // Do not unlink lock owned by another process or already removed
+      return;
     }
-  } catch {
-    // Do not unlink lock owned by another process or already removed
   }
 }
 
@@ -114,7 +127,7 @@ function acquireReclaimGuard(reclaimAbs, staleLockMs) {
     }
     return guardToken;
   } catch (err) {
-    if (!err || (err.code !== "EEXIST" && err.code !== "EPERM")) {
+    if (!err || (err.code !== "EEXIST" && !isTransientLockFsError(err))) {
       throw err;
     }
     // Check if an abandoned reclaim guard was left by a dead process
@@ -148,7 +161,7 @@ function tryReclaimStaleLock(lockAbs, expectedMeta, staleLockMs) {
     try {
       currentMeta = parseLockMeta(lockAbs);
     } catch (err) {
-      if (err && err.code === "ENOENT") {
+      if (err && (err.code === "ENOENT" || isTransientLockFsError(err))) {
         return false;
       }
       throw err;
@@ -163,7 +176,7 @@ function tryReclaimStaleLock(lockAbs, expectedMeta, staleLockMs) {
     try {
       fs.renameSync(lockAbs, staleTmp);
     } catch (err) {
-      if (err && (err.code === "ENOENT" || err.code === "EPERM" || err.code === "EACCES" || err.code === "EBUSY")) {
+      if (err && (err.code === "ENOENT" || isTransientLockFsError(err))) {
         return false;
       }
       throw err;
@@ -224,6 +237,20 @@ export function recoverPendingTransactionJournal(projectDir) {
   return { recovered: true, restoredFiles };
 }
 
+function resolveSafeLockPath(resolvedDir, relPath, timeoutMs, delayMs, startMs) {
+  while (true) {
+    try {
+      return assertSafeWithinRoot(resolvedDir, relPath);
+    } catch (err) {
+      const elapsed = Date.now() - startMs;
+      if (!isTransientLockFsError(err) || elapsed >= timeoutMs) {
+        throw err;
+      }
+      sleepSyncMs(Math.min(delayMs, timeoutMs - elapsed));
+    }
+  }
+}
+
 /**
  * Executes `fn` while holding an exclusive atomic lockfile at `<projectDir>/.geloforge/.state.lock`.
  */
@@ -266,9 +293,9 @@ export function withProjectLock(
     fs.mkdirSync(gfDirAbs, { recursive: true });
   }
 
-  const lockAbs = assertSafeWithinRoot(resolvedDir, ".geloforge/.state.lock");
-  const token = crypto.randomBytes(12).toString("hex");
   const startMs = Date.now();
+  const lockAbs = resolveSafeLockPath(resolvedDir, ".geloforge/.state.lock", timeout, delay, startMs);
+  const token = crypto.randomBytes(12).toString("hex");
 
   let acquired = false;
   while (!acquired) {
@@ -288,23 +315,28 @@ export function withProjectLock(
       }
       acquired = true;
     } catch (err) {
-      if (!err || (err.code !== "EEXIST" && err.code !== "EPERM")) {
+      if (!err || (err.code !== "EEXIST" && !isTransientLockFsError(err))) {
         throw err;
       }
 
       // Inspect existing lock (if present) for staleness or symlink violation
       let metaInfo = null;
+      let transientInspectError = false;
       try {
         metaInfo = parseLockMeta(lockAbs);
       } catch (inspectErr) {
         if (inspectErr && inspectErr.code === "ENOENT") {
           continue;
         }
-        throw inspectErr;
+        if (isTransientLockFsError(inspectErr)) {
+          transientInspectError = true;
+        } else {
+          throw inspectErr;
+        }
       }
 
       const nowMs = Date.now();
-      if (isLockStale(metaInfo, staleMs, nowMs)) {
+      if (!transientInspectError && isLockStale(metaInfo, staleMs, nowMs)) {
         if (tryReclaimStaleLock(lockAbs, metaInfo, staleMs)) {
           continue;
         }

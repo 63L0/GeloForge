@@ -10,6 +10,7 @@ All notable changes to GeloForge are recorded in this file.
 - Add concrete `input_examples` and self-correcting error hints to multi-action MCP tools (`core/mcp-server.mjs`).
 - Add an offline regression evaluation suite and runner (`npm run eval`, `evaluations/regression-evals.json`).
 - Fix Windows headless audit provider stdin EOF handling and Gemini CLI temp-dir workspace trust (`core/audit-provider.mjs`), and bypass query disk caching only while active task leases exist (`core/context-cache.mjs`).
+- Harden Windows `.geloforge/.state.lock` contention handling by retrying transient `EPERM`/`EACCES`/`EBUSY` errors during lock inspection, reclamation, and release (`core/project-lock.mjs`).
 - Overhaul `README.md` for beginner-friendly onboarding and showcase new MCP locking and bounded loop workflows.
 
 ## [0.7.0] — 2026-11-22

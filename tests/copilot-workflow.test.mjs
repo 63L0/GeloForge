@@ -803,6 +803,69 @@ test("concurrent two-process claimTaskLease serializes via .state.lock, enforces
   }
 });
 
+test("withProjectLock retries transient EPERM and EBUSY errors during .state.lock inspection", () => {
+  const { tmp, projectDir } = initTempProject("gf-lock-transient-");
+  const origLstatSync = fs.lstatSync;
+  try {
+    const lockDir = path.join(projectDir, ".geloforge");
+    fs.mkdirSync(lockDir, { recursive: true });
+    const lockPath = path.join(lockDir, ".state.lock");
+    const deadChild = spawnSync(process.execPath, ["-e", "process.exit(0)"], { windowsHide: true });
+    assert.equal(deadChild.status, 0);
+    assert.ok(deadChild.pid > 0);
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: deadChild.pid,
+        token: "dead-transient-token",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      "utf8"
+    );
+
+    const lockTargets = new Set([
+      path.resolve(lockPath),
+      path.join(fs.realpathSync(projectDir), ".geloforge", ".state.lock"),
+    ]);
+    const inspectTransientCodes = ["EPERM", "EBUSY"];
+    let injectedPathErrors = 0;
+    let injectedInspectErrors = 0;
+    fs.lstatSync = function patchedLstatSync(target, ...rest) {
+      if (typeof target === "string" && lockTargets.has(path.resolve(target))) {
+        const opts = rest[0];
+        if (opts && opts.throwIfNoEntry === false && injectedPathErrors < 1) {
+          injectedPathErrors += 1;
+          const err = new Error(`EPERM: simulated transient lock path error, lstat '${target}'`);
+          err.code = "EPERM";
+          throw err;
+        }
+        if (!opts && injectedInspectErrors < inspectTransientCodes.length) {
+          const code = inspectTransientCodes[injectedInspectErrors];
+          injectedInspectErrors += 1;
+          const err = new Error(`${code}: simulated transient lock inspect error, lstat '${target}'`);
+          err.code = code;
+          throw err;
+        }
+      }
+      return origLstatSync.call(this, target, ...rest);
+    };
+
+    const result = withProjectLock(projectDir, () => "recovered-after-transient-fs", {
+      lockTimeoutMs: 2000,
+      staleLockMs: 50,
+      retryDelayMs: 10,
+    });
+    assert.equal(result, "recovered-after-transient-fs");
+    assert.equal(injectedPathErrors, 1);
+    assert.equal(injectedInspectErrors, 2);
+    assert.equal(fs.existsSync(lockPath), false);
+  } finally {
+    fs.lstatSync = origLstatSync;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("fault injection triggers full multi-file rollback in claimTaskLease, updateTask, completeTask, and createCheckpoint", () => {
   const { tmp, projectDir } = initTempProject("gf-tx-fault-");
   try {
