@@ -1,134 +1,81 @@
 # GeloForge
 
-**Stop re-explaining your codebase — give every AI coding agent a shared, proof-verified memory.**
+**Switch AI coding agents without starting over.**
 
-Switch freely between **Cursor, Claude Code, VS Code, Codex CLI, Gemini CLI, and Antigravity** without losing architectural context, risking overlapping edits, or trusting hallucinated `"tests pass!"` claims. GeloForge is a local-first, **zero-dependency** CLI and MCP server that keeps project memory, scoped tasks, real test receipts, pinned MCP tools, and portable skills right inside your Git repository.
+GeloForge is an open-source, local-first harness that keeps project context, task progress, and test results in your Git repo. Start a task in Claude Code, hand it off to Codex, and pick up from the files both agents can read.
 
 [![CI on main](https://github.com/63L0/GeloForge/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/63L0/GeloForge/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/geloforge?label=npm)](https://www.npmjs.com/package/geloforge)
 [![Node 20+](https://img.shields.io/badge/node-20%2B-brightgreen)](https://nodejs.org/)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-blue)](./package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-
-**Zero databases. Zero cloud lock-in. Zero external runtime packages. Zero API keys required.** Everything lives as plain, human-readable Markdown, YAML, and JSON schemas inside your repo.
-
-![Two scripted MCP sessions demonstrating overlapping file leases, verified test evidence, and a signed skill approval.](https://raw.githubusercontent.com/63L0/GeloForge/main/docs/media/geloforge-v06-demo.gif)
-
-*[Read the full multi-session case study & reproduction steps →](./docs/dogfooding-v06.md)*
-
----
-
-## Table of Contents
-
-- [Why GeloForge?](#why-geloforge)
-- [Quick start (Beginner AI Prompt or 30-Second CLI)](#quick-start)
-- [See it in action](#see-it-in-action)
-- [Beginner Copy-Paste AI Prompts (No CLI Memorization Needed)](#beginner-copy-paste-ai-prompts)
-- [What you can do (Complete Feature Guide)](#what-you-can-do)
-  - [1. Smart Context Compiler & Contextual BM25 (`context`)](#1-smart-context-compiler--contextual-bm25-context)
-  - [2. 15+ Language Codebase Symbol Mapper (`context --map`)](#2-15-language-codebase-symbol-mapper-context---map)
-  - [3. 1-Command Long-Session Compaction & Checkpoints (`compact` / `checkpoint`)](#3-1-command-long-session-compaction--checkpoints-compact--checkpoint)
-  - [4. Real Command Evidence & Fail-Closed Verification (`verify` / `evidence`)](#4-real-command-evidence--fail-closed-verification-verify--evidence)
-  - [5. Shareable PR & Project Verification Reports (`report`)](#5-shareable-pr--project-verification-reports-report)
-  - [6. Cross-Agent File Handoffs (`handoff`)](#6-cross-agent-file-handoffs-handoff)
-  - [7. Scoped Tasks, Multi-IDE File Leases & Git Worktrees (`task` / `worktree`)](#7-scoped-tasks-multi-ide-file-leases--git-worktrees-task--worktree)
-  - [8. Portable Agent Skills, Advisor, 5 Starter Templates & Ed25519 Lifecycle (`skills`)](#8-portable-agent-skills-advisor-5-starter-templates--ed25519-lifecycle-skills)
-  - [9. Zero-Dependency MCP Server, 1-Command Client Init & SHA-256 Tool Pinning (`mcp`)](#9-zero-dependency-mcp-server-1-command-client-init--sha-256-tool-pinning-mcp)
-  - [10. Bounded Coding Loops (`loop`), Autonomous Staging Audits (`autonomous`) & Canonical Proposals (`proposal`)](#10-bounded-coding-loops-loop-autonomous-staging-audits-autonomous--canonical-proposals-proposal)
-  - [11. One-Command Diagnostics (`doctor`), Ambient Hooks (`hooks init`) & Co-Pilot (`recommend`)](#11-one-command-diagnostics-doctor-ambient-hooks-hooks-init--co-pilot-recommend)
-- [Complete CLI Command Reference (19 Commands)](#complete-cli-command-reference)
-- [How it fits your project (Second Brain Architecture, Layers & Trust Tiers)](#how-it-fits-your-project)
-- [Documentation](#documentation)
-- [Contributing](#contributing)
-
----
-
-## Why GeloForge?
-
-Every time you start a new AI chat, hit a context-window limit, or switch from Cursor to Claude Code, Codex, Gemini CLI, or Antigravity, yesterday's context disappears. **GeloForge gives all of your AI coding agents one deterministic Second Brain:**
-
-| Common AI Coding Pain Point | How GeloForge Solves It |
-| --- | --- |
-| **Chat amnesia:** Re-explaining your architecture and rules in every new chat | **Contextual BM25 & 3-Zone Context Compiler (`context`):** Builds one token-budgeted packet (`brain/` + symbol map + skills) in seconds |
-| **Long-chat "context rot":** The AI forgets rules or gets slow when a thread gets too long | **1-Command Session Compaction (`compact`):** Saves a `CHKPT-NNNN` checkpoint, prunes completed tasks, and prints a ready-to-paste **Fresh Chat Prompt** |
-| **Fake `"tests pass!"` claims:** Agents saying code works without running tests | **Evidence-Gated Completion (`verify` / `evidence capture`):** Runs real commands (`shell: false`), checks exit codes, redacts secrets, and blocks fake completion |
-| **Parallel agent collisions:** Two AI tools overwriting each other's files | **Cooperative File Leases (`task claim`) & Git Worktrees (`worktree add`):** Warns agents before scope collisions and isolates parallel branches |
-| **Missing or unsafe agent skills:** Not knowing what skills your project needs | **Skills Advisor & 5 Starter Templates (`skills suggest`):** Analyzes your repo/goal, recommends skills, and stages quarantined drafts until you approve them |
-| **MCP tool drift / rug-pulls:** Third-party MCP servers silently changing tool schemas | **SHA-256 MCP Tool Pinning (`mcp lock --check`):** Locks stdio MCP tool definitions in `.geloforge/mcp-lock.json` and detects drift offline |
-| **Hard to review AI work in PRs:** No clear proof of what was tested | **Shareable Verification Reports (`report`):** Generates a GitHub-Flavored Markdown report of tasks, `EVID-*` test receipts, checkpoints, and `doctor` checks |
-
----
 
 ## Quick start
 
-**Prerequisites:** **Node.js 20+** and **Git** installed. You do **not** need to install anything globally — `npx geloforge` works immediately in any folder.
-
-### Option A — Beginner Friendly (Zero CLI memorization: just paste this to your AI agent!)
-
-If you are new to terminal tools or prefer letting your AI assistant handle setup, open **Cursor, Claude Code, VS Code, Codex CLI, Gemini CLI, or Antigravity** inside your project folder and paste this prompt:
-
-```text
-Set up GeloForge in this repository safely. First run `npx geloforge adopt --dry-run` and explain what files will be added without modifying my existing code. After I confirm, run `npx geloforge adopt`, `npx geloforge mcp init`, `npx geloforge hooks init --dry-run`, and `npx geloforge doctor`. Then run `npx geloforge skills suggest` to recommend matching skills and ask what my first goal is. Do NOT edit my app code or auto-promote skills.
-```
-
-### Option B — Run the CLI yourself in an existing project (30 seconds)
-
-Run these commands from the root of any existing Git repository:
+Run this from the root of an existing Git repo with Node.js 20+ and Git installed. The preview shows what GeloForge would add.
 
 ```bash
-# 1. Preview what files will be added (dry-run touches nothing)
 npx geloforge adopt --dry-run
+```
 
-# 2. Add the GeloForge Second Brain alongside your code + check health
+When you're ready to set it up:
+
+```bash
 npx geloforge adopt
 npx geloforge status
-npx geloforge doctor
-
-# 3. Connect your AI editors (Cursor, VS Code, Claude Code, Gemini CLI; add --client antigravity for Antigravity)
-npx geloforge mcp init
-
-# 4. Preview optional ambient guardrails (Git pre-commit, Claude Stop, Gemini AfterAgent)
-npx geloforge hooks init --dry-run
 ```
 
-### Option C — Start a brand-new project from scratch (`init`)
+See the [5-minute walkthrough](./docs/quickstart-5min.md), [paste setup instructions into your agent](./docs/beginner-prompts.md), or [start a new project](./docs/new-projects.md).
 
-Scaffold a clean repository with one of **5 built-in domain profiles** (`web`, `desktop`, `mobile`, `automation`, `ai-system`):
+## Why GeloForge?
 
-```bash
-npx geloforge init --name "My Web App" --profile web --dest ./my-web-app --git
-```
-
-> Guides: [Beginner AI Prompts](./docs/beginner-prompts.md) · [5-minute quickstart](./docs/quickstart-5min.md) · [Creating a new project](./docs/new-projects.md)
-
----
+- **Resume faster.** Give the next session a focused packet of project decisions, constraints, and active work.
+- **Hand off a task.** Record what's done, what's open, and what the next agent should do.
+- **See what ran.** Capture real command results and generate a verification report for your pull request.
 
 ## See it in action
 
-Here is the everyday end-to-end loop — from discovering skills and creating a scoped task, to proving tests pass, generating a PR report, and compacting a long session:
+Say you've started a bug fix in Claude Code and want to finish it in Codex. Start with a tracked task, then save a handoff when you're ready to switch. Use the task ID GeloForge prints in place of `TASK-0001` if it differs.
 
 ```bash
-# 1. Analyze your project/goal for matching skills or starter templates
-npx geloforge skills suggest --goal "Harden checkout webhook validation"
-
-# 2. Create and activate a scoped task contract (TASK-0001)
-npx geloforge task new --title "Harden checkout webhook validation" --activate
-
-# 3. Compile a token-budgeted context packet with a 15+ language symbol map and skills
-npx geloforge context --task TASK-0001 --map --skills
-
-# 4. Record an intermediate test run without closing the task yet
-npx geloforge evidence capture --task TASK-0001 -- node --test
-
-# 5. Run tests, record verified evidence + checkpoint, and complete the task (fails closed if tests fail!)
-npx geloforge verify --task TASK-0001 -- node --test
-
-# 6. Export a shareable Markdown verification report for your GitHub Pull Request
-npx geloforge report --task TASK-0001
-
-# 7. Chat getting too long? Compact state in 1 command and get a fresh-chat resume prompt
-npx geloforge compact --summary "Webhook validation verified; ready for next feature"
+npx geloforge task new --title "Fix checkout validation" --activate
+npx geloforge handoff --task TASK-0001 --from-tool claude-code --to-tool codex \
+  --next-action "Finish validating checkout inputs and run the regression tests"
 ```
+
+In Codex, point the agent to the generated handoff and load the task context. When the fix is ready, verify it and generate the PR report. Use your project's test command after `--`.
+
+```bash
+npx geloforge context --task TASK-0001
+npx geloforge verify --task TASK-0001 -- node --test
+npx geloforge report --task TASK-0001
+```
+
+<details>
+<summary>Watch the 15-second terminal replay of two scripted MCP sessions</summary>
+
+![Two scripted MCP sessions demonstrating file lease conflicts, verified test evidence, and a signed skill approval.](./docs/media/geloforge-v06-demo.gif)
+
+[Case study and reproduction steps](./docs/dogfooding-v06.md)
+
+</details>
+
+## Set up your editor
+
+```bash
+npx geloforge mcp init
+npx geloforge doctor
+```
+
+GeloForge runs as a local CLI or stdio MCP server with zero runtime dependencies. See the [MCP setup guide](#9-zero-dependency-mcp-server-1-command-client-init--sha-256-tool-pinning-mcp) for supported clients and options.
+
+## Table of Contents
+
+- [Copy-paste prompts](#beginner-copy-paste-ai-prompts)
+- [Full feature guide](#what-you-can-do)
+- [Command reference](#complete-cli-command-reference)
+- [Project architecture](#how-it-fits-your-project)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
 
 ---
 
