@@ -2,6 +2,13 @@
 
 All notable changes to GeloForge are recorded in this file.
 
+## [0.10.2] — 2026-11-23
+
+- Keep earlier failed checks in the task history and allow a fresh passing check to complete the task.
+- Record numeric exit codes alongside check results in verification reports.
+- Use a cross-platform Node test command in the verification examples.
+- Add the GeloForge banner and a Plan → Build → Verify walkthrough with a cross-agent handoff.
+
 ## [0.10.1] — 2026-11-22
 
 - Expand `README.md` into a complete, self-contained beginner-friendly and power-user reference for both GitHub and npmjs.com, adding a copy-paste Beginner AI Prompts table, full 11-pillar feature guide with working examples, all 5 Starter Skill Templates table, full 5-client & 6-tool MCP reference tables, complete 19-command CLI quick reference table, and Second Brain architecture overview (`L1`–`L4` memory layers, `A0`–`A6` authority tiers, 12 JSON Schemas, and 5 agent roles).
