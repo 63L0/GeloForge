@@ -1,6 +1,6 @@
 {
   "name": "geloforge",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "Zero-dependency local CLI & MCP server for AI coding agents — shared project memory, verified test evidence, skill advisor, MCP tool pinning, and cross-agent handoffs.",
   "license": "MIT",
   "type": "module",

@@ -1,4 +1,4 @@
-# ![GeloForge — Pick up where you left off.](./docs/media/geloforge-banner.webp)
+# ![GeloForge — Pick up where you left off.](https://raw.githubusercontent.com/63L0/GeloForge/5d97353e15aef7d45e8141504fff55e5f614183a/docs/media/geloforge-banner.webp)
 
 **Switch AI coding agents without starting over.**
 
@@ -68,7 +68,7 @@ npx geloforge report --task TASK-0001
 <details>
 <summary>Watch the 15-second terminal replay of two scripted MCP sessions</summary>
 
-![Two scripted MCP sessions demonstrating file lease conflicts, verified test evidence, and a signed skill approval.](./docs/media/geloforge-v06-demo.gif)
+![Two scripted MCP sessions demonstrating file lease conflicts, verified test evidence, and a signed skill approval.](https://raw.githubusercontent.com/63L0/GeloForge/5d97353e15aef7d45e8141504fff55e5f614183a/docs/media/geloforge-v06-demo.gif)
 
 [Case study and reproduction steps](./docs/dogfooding-v06.md)
 
