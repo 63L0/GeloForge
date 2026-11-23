@@ -41,7 +41,7 @@ Run `npx geloforge doctor` in this project, explain any warnings or failures in 
 ## 4. Prove my changes actually pass tests (`verify`)
 
 ```text
-Before marking this task complete, run our real project tests using `npx geloforge verify --task <TASK-ID> -- <OUR_TEST_COMMAND>` (for example `npm test` or `node --test`). Show me the exact pass/fail output and evidence ID recorded. Do not mark the task done if checks fail.
+Before marking this task complete, run our real project tests using `npx geloforge verify --task <TASK-ID> -- <OUR_TEST_COMMAND>` (for example `node --test`). Show me the exact pass/fail output and evidence ID recorded. Do not mark the task done if checks fail.
 ```
 
 ---

@@ -1058,25 +1058,18 @@ test("task done separates completion from verified evidence and enforces --requi
     });
     assert.equal(passEv.verified, true);
 
-    // Complete cleanly via CLI with --require-evidence (fails if unverified EVID-0001 still attached, so check explicit fix or new task!)
-    createTask({ projectDir, title: "Clean verified task", activate: true, createdAt: "2026-11-20T09:08:30Z" });
-    const passEv2 = captureEvidence({
-      projectDir,
-      taskId: "TASK-0003",
-      commandArgv: ["node", "-e", "console.log('clean pass')"],
-      verifiedBy: "qa-reviewer",
-      createdAt: "2026-11-20T09:09:00Z",
-    });
+    // The newer pass satisfies the gate and the first attempt stays in the task history.
     const cliDone = spawnSync(
       process.execPath,
-      [CLI_PATH, "task", "done", "--project", projectDir, "TASK-0003", "--require-evidence", "--evidence", passEv2.id, "--json"],
+      [CLI_PATH, "task", "done", "--project", projectDir, "TASK-0002", "--require-evidence", "--evidence", passEv.id, "--json"],
       { encoding: "utf8", windowsHide: true }
     );
     assert.equal(cliDone.status, 0, cliDone.stderr);
     const doneJson = JSON.parse(cliDone.stdout);
     assert.equal(doneJson.verified, true);
     assert.equal(doneJson.verificationStatus, "verified");
-    assert.deepEqual(doneJson.verifiedEvidenceRefs, [passEv2.id]);
+    assert.deepEqual(doneJson.verifiedEvidenceRefs, [passEv.id]);
+    assert.deepEqual(doneJson.record.evidence_refs, [failEv.id, passEv.id]);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

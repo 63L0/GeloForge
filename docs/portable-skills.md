@@ -43,7 +43,7 @@ Use this skill before tagging or publishing a release branch.
 ## Steps
 
 1. Confirm working tree hygiene with `git status`.
-2. Run `geloforge evidence capture --task TASK-0001 --name "Test suite" -- npm test`.
+2. Run `geloforge evidence capture --task TASK-0001 --name "Test suite" -- node --test`.
 3. Inspect open blockers using the [release checklist](references/checklist.md).
 ```
 

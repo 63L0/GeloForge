@@ -106,9 +106,15 @@ try {
     "--profile", "quick", "--map"]);
   assert.equal(context.manifest.project_id, init.projectId);
 
+  // Exercise the README's direct Node test command across the CI OS matrix.
+  const testsDir = path.join(newProject, "tests");
+  fs.writeFileSync(path.join(testsDir, "smoke.test.mjs"),
+    'import test from "node:test";\ntest("smoke verification", () => {});\n');
   const verification = JSON.parse(cli(["verify", "--project", newProject,
-    "--task", task.id, "--name", "Installed Node runtime", "--json", "--",
-    process.execPath, "--version"]));
+    "--task", task.id, "--name", "Packaged smoke test", "--json", "--",
+    "node", "--test"]));
+  assert.match(verification.evidence.outputExcerpt, /smoke verification/);
+  assert.equal(verification.evidence.record.checks[0].exit_code, 0);
   assert.equal(verification.status, "completed");
   assert.equal(verification.evidence.id, "EVID-0001");
   assert.equal(verification.completion.verificationStatus, "verified");

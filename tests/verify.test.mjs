@@ -59,6 +59,41 @@ test("verify preserves a failed attempt and finishes a retried task with fresh e
   assert.equal(JSON.parse(cli(root, ["validate", "--json"]).stdout).valid, true);
 });
 
+test("verify completes a task after failed standalone captures and reports their exit codes", (t) => {
+  const root = makeProject(t);
+  const task = JSON.parse(cli(root, ["task", "new", "--title", "Verify project", "--activate", "--json"]).stdout);
+  const capture = (code, status) => JSON.parse(cli(root, [
+    "evidence", "capture", "--task", task.id, "--json", "--",
+    process.execPath, "-e", `process.exit(${code})`,
+  ], status).stdout);
+
+  const originalPass = capture(0, 0);
+  const failed = capture(7, 1);
+  assert.equal(failed.linkedToTask, true);
+  assert.equal(failed.record.checks[0].exit_code, 7);
+  const blocked = cli(root, ["task", "done", task.id, "--require-evidence"], 1);
+  assert.match(blocked.stderr, /lacks verified EVID-\* evidence/);
+
+  // Simulate a previously saved receipt without the optional exit code.
+  const originalPath = path.join(root, originalPass.relPath);
+  fs.writeFileSync(originalPath, fs.readFileSync(originalPath, "utf8").replace(/^ +exit_code: 0\r?\n/m, ""));
+
+  const passed = JSON.parse(cli(root, [
+    "verify", "--task", task.id, "--json", "--", process.execPath, "-e", "process.exit(0)",
+  ]).stdout);
+  assert.equal(passed.status, "completed");
+  assert.deepEqual(passed.completion.record.evidence_refs, [originalPass.id, failed.id, passed.evidence.id]);
+  assert.deepEqual(passed.completion.verifiedEvidenceRefs, [originalPass.id, passed.evidence.id]);
+  assert.equal(passed.checkpoint.record.verification_evidence_ref, passed.evidence.id);
+  assert.equal(JSON.parse(cli(root, ["validate", "--json"]).stdout).valid, true);
+
+  const report = JSON.parse(cli(root, ["report", "--task", task.id, "--json"]).stdout);
+  assert.deepEqual(report.evidence.map(({ checks }) => checks[0].exitCode), [null, 7, 0]);
+  assert.match(report.markdown, /^\| EVID-0001 .* \| — \| passed \|$/m);
+  assert.match(report.markdown, /^\| EVID-0002 .* \| 7 \| failed \|$/m);
+  assert.match(report.markdown, /^\| EVID-0003 .* \| 0 \| passed \|$/m);
+});
+
 test("verify requires an exact task when several are active and runs the check outside the project lock", (t) => {
   const root = makeProject(t);
   cli(root, ["task", "new", "--title", "First task", "--activate"]);

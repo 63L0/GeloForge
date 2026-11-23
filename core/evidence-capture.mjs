@@ -238,7 +238,7 @@ export function captureEvidence(options = {}) {
         `Command check outcome is "${checkResult}" (${timedOut ? "timed out" : "non-zero/spawn error"}); evidence recorded as status="draft" (NOT verified) and excluded from HANDOFF verified_evidence.`,
         "No test assertions or feature completeness are verified when command execution fails or blocks.",
         ...(proc.error?.code === "ENOENT"
-          ? ["Executable not found with shell: false; pass a direct binary path or *.cmd / node command without shell interpolation."]
+          ? ["Executable not found with shell: false; pass a direct executable path or use node with its script path."]
           : []),
       ];
 
@@ -267,6 +267,7 @@ export function captureEvidence(options = {}) {
           command: redactedCommand,
           result: checkResult,
           summary: redactSecretContent(summary),
+          ...(Number.isInteger(proc.status) ? { exit_code: proc.status } : {}),
         },
       ],
       artifacts,
