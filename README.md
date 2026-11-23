@@ -139,7 +139,7 @@ Don't want to type CLI flags? Copy and paste any of these prompts directly to yo
 | What you want to do | Copy & paste this prompt to your AI agent |
 | --- | --- |
 | **Start a new feature or bug fix** | `Let's work on this goal using GeloForge: "<YOUR GOAL>". First run npx geloforge doctor --skip-mcp-check, then create and activate a task with npx geloforge task new --title "..." --activate. Run npx geloforge skills suggest --task <TASK-ID> --goal "<YOUR GOAL>" and compile context with npx geloforge context --task <TASK-ID> --map --skills. Tell me your plan before editing files.` |
-| **Prove changes actually pass tests** | `Before marking our task done, run our real test command using npx geloforge verify --task <TASK-ID> -- <TEST_COMMAND> (e.g. npm test or node --test). Show me the exact pass/fail output and EVID-* ID. Do not mark the task done if tests fail.` |
+| **Prove changes actually pass tests** | `Before marking our task done, run our real test command using npx geloforge verify --task <TASK-ID> -- <TEST_COMMAND> (e.g. node --test). Show me the exact pass/fail output and EVID-* ID. Do not mark the task done if tests fail.` |
 | **Chat is getting too long (Fresh Chat)** | `This conversation is getting long. Run npx geloforge compact --summary "<SHORT SUMMARY>", confirm the CHKPT-* ID saved, and give me the exact ready-to-paste fresh-chat prompt so I can continue in a new chat window without losing context.` |
 | **Use a built-in starter skill template** | `Run npx geloforge skills suggest to see which starter skill template best fits our repo, then preview staging it with npx geloforge skills suggest --template <TEMPLATE-ID> --scaffold-draft --dry-run and explain what it checks before writing it.` |
 | **Check if everything is healthy** | `Run npx geloforge doctor in this project, explain any warnings or failures in plain English, and show me the exact fix commands before running anything.` |
@@ -206,16 +206,19 @@ Stop taking an AI agent's word for `"all tests pass"`:
 - **Fail-Closed Verification Status:**
   - Exit code `0` → writes `evidence/EVID-NNNN-*.yaml` with `status: "verified"` and updates `last_verified_evidence`.
   - Non-zero exit code or `--timeout <ms>` → writes `status: "draft"` (never `verified`), exits non-zero, and keeps the task open for fixes.
+- A fresh passing check can complete the task after a failed capture. Earlier draft receipts remain in the task history.
 - **Automatic Secret Redaction:** Redacts API keys, bearer tokens, private keys, and credentials from captured stdout/stderr before writing to disk.
 - **1-Command Task Closure (`geloforge verify`):** Runs your test command, records `EVID-NNNN`, saves a `CHKPT-NNNN` checkpoint, and marks the active task completed with `--require-evidence`.
 
 ```bash
 # Capture intermediate proof (leaves task open)
-npx geloforge evidence capture --task TASK-0001 --name "Unit suite" -- npm test
+npx geloforge evidence capture --task TASK-0001 --name "Unit suite" -- node --test
 
 # Run check + save verified evidence + save checkpoint + complete task
-npx geloforge verify --task TASK-0001 -- npm test
+npx geloforge verify --task TASK-0001 -- node --test
 ```
+
+Use your project's test runner. On Windows, launch the runner through its executable or pass its JavaScript entry point to `node`. The `npm.cmd` shim requires a shell.
 
 ### 5. Shareable PR & Project Verification Reports (`report`)
 

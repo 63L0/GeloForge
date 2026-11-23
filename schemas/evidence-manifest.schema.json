@@ -56,7 +56,8 @@
           "name": { "type": "string", "minLength": 1 },
           "command": { "type": "string", "minLength": 1 },
           "result": { "type": "string", "enum": ["passed", "failed", "skipped", "not_tested", "blocked"] },
-          "summary": { "type": "string", "minLength": 1 }
+          "summary": { "type": "string", "minLength": 1 },
+          "exit_code": { "type": "integer" }
         }
       }
     },

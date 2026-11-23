@@ -405,7 +405,16 @@ function indexEvidenceById(projectDir, projectPaths, schemasDir) {
       else if (data.is_example === true) reason = "is_example fixture";
       else if (data.status !== "verified") reason = `status="${data.status}" (expected "verified")`;
       else if (passed === 0 || failedOrBlocked > 0) reason = `checks passed=${passed}, failed/blocked=${failedOrBlocked}`;
-      byId.set(data.id.trim().toUpperCase(), { id: data.id.trim().toUpperCase(), relPath: rel, isVerified, reason });
+      const id = data.id.trim().toUpperCase();
+      byId.set(id, {
+        id,
+        relPath: rel,
+        isVerified,
+        reason,
+        taskId: data.task_id,
+        createdAtMs: Date.parse(data.created_at),
+        isFailedDraft: schemaRes.valid && data.is_example !== true && data.status === "draft" && failedOrBlocked > 0,
+      });
     } catch (err) {
       const idMatch = path.basename(rel).match(/^(EVID-\d{4})/i);
       if (idMatch) {
@@ -421,18 +430,27 @@ function indexEvidenceById(projectDir, projectPaths, schemasDir) {
   return byId;
 }
 
+function isLaterEvidence(left, right) {
+  // Allocated evidence IDs order attempts created within the same timestamp.
+  return left.createdAtMs > right.createdAtMs
+    || (left.createdAtMs === right.createdAtMs && left.id > right.id);
+}
+
 export function verifyTaskEvidenceRefs({
   projectDir,
   projectPaths,
   schemasDir,
   evidenceRefs = [],
   strictExplicit = false,
+  taskId = null,
 }) {
   const byId = indexEvidenceById(projectDir, projectPaths, schemasDir);
   const verifiedIds = [];
   const unverifiedIds = [];
   const reasons = [];
   const seen = new Set();
+  const failedDrafts = [];
+  let latestVerified = null;
 
   for (const rawId of evidenceRefs) {
     const clean = String(rawId || "").trim().toUpperCase();
@@ -460,11 +478,27 @@ export function verifyTaskEvidenceRefs({
       if (strictExplicit) {
         throw new Error(`Refusing to link unverified evidence ${msg}.`);
       }
-      unverifiedIds.push(clean);
-      reasons.push(msg);
+      if (taskId !== null && entry.taskId === taskId && entry.isFailedDraft) {
+        failedDrafts.push(entry);
+      } else {
+        unverifiedIds.push(clean);
+        reasons.push(msg);
+      }
       continue;
     }
     verifiedIds.push(clean);
+    if (taskId !== null && entry.taskId === taskId && Number.isFinite(entry.createdAtMs)
+      && (!latestVerified || isLaterEvidence(entry, latestVerified))) {
+      latestVerified = entry;
+    }
+  }
+
+  // Retain earlier failed attempts in task history. A newer pass is required on this task.
+  for (const draft of failedDrafts) {
+    if (!latestVerified || !isLaterEvidence(latestVerified, draft)) {
+      unverifiedIds.push(draft.id);
+      reasons.push(`${draft.id} (${draft.relPath}): ${draft.reason}`);
+    }
   }
 
   return { verifiedIds, unverifiedIds, reasons };
@@ -682,7 +716,7 @@ function prepareTaskUpdatePlan({
     projectPaths,
     schemasDir,
     evidenceRefs: mergedEvidenceRefs,
-    strictExplicit: false,
+    taskId: taskInfo.id,
   });
   const verified = evidEval.verifiedIds.length > 0 && evidEval.unverifiedIds.length === 0;
   const verificationStatus = verified ? "verified" : "unverified";
