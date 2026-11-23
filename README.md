@@ -1,4 +1,4 @@
-# GeloForge
+# ![GeloForge — Pick up where you left off.](./docs/media/geloforge-banner.webp)
 
 **Switch AI coding agents without starting over.**
 
@@ -34,18 +34,33 @@ See the [5-minute walkthrough](./docs/quickstart-5min.md), [paste setup instruct
 
 ## See it in action
 
-Say you've started a bug fix in Claude Code and want to finish it in Codex. Start with a tracked task, then save a handoff when you're ready to switch. Use the task ID GeloForge prints in place of `TASK-0001` if it differs.
+### Plan
+
+Create one task with a goal, a scope, and a check that tells you when it's done. This example uses a checkout bug in a Node.js project.
 
 ```bash
-npx geloforge task new --title "Fix checkout validation" --activate
-npx geloforge handoff --task TASK-0001 --from-tool claude-code --to-tool codex \
-  --next-action "Finish validating checkout inputs and run the regression tests"
+npx geloforge task new --title "Fix checkout validation" --activate \
+  --scope-in "Checkout validation and regression tests" \
+  --criteria "A regression test confirms checkout rejects a missing email"
 ```
 
-In Codex, point the agent to the generated handoff and load the task context. When the fix is ready, verify it and generate the PR report. Use your project's test command after `--`.
+Use the task ID GeloForge prints in place of `TASK-0001` if it differs.
+
+### Build
+
+Load the task context before editing. If you switch from Claude Code to Codex midway, save a handoff and give the next agent the generated file. The next agent can run the same context command to pick up the task.
 
 ```bash
 npx geloforge context --task TASK-0001
+npx geloforge handoff --task TASK-0001 --from-tool claude-code --to-tool codex \
+  --next-action "Finish checkout input validation and run the regression tests"
+```
+
+### Verify
+
+Run your project's test command after `--`. A failed check keeps the task open. A passing check saves the test evidence and a checkpoint, then completes the task. Use the report to share the result in a pull request.
+
+```bash
 npx geloforge verify --task TASK-0001 -- node --test
 npx geloforge report --task TASK-0001
 ```
