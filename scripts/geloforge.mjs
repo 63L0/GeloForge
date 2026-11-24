@@ -4,6 +4,7 @@
  * Commands: init, validate, context, handoff, status.
  */
 
+import { chooseProjectGoal, setupQuestion } from "../core/setup-planning.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
@@ -187,6 +188,8 @@ Options:
   --slug <string>         Lowercase ASCII slug (optional)
   --dest <path>           Target directory (default: ${DEFAULT_INIT_LOCATION})
   --owner <string>        Project owner name
+  --goal <text>           Save an existing project goal or multiline spec
+  --skip-planning         Proceed directly to setup
   --description <string>  Short project description
   --profile <name>        Optional overlay: web, desktop, mobile, automation, ai-system
   --created-at <iso>      ISO-8601 timestamp for deterministic output
@@ -205,6 +208,8 @@ Options:
   --name <string>         Display name (default: inferred from manifest or directory name)
   --slug <string>         Lowercase ASCII slug (optional)
   --owner <string>        Project owner name (default: "Project Owner")
+  --goal <text>           Save an existing project goal or multiline spec
+  --skip-planning         Proceed directly to setup
   --description <string>  Short project description
   --profile <name>        Optional overlay: web, desktop, mobile, automation, ai-system
   --tasks-dir <relpath>   Relative task contracts folder (default: "tasks")
@@ -552,10 +557,12 @@ Common Options:
   }
 }
 
-function handleInit(args) {
+async function handleInit(args) {
   const parsed = parseArgs({
     args,
     options: {
+      goal: { type: "string" },
+      "skip-planning": { type: "boolean" },
       name: { type: "string" },
       slug: { type: "string" },
       dest: { type: "string" },
@@ -575,7 +582,9 @@ function handleInit(args) {
     printSubHelp("init");
     return 0;
   }
+  const goal = await chooseProjectGoal(parsed.values);
   const res = bootstrapProject({
+    goal,
     name: parsed.values.name,
     slug: parsed.values.slug,
     dest: parsed.values.dest,
@@ -595,15 +604,20 @@ function handleInit(args) {
   console.log(`Profile     : ${res.profile ? `${res.profile} (${res.profileVersion})` : "none"}`);
   console.log(`Destination : ${res.destDir}`);
   console.log(`Files       : ${res.files.length}`);
+  if (!res.dryRun && !process.stdin.isTTY && goal === undefined && !parsed.values["skip-planning"]) {
+    console.log("Ask the project owner: " + setupQuestion + " If they provide or approve a brief, save it to brain/project-brief.md.");
+  }
   return 0;
 }
 
-function handleAdopt(args) {
+async function handleAdopt(args) {
   const parsed = parseArgs({
     args,
     options: {
       dest: { type: "string", short: "d" },
       project: { type: "string", short: "p" },
+      goal: { type: "string" },
+      "skip-planning": { type: "boolean" },
       name: { type: "string" },
       slug: { type: "string" },
       owner: { type: "string" },
@@ -625,7 +639,9 @@ function handleAdopt(args) {
     return 0;
   }
   const dest = parsed.values.dest || parsed.values.project || process.cwd();
+  const goal = await chooseProjectGoal(parsed.values);
   const res = adoptProject({
+    goal,
     dest,
     name: parsed.values.name,
     slug: parsed.values.slug,
@@ -650,6 +666,9 @@ function handleAdopt(args) {
   console.log(`Git Repo    : ${res.gitDetected ? `yes (branch=${res.defaultBranch})` : "no"}`);
   console.log(`Added Files : ${res.files.length}`);
   for (const w of res.warnings) console.log(`  - [WARN] ${w}`);
+  if (!res.dryRun && !process.stdin.isTTY && goal === undefined && !parsed.values["skip-planning"]) {
+    console.log("Ask the project owner: " + setupQuestion + " If they provide or approve a brief, save it to brain/project-brief.md.");
+  }
   return 0;
 }
 
@@ -3111,10 +3130,10 @@ async function main() {
     let code = 0;
     switch (command) {
       case "init":
-        code = handleInit(rest);
+        code = await handleInit(rest);
         break;
       case "adopt":
-        code = handleAdopt(rest);
+        code = await handleAdopt(rest);
         break;
       case "task":
         code = handleTask(rest);

@@ -39,6 +39,8 @@ npx geloforge adopt
 npx geloforge status
 ```
 
+Interactive `init` and `adopt` offer three choices: discuss the goal, paste an existing spec, or press Enter to skip. Discussion saves a brief only after you approve it. For scripts, use `--goal "your goal"` or `--skip-planning`. Saved briefs live in `brain/project-brief.md`.
+
 See the [5-minute walkthrough](./docs/quickstart-5min.md), [paste setup instructions into your agent](./docs/beginner-prompts.md), or [start a new project](./docs/new-projects.md).
 
 ## Why GeloForge?
