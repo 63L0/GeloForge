@@ -2090,6 +2090,17 @@ function handleVerify(args) {
     if (result.checkpoint) console.log(`${result.checkpoint.checkpointId} saved`);
     if (result.completion) {
       console.log(`${result.taskId} completed with verified evidence`);
+      const next = result.followUp;
+      if (next.status === "suggested") {
+        console.log(`Suggested next step: ${next.title}`);
+        console.log(`Why: ${next.reason}`);
+        console.log(`Source: ${next.sources.join(", ")}`);
+        console.log("Would you like to do that next?");
+      } else if (next.status === "none") {
+        console.log("No follow-up recorded.");
+      } else {
+        console.log("Follow-up unavailable. Run geloforge recommend to check again.");
+      }
       for (const warning of result.completion.warnings) console.log(`  [WARN] ${warning}`);
     } else {
       console.error(result.error || result.evidence.record.checks[0].summary);

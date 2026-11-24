@@ -30,12 +30,14 @@ test("verify preserves a failed attempt and finishes a retried task with fresh e
   const preview = JSON.parse(cli(root, [
     "verify", "--dry-run", "--json", "--", process.execPath, "-e", "throw new Error('should not run')",
   ]).stdout);
+  assert.equal(preview.followUp, undefined);
   assert.equal(preview.status, "dry_run");
   assert.equal(fs.existsSync(path.join(root, "evidence")), false);
 
   const failed = JSON.parse(cli(root, [
     "verify", "--json", "--", process.execPath, "-e", "process.exit(7)",
   ], 1).stdout);
+  assert.equal(failed.followUp, undefined);
   assert.equal(failed.status, "check_failed");
   assert.equal(failed.evidence.id, "EVID-0001");
   assert.equal(failed.evidence.exitCode, 7);
@@ -51,6 +53,7 @@ test("verify preserves a failed attempt and finishes a retried task with fresh e
     "if (process.argv[1] !== 'two words' || process.argv[2] !== '--check') process.exit(8)",
     "--", "two words", "--check",
   ]).stdout);
+  assert.deepEqual(passed.followUp, { status: "none" });
   assert.equal(passed.status, "completed");
   assert.equal(passed.evidence.id, "EVID-0002");
   assert.equal(passed.checkpoint.record.verification_evidence_ref, "EVID-0002");
@@ -109,4 +112,16 @@ test("verify requires an exact task when several are active and runs the check o
   assert.deepEqual(passed.completion.activeTasks, ["TASK-0002", "TASK-0003"]);
   const finished = cli(root, ["verify", "--task", "TASK-0001", "--", process.execPath, "--version"], 1);
   assert.match(finished.stderr, /TASK-0001 is completed/);
+});
+
+test("verified completion suggests one queued task without activating it", (t) => {
+  const root = makeProject(t);
+  cli(root, ["task", "new", "--title", "Validate checkout", "--activate"]);
+  cli(root, ["task", "new", "--title", "Show checkout error"]);
+  const output = cli(root, ["verify", "--", process.execPath, "--version"]).stdout;
+  assert.match(output, /Suggested next step: .*TASK-0002.*Show checkout error/);
+  assert.match(output, /Source: .*TASK-0002/);
+  assert.match(output, /Would you like to do that next/);
+  const queued = JSON.parse(cli(root, ["task", "show", "TASK-0002", "--json"]).stdout);
+  assert.notEqual(queued.record.status, "active");
 });

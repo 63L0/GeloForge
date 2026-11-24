@@ -1,3 +1,4 @@
+import { getProjectRecommendations } from "./project-status.mjs";
 import { createCheckpoint } from "./checkpoint.mjs";
 import { captureEvidence } from "./evidence-capture.mjs";
 import { redactSecretContent } from "./path-safety.mjs";
@@ -31,7 +32,7 @@ export function verifyTask({ projectDir, harnessDir, taskId, commandArgv, name, 
   if (!evidence.verified) return { ...result, status: "check_failed" };
 
   try {
-    return withProjectLock(projectDir, () => {
+    withProjectLock(projectDir, () => {
       assertOpen(getTask(taskOptions));
       const completionOptions = { ...taskOptions, requireEvidence: true, evidenceRefs: [evidence.id] };
       completeTask({ ...completionOptions, dryRun: true });
@@ -40,9 +41,21 @@ export function verifyTask({ projectDir, harnessDir, taskId, commandArgv, name, 
         summary: `Verification command passed for ${taskId} (${evidence.id}).`,
       });
       result.completion = completeTask(completionOptions);
-      return { ...result, status: "completed" };
     });
   } catch (err) {
     return { ...result, status: "completion_blocked", error: redactSecretContent(err.message) };
   }
+
+  // Completion is committed. A failed advisory read must never turn a pass into a retry.
+  let followUp;
+  try {
+    const { recommendations } = getProjectRecommendations(projectDir);
+    const top = recommendations.find(item => item.sources?.length);
+    followUp = top
+      ? { status: "suggested", title: top.title, reason: top.reason, sources: top.sources, askBeforeStarting: true }
+      : { status: "none" };
+  } catch {
+    followUp = { status: "unavailable" };
+  }
+  return { ...result, status: "completed", followUp };
 }

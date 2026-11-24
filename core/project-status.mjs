@@ -438,6 +438,7 @@ function buildRecommendations({
       rank: 100,
       priority: "critical",
       category: "validation",
+      sources: ["geloforge validate"],
       title: `Fix ${validation.errors.length} Second Brain validation error(s)`,
       reason: "Schema, ID reference, or safety validation failed; AI agents should not trust invalid state.",
       options: ["Inspect errors with validate --json and repair referenced records"],
@@ -451,6 +452,7 @@ function buildRecommendations({
       rank: 95,
       priority: "high",
       category: "coordination",
+      sources: ["geloforge task leases"],
       title: `Resolve ${leaseOverlaps.length} overlapping multi-IDE task/file-scope lease(s)`,
       reason: "Two concurrent IDE sessions claimed the same task or overlapping file paths.",
       options: [
@@ -467,6 +469,7 @@ function buildRecommendations({
       rank: 90,
       priority: "high",
       category: "conflict",
+      sources: state.open_conflicts,
       title: `Resolve ${state.open_conflicts.length} open conflict(s): ${state.open_conflicts.join(", ")}`,
       reason: "Unresolved CONF-* contradictions block authoritative decisions and require human arbitration.",
       options: [
@@ -484,6 +487,7 @@ function buildRecommendations({
       rank: 85,
       priority: "high",
       category: "approval_inbox",
+      sources: pendingApprovalsInbox.slice(0, 4).map(item => item.id),
       title: `Review ${pendingApprovalsInbox.length} pending human approval item(s)`,
       reason: `Human authorization pending for: ${pendingApprovalsInbox.map((i) => `${i.kind}:${i.id}`).slice(0, 4).join(", ")}.`,
       options: [
@@ -500,6 +504,7 @@ function buildRecommendations({
       rank: 80,
       priority: "high",
       category: "blocked_task",
+      sources: state.blocked_tasks,
       title: `Unblock ${state.blocked_tasks.length} blocked task(s): ${state.blocked_tasks.join(", ")}`,
       reason: "Work cannot advance on blocked tasks without human decision or dependency completion.",
       options: [
@@ -516,6 +521,7 @@ function buildRecommendations({
       rank: 81,
       priority: "high",
       category: "autonomous_audit",
+      sources: [blockedAudit.id],
       title: `Review the blocked staging audit in ${blockedAudit.id}`,
       reason: blockedAudit.resume_instructions,
       options: ["Inspect the checkpoint and verify the missing or mismatched evidence"],
@@ -536,6 +542,7 @@ function buildRecommendations({
           rank: 72,
           priority: "medium",
           category: "task_activation",
+          sources: [candidate.relPath],
           title: `Activate next ${candidate.priority}-priority task: ${candidate.id} (${candidate.title})`,
           reason: "No task is currently active in project state, while queued non-example task contracts exist.",
           options: [
@@ -579,6 +586,7 @@ function buildRecommendations({
           rank: 74,
           priority: "medium",
           category: "verification",
+          sources: [primaryTaskId],
           title: `Capture command-backed verification evidence for ${primaryTaskId}`,
           reason: "Verified EVID-* records separate real passing checks from unverified agent claims.",
           options: ["Run project test suite via evidence capture (shell: false)"],
@@ -590,6 +598,7 @@ function buildRecommendations({
           rank: 68,
           priority: "medium",
           category: "task_closure",
+          sources: [primaryTaskId],
           title: `Review ${primaryTaskId} completion readiness or extract reusable skill`,
           reason: `${primaryTaskId} has ${primaryTask?.evidenceCount || 1} linked evidence record(s).`,
           options: [
