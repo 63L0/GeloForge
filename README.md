@@ -73,7 +73,7 @@ npx geloforge handoff --task TASK-0001 --from-tool claude-code --to-tool codex \
 
 ### Verify
 
-Run your project's test command after `--`. A failed check keeps the task open. A passing check saves the test evidence and a checkpoint, then completes the task. Use the report to share the result in a pull request.
+Run your project's test command after `--`. A failed check keeps the task open. A passing check saves the test evidence and a checkpoint, then completes the task. After verified completion, GeloForge reads the updated project state and suggests one recorded follow-up with its reason and source. It asks before starting more work. If nothing is queued or otherwise actionable, it reports that. Use the report to share the result in a pull request.
 
 ```bash
 npx geloforge verify --task TASK-0001 -- node --test
