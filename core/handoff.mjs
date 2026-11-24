@@ -5,6 +5,7 @@
  * verified EVID-* test evidence from unverified agent claims, and refusing secret leaks.
  */
 
+import { fileDigest, fileFreshness } from "./file-freshness.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -455,6 +456,7 @@ export function createHandoff(options = {}) {
     artifactsProduced.push({
       path: art.path.replace(/\\/g, "/"),
       purpose,
+      ...(art.track ? { sha256: fileDigest(projectDir, art.path) } : {}),
       status: ["draft", "proposed", "verified", "rejected"].includes(art.status) ? art.status : "draft",
     });
   }
@@ -794,6 +796,11 @@ export function inspectHandoff(options = {}) {
     currentHead,
     changed: Boolean(currentGit.available && recordedHead && currentHead && recordedHead !== currentHead),
   };
+  for (const file of record.artifacts_produced || []) {
+    if (!file.sha256) continue;
+    const state = fileFreshness(projectDir, file);
+    if (state !== "unchanged") warnings.push(`Handoff file ${state}: ${file.path}`);
+  }
   if (gitDrift.changed) {
     warnings.push(`Git HEAD moved since handoff (${recordedHead} -> ${currentHead}).`);
   }
@@ -812,4 +819,14 @@ export function inspectHandoff(options = {}) {
     gitDrift,
     markdown: errors.length === 0 ? renderHandoffMarkdown(record, { gitDrift }) : null,
   };
+}
+
+export function latestTaskHandoff(projectDir, harnessDir, taskId) {
+  const { existingHandoffs } = loadProjectSnapshot(projectDir, harnessDir, []);
+  const latest = existingHandoffs.filter(h => h.data?.task_id === taskId && !h.data.is_example &&
+    !["rejected", "superseded"].includes(h.data.status)).sort((a, b) => b.id.localeCompare(a.id))[0];
+  if (!latest) return null;
+  const inspected = inspectHandoff({ projectDir, harnessDir, handoffPath: latest.rel });
+  if (!inspected.valid) throw new Error(inspected.errors.join("\n"));
+  return inspected;
 }

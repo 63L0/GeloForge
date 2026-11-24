@@ -5,7 +5,7 @@ import { loadProjectManifestAndState } from "./project-locator.mjs";
 import { withProjectLock } from "./project-lock.mjs";
 import { completeTask, getTask } from "./task-manager.mjs";
 
-export function verifyTask({ projectDir, harnessDir, taskId, commandArgv, name, timeoutMs, tool, sessionId, dryRun }) {
+export function verifyTask({ projectDir, harnessDir, taskId, commandArgv, name, timeoutMs, tool, sessionId, artifactPaths, dryRun }) {
   if (!taskId) {
     const { state } = loadProjectManifestAndState(projectDir, harnessDir);
     const active = state.active_tasks ?? [];
@@ -24,7 +24,7 @@ export function verifyTask({ projectDir, harnessDir, taskId, commandArgv, name, 
   completeTask({ ...taskOptions, dryRun: true });
 
   const evidence = captureEvidence({
-    projectDir, harnessDir, taskId, commandArgv, name, timeoutMs, dryRun, linkVerifiedOnly: true,
+    projectDir, harnessDir, taskId, commandArgv, name, timeoutMs, dryRun, artifactPaths, linkVerifiedOnly: true,
   });
   const result = { taskId, evidence, checkpoint: null, completion: null };
   if (dryRun) return { ...result, status: "dry_run" };

@@ -9,6 +9,19 @@ GeloForge is an open-source, local-first harness that keeps project context, tas
 [![Node 20+](https://img.shields.io/badge/node-20%2B-brightgreen)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
+## Try a fresh session
+
+Run `geloforge demo` with the updated CLI, or `node scripts/geloforge.mjs demo` from this checkout. The scripted demo uses a temporary project, captures a failing checkout test, resumes the task, applies a sample fix, and verifies it. No account or API key is required.
+
+In your own project, ask your agent to **run `geloforge resume` and continue the active task**. If several tasks are active, choose one with `--task TASK-NNNN`. To track edits across sessions, pass a repeatable `--file` for each relevant source or test file:
+
+```bash
+geloforge handoff --task TASK-0001 --file checkout.mjs --next-action "Run node --test"
+geloforge verify --task TASK-0001 --file checkout.mjs --file checkout.test.mjs -- node --test
+```
+
+Resume and report compare the recorded bytes of those files with the working tree. An unlisted dependency or environment change can still affect the result. Older receipts without tracked files show unknown freshness. To retest a completed task, use `geloforge evidence capture --task TASK-0001 --file checkout.mjs -- node --test`.
+
 ## Quick start
 
 Run this from the root of an existing Git repo with Node.js 20+ and Git installed. The preview shows what GeloForge would add.

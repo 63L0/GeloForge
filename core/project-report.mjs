@@ -4,6 +4,7 @@
  * cleanly without third-party dependencies or network calls.
  */
 
+import { fileFreshness } from "./file-freshness.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,7 +34,7 @@ function escapeCell(value, fallback = "—") {
   return raw.replace(/\|/g, "\\|");
 }
 
-function scanEvidenceManifests(projectDir, evidenceDirRel) {
+export function scanEvidenceManifests(projectDir, evidenceDirRel) {
   const absDir = assertSafeWithinRoot(projectDir, evidenceDirRel);
   const st = fs.lstatSync(absDir, { throwIfNoEntry: false });
   if (!st || st.isSymbolicLink() || !st.isDirectory()) {
@@ -69,6 +70,9 @@ function scanEvidenceManifests(projectDir, evidenceDirRel) {
       relatedTasks: Array.isArray(parsed.related_tasks) ? parsed.related_tasks.map((t) => String(t)) : [],
       title: typeof parsed.title === "string" ? redactSecretContent(parsed.title) : String(parsed.id),
       createdAt: parsed.created_at || null,
+      files: (Array.isArray(parsed.artifacts) ? parsed.artifacts : [])
+        .filter(a => a?.description === "Verified command input" && typeof a.path === "string")
+        .map(a => ({ path: a.path, state: fileFreshness(projectDir, a) })),
       checks,
       relPath,
     });
@@ -218,6 +222,11 @@ export async function generateProjectReport(options = {}) {
       lines.push(
         `| ${ev.id} | ${escapeCell(ev.status)} | ${escapeCell(ev.taskId)} | ${escapeCell(cmdCell)} | ${escapeCell(codeCell)} | ${resultCell} |`
       );
+    }
+    lines.push("", "Checked file freshness:");
+    for (const ev of evidence) {
+      const files = ev.files.map(f => escapeCell(f.path + " " + f.state));
+      lines.push(`- ${ev.id}: ${files.join(", ") || "unknown"}`);
     }
     lines.push("");
   }
