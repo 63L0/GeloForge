@@ -2007,10 +2007,10 @@ function parseCheckTimeout(value) {
 
 function handleResume(args) {
   const { values } = parseArgs({ args, options: {
-    project: { type: "string" }, task: { type: "string" }, help: { type: "boolean", short: "h" }
+    details: { type: "boolean" }, project: { type: "string" }, task: { type: "string" }, help: { type: "boolean", short: "h" }
   } });
   if (values.help) {
-    console.log("geloforge resume [--project <dir>] [--task TASK-NNNN]");
+    console.log("geloforge resume [--details] [--project <dir>] [--task TASK-NNNN]");
     return 0;
   }
   const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
@@ -2026,13 +2026,30 @@ function handleResume(args) {
   const { projectPaths } = loadProjectManifestAndState(projectDir);
   const receipt = scanEvidenceManifests(projectDir, projectPaths.evidence_dir)
     .filter(e => e.taskId === task.id).at(-1);
-  console.log("Goal:", task.id, task.record.title);
-  console.log("Last step:", record?.completed_items.at(-1) || record?.summary || "No handoff recorded");
-  console.log("Files:", record?.artifacts_produced.map(f => f.path).join(", ") || "None recorded");
-  console.log("Last check:", receipt?.checks.map(c => c.command + " — " + c.result).join(", ") || "No recorded run");
-  if (receipt) console.log("Checked files:", receipt.files.map(f => f.path + " " + f.state).join(", ") || "freshness unknown");
-  for (const warning of handoff?.warnings || []) console.log("Warning:", warning);
-  console.log("Next:", record?.recommended_next_action || `geloforge context --task ${task.id}`);
+  const fields = (label, items, fallback) => {
+    const visible = values.details ? items : items.slice(0, 3);
+    const omitted = items.length - visible.length;
+    const body = visible.join(", ") || fallback;
+    const text = !values.details && body.length > 240 ? body.slice(0, 239) + "…" : body;
+    console.log(label, text + (omitted ? ` (+${omitted} more)` : ""));
+  };
+  fields("Goal:", [task.id + " " + task.record.title], "");
+  fields("Last step:", [record?.completed_items.at(-1) || record?.summary || "No handoff recorded"], "");
+  fields("Files:", record?.artifacts_produced.map(f => f.path) || [], "None recorded");
+  fields("Last check:", receipt?.checks.map(c => c.command + " — " + c.result) || [], "No recorded run");
+  if (receipt) {
+    // Surface drift first even when the unchanged files outnumber the display limit.
+    const files = [...receipt.files].sort((a, b) => Number(a.state === "unchanged") - Number(b.state === "unchanged"));
+    fields("Checked files:", files.map(f => f.path + " " + f.state), "freshness unknown");
+  }
+  const warnings = handoff?.warnings || [];
+  if (warnings.length) fields("Warning:", [...warnings].sort((a,b) => Number(b.startsWith("Handoff file")) - Number(a.startsWith("Handoff file"))), "");
+  fields("Next:", [record?.recommended_next_action || `geloforge context --task ${task.id}`], "");
+  if (values.details) {
+    for (const ref of [task.relPath, handoff?.relPath, receipt?.relPath].filter(Boolean)) console.log("Source:", ref);
+  } else {
+    console.log(`Details: geloforge resume --task ${task.id} --details`);
+  }
   return 0;
 }
 

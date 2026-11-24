@@ -22,6 +22,8 @@ geloforge verify --task TASK-0001 --file checkout.mjs --file checkout.test.mjs -
 
 Resume and report compare the recorded bytes of those files with the working tree. An unlisted dependency or environment change can still affect the result. Older receipts without tracked files show unknown freshness. To retest a completed task, use `geloforge evidence capture --task TASK-0001 --file checkout.mjs -- node --test`.
 
+Resume shows a short summary. Run `geloforge resume --details` for the full fields and source record paths. The [handoff benchmark](./docs/resume-benchmark.md) compares repo-only, written-note, and GeloForge trial setups.
+
 ## Quick start
 
 Run this from the root of an existing Git repo with Node.js 20+ and Git installed. The preview shows what GeloForge would add.
