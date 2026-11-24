@@ -60,6 +60,7 @@
         "required": ["path", "purpose", "status"],
         "properties": {
           "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "purpose": { "type": "string", "minLength": 1 },
           "status": { "type": "string", "enum": ["draft", "proposed", "verified", "rejected"] }
         }

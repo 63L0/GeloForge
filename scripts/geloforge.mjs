@@ -20,7 +20,7 @@ import { compileCachedContext } from "../core/context-cache.mjs";
 import { validateProject } from "../core/project-validator.mjs";
 import { compileContext } from "../core/context-compiler.mjs";
 import { getProjectStatus, getProjectRecommendations } from "../core/project-status.mjs";
-import { createHandoff, inspectHandoff } from "../core/handoff.mjs";
+import { createHandoff, inspectHandoff, latestTaskHandoff } from "../core/handoff.mjs";
 import {
   claimTaskLease,
   completeTask,
@@ -39,7 +39,8 @@ import { initMcpClients } from "../core/mcp-init.mjs";
 import { checkMcpLock, lockMcpServers } from "../core/mcp-lock.mjs";
 import { runProjectDoctor } from "../core/doctor.mjs";
 import { HOOK_TARGETS, initProjectHooks } from "../core/hooks-init.mjs";
-import { generateProjectReport } from "../core/project-report.mjs";
+import { runDemo } from "../core/resume-demo.mjs";
+import { scanEvidenceManifests, generateProjectReport } from "../core/project-report.mjs";
 import { getCodingLoopStatus, runCodingLoop } from "../core/coding-loop.mjs";
 import {
   discoverSkills,
@@ -84,6 +85,8 @@ Commands:
   validate   Validate a project's schemas, compatibility, IDs, references, and links
   context    Compile a deterministic, trust-tiered context packet for a task or query
   skills     Discover, inspect, validate, and security-lint portable SKILL.md packages
+  resume     Show the active task, last check, and next action
+  demo       Run a disposable checkout handoff without an API key
   handoff    Create or inspect a cross-agent file-based handoff record (HANDOFF-NNNN)
   checkpoint Create, list, inspect, resume, or compact session checkpoints (CHKPT-NNNN)
   compact    Save a recovery checkpoint, build a slim resume packet, and print a fresh-chat prompt
@@ -404,6 +407,7 @@ Create Options:
   --json                       Alias for --format json
 
 Inspect Options:
+  --file <path>                Track a relevant source file (repeatable)
   --inspect <file>             Validate and render an existing handoff YAML file
   -h, --help                   Show help
 `);
@@ -466,6 +470,7 @@ A failed check saves draft evidence and leaves the task open for a retry.
 Options:
   -p, --project <path>    Target project (auto-detected from CWD if omitted)
   -t, --task <id>         Task to finish (defaults to the sole active task)
+  --file <path>           Bind evidence to this input file (repeatable)
   --name <text>           Evidence check name
   --timeout <ms>          Command timeout (50-600000, default 60000)
   --tool <name>           Cooperative lease tool label
@@ -1508,6 +1513,7 @@ function handleHandoff(args) {
     options: {
       project: { type: "string", short: "p" },
       inspect: { type: "string" },
+      file: { type: "string", multiple: true },
       task: { type: "string", short: "t" },
       id: { type: "string" },
       "from-role": { type: "string" },
@@ -1584,6 +1590,7 @@ function handleHandoff(args) {
     status: parsed.values.status,
     summary: parsed.values.summary,
     nextAction: parsed.values["next-action"],
+    artifactsProduced: (parsed.values.file || []).map(path => ({ path, track: true })),
     completedItems: parsed.values.completed,
     openItems: parsed.values.open,
     unverifiedClaims: parsed.values.claim,
@@ -1998,12 +2005,44 @@ function parseCheckTimeout(value) {
   return Number.parseInt(value.trim(), 10);
 }
 
+function handleResume(args) {
+  const { values } = parseArgs({ args, options: {
+    project: { type: "string" }, task: { type: "string" }, help: { type: "boolean", short: "h" }
+  } });
+  if (values.help) {
+    console.log("geloforge resume [--project <dir>] [--task TASK-NNNN]");
+    return 0;
+  }
+  const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
+  const active = listTasks({ projectDir }).tasks.filter(task => task.activeInState);
+  if (!values.task && active.length !== 1) {
+    console.log(active.length ? "Choose a task with resume --task:" : "No active task. Use task list or resume --task.");
+    for (const task of active) console.log(task.id, task.title);
+    return 0;
+  }
+  const task = getTask({ projectDir, taskId: values.task || active[0].id });
+  const handoff = latestTaskHandoff(projectDir, HARNESS_DIR, task.id);
+  const record = handoff?.record;
+  const { projectPaths } = loadProjectManifestAndState(projectDir);
+  const receipt = scanEvidenceManifests(projectDir, projectPaths.evidence_dir)
+    .filter(e => e.taskId === task.id).at(-1);
+  console.log("Goal:", task.id, task.record.title);
+  console.log("Last step:", record?.completed_items.at(-1) || record?.summary || "No handoff recorded");
+  console.log("Files:", record?.artifacts_produced.map(f => f.path).join(", ") || "None recorded");
+  console.log("Last check:", receipt?.checks.map(c => c.command + " — " + c.result).join(", ") || "No recorded run");
+  if (receipt) console.log("Checked files:", receipt.files.map(f => f.path + " " + f.state).join(", ") || "freshness unknown");
+  for (const warning of handoff?.warnings || []) console.log("Warning:", warning);
+  console.log("Next:", record?.recommended_next_action || `geloforge context --task ${task.id}`);
+  return 0;
+}
+
 function handleVerify(args) {
   const { options, command } = splitCheckArguments(args);
   const { values } = parseArgs({
     args: options,
     options: {
       project: { type: "string", short: "p" },
+      file: { type: "string", multiple: true },
       task: { type: "string", short: "t" },
       name: { type: "string" },
       timeout: { type: "string" },
@@ -2022,7 +2061,7 @@ function handleVerify(args) {
   const { projectDir } = resolveProjectDir({ project: values.project, harnessDir: HARNESS_DIR });
   const result = verifyTask({
     projectDir, harnessDir: HARNESS_DIR, taskId: values.task, commandArgv: command,
-    name: values.name, timeoutMs: parseCheckTimeout(values.timeout),
+    artifactPaths: values.file, name: values.name, timeoutMs: parseCheckTimeout(values.timeout),
     tool: values.tool, sessionId: values.session, dryRun: values["dry-run"],
   });
   if (values.json) {
@@ -2065,6 +2104,7 @@ function handleEvidence(args) {
       role: { type: "string" },
       "verified-by": { type: "string" },
       timeout: { type: "string" },
+      file: { type: "string", multiple: true },
       "no-link": { type: "boolean", default: false },
       "created-at": { type: "string" },
       "dry-run": { type: "boolean", default: false },
@@ -2090,6 +2130,7 @@ function handleEvidence(args) {
     producedByRole: parsed.values.role,
     verifiedBy: parsed.values["verified-by"],
     timeoutMs: parseCheckTimeout(parsed.values.timeout),
+    artifactPaths: parsed.values.file,
     linkTask: !parsed.values["no-link"],
     createdAt: parsed.values["created-at"],
     dryRun: parsed.values["dry-run"],
@@ -3052,6 +3093,12 @@ async function main() {
         break;
       case "evidence":
         code = handleEvidence(rest);
+        break;
+      case "demo":
+        code = runDemo(rest);
+        break;
+      case "resume":
+        code = handleResume(rest);
         break;
       case "verify":
         code = handleVerify(rest);
