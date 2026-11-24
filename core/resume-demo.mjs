@@ -21,9 +21,9 @@ export function runDemo(args) {
     fs.writeFileSync(path.join(cwd, "checkout.mjs"), "export const valid = email => true;\n");
     fs.writeFileSync(path.join(cwd, "checkout.test.mjs"), "import assert from 'node:assert/strict';\nimport {valid} from './checkout.mjs';\nassert.equal(valid(''), false);\n");
     run(["task", "new", "--title", "Reject empty checkout email", "--activate"]);
-    const verify = ["verify", "--file", "checkout.mjs", "--file", "checkout.test.mjs", "--", "node", "--test", "checkout.test.mjs"];
+    const verify = ["verify", "--file", "checkout.mjs", "--file", "checkout.test.mjs", "--", "node", "checkout.test.mjs"];
     run(verify, 1);
-    run(["handoff", "--task", "TASK-0001", "--file", "checkout.mjs", "--completed", "Added a failing checkout test", "--next-action", "Fix checkout.mjs and run node --test checkout.test.mjs"]);
+    run(["handoff", "--task", "TASK-0001", "--file", "checkout.mjs", "--completed", "Added a failing checkout test", "--next-action", "Fix checkout.mjs and run node checkout.test.mjs"]);
     console.log(run(["resume"]));
     fs.writeFileSync(path.join(cwd, "checkout.mjs"), "export const valid = email => email.trim().length > 0;\n");
     console.log("Applied the sample fix. Before retesting:");

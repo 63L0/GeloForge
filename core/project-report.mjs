@@ -214,14 +214,19 @@ export async function generateProjectReport(options = {}) {
   if (evidence.length === 0) {
     lines.push("_No evidence manifests recorded yet._", "");
   } else {
-    lines.push("| Evidence ID | Status | Task | Command(s) | Exit Code(s) | Result(s) | Checked files today |", "| --- | --- | --- | --- | --- | --- | --- |");
+    lines.push("| Evidence ID | Status | Task | Command(s) | Exit Code(s) | Result(s) |", "| --- | --- | --- | --- | --- | --- |");
     for (const ev of evidence) {
       const cmdCell = ev.checks.map((c) => (c.command ? `\`${c.command}\`` : "(none)")).join("; ") || "—";
       const codeCell = ev.checks.map((c) => c.exitCode ?? "—").join(", ") || "—";
       const resultCell = ev.checks.map((c) => escapeCell(c.result)).join(", ") || "—";
       lines.push(
-        `| ${ev.id} | ${escapeCell(ev.status)} | ${escapeCell(ev.taskId)} | ${escapeCell(cmdCell)} | ${escapeCell(codeCell)} | ${resultCell} | ${ev.files.map(f => escapeCell(f.path + " " + f.state)).join(", ") || "unknown"} |`
+        `| ${ev.id} | ${escapeCell(ev.status)} | ${escapeCell(ev.taskId)} | ${escapeCell(cmdCell)} | ${escapeCell(codeCell)} | ${resultCell} |`
       );
+    }
+    lines.push("", "Checked file freshness:");
+    for (const ev of evidence) {
+      const files = ev.files.map(f => escapeCell(f.path + " " + f.state));
+      lines.push(`- ${ev.id}: ${files.join(", ") || "unknown"}`);
     }
     lines.push("");
   }
