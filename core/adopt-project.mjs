@@ -4,6 +4,7 @@
  * and rolls back only files and directories created by the current invocation.
  */
 
+import { addProjectBrief } from "./setup-planning.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -359,6 +360,7 @@ export function adoptProject(options = {}) {
     }
   }
 
+  addProjectBrief(plannedMap, options.goal);
   const orderedFiles = Array.from(plannedMap.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([relPath, content]) => ({ relPath, content }));

@@ -6,6 +6,7 @@
  * and atomically commits to the target destination.
  */
 
+import { addProjectBrief, chooseProjectGoal } from "../core/setup-planning.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -56,6 +57,8 @@ Options:
   --profile <name>        Optional project profile (web, desktop, mobile, automation, ai-system)
   --created-at <iso>      Optional ISO-8601 timestamp for deterministic generation
   --git                   Initialize an isolated local Git repository (git init -b main)
+  --goal <text>           Save an existing goal or spec
+  --skip-planning         Skip the setup discussion
   --dry-run               Validate inputs and preview planned files without writing anything
   -h, --help              Show this help message
 `);
@@ -195,6 +198,7 @@ export function bootstrapProject(options = {}) {
     }
   }
 
+  addProjectBrief(renderedMap, options.goal);
   const orderedFiles = Array.from(renderedMap.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([relPath, content]) => ({ relPath, content }));
@@ -276,12 +280,14 @@ export function bootstrapProject(options = {}) {
   }
 }
 
-function runCli() {
+async function runCli() {
   let parsed;
   try {
     parsed = parseArgs({
       options: {
         name: { type: "string" },
+        goal: { type: "string" },
+        "skip-planning": { type: "boolean" },
         slug: { type: "string" },
         dest: { type: "string" },
         owner: { type: "string" },
@@ -308,6 +314,7 @@ function runCli() {
 
   try {
     const result = bootstrapProject({
+      goal: await chooseProjectGoal(opts),
       name: opts.name,
       slug: opts.slug,
       dest: opts.dest,
